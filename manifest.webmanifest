@@ -1,0 +1,19 @@
+{
+  "name": "Stash – Home Inventory",
+  "short_name": "Stash",
+  "description": "Know what you have, where it is, and what it's for.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f3ee",
+  "theme_color": "#f6f3ee",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Add item", "url": "./#/add" },
+    { "name": "Places", "url": "./#/places" }
+  ]
+}
