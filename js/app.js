@@ -2,7 +2,8 @@ import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, pickSpreadsheet } from './google.js';
 import { Repo } from './store.js';
 import { search } from './search.js';
-import { processPhoto } from './image.js';
+import { processPhoto, cropItem } from './image.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, verifyKey, aiUsageToday, AiError } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 
 const MODE_KEY = `stash.mode`;
@@ -400,7 +401,9 @@ function viewEdit(view, r) {
       <label class="photo-pick" id="pp">
         <input type="file" accept="image/*" capture="environment" id="photo" hidden>
         <div class="pp-view">${editing && repo.thumbs[editing.id] ? `<img src="${repo.thumbs[editing.id]}" alt="">` : `<div class="pp-empty">${icon(`camera`)}<span>Take a photo</span></div>`}</div>
+        <div class="pp-busy" hidden><div class="spinner"></div><span>Identifying…</span></div>
       </label>
+      <div id="aiRow"></div>
       <label class="field"><span>What is it?</span><input name="name" required value="${esc(item.name)}" placeholder="e.g. Stud finder"></label>
       <label class="field"><span>What’s it for?</span><textarea name="purpose" rows="2" placeholder="e.g. Finding studs before hanging shelves or a TV">${esc(item.purpose)}</textarea></label>
       <div class="field"><span>Where is it?</span>
@@ -429,16 +432,75 @@ function viewEdit(view, r) {
   setLocText();
   $(`#loc`).onclick = async () => { const id = await pickLocation(locationId); if (id) { locationId = id; setLocText(); } };
 
+  let shot = null; // { canvas, aiImage } of the current photo, for AI + crops
+  const drawAiRow = () => {
+    const row = $(`#aiRow`); if (!row) return;
+    if (!aiReady()) {
+      row.innerHTML = editing ? `` : `<a class="ai-setup" href="#/more?ai=1">${icon(`spark`)}<span>Let AI fill in the details from your photo</span><b>Set up</b></a>`;
+      return;
+    }
+    const s = aiSettings();
+    row.innerHTML = `<div class="ai-row">
+        <label class="switch"><input type="checkbox" id="aiAuto" ${s.auto ? `checked` : ``}><i></i><span>${icon(`spark`)} Identify with AI when I take a photo</span></label>
+        ${shot ? `<button type="button" class="btn ghost small" id="aiRun">${icon(`spark`)} Suggest details</button>` : ``}
+      </div>`;
+    $(`#aiAuto`).onchange = (e) => saveAiSettings({ auto: e.target.checked });
+    const run = $(`#aiRun`); if (run) run.onclick = () => runAi();
+  };
+
+  const busy = (on) => { $(`#pp`).classList.toggle(`busy`, on); $(`#pp .pp-busy`).hidden = !on; };
+
+  async function runAi() {
+    if (!shot) return;
+    busy(true);
+    try {
+      const items = await analyzePhoto(await shot.aiImage(), { categories: cats, location: locationId ? repo.pathText(locationId) : `` });
+      if (!items.length) { toast(`AI couldn’t recognize anything. Fill in the details yourself.`); return; }
+      if (items.length === 1) { applySuggestion(items[0]); return; }
+      const choice = await reviewItems(items, shot.canvas, locationId);
+      if (choice?.single) {
+        const { photo: p, thumb: t } = await cropItem(shot.canvas, choice.single.box);
+        photo = p; thumb = t; $(`#pp .pp-view`).innerHTML = `<img src="${thumb}" alt="">`;
+        applySuggestion(choice.single);
+      } else if (choice?.added) {
+        location.hash = `#/place/${choice.locationId}`;
+      }
+    } catch (err) {
+      toast(err instanceof AiError ? err.message : `AI suggestion failed. Fill in the details yourself.`, { ms: 5000 });
+    } finally { busy(false); }
+  }
+
+  function applySuggestion(sug) {
+    const f = $(`#f`); let n = 0;
+    const set = (name, value) => {
+      const el = f.elements[name];
+      if (!el || !value) return;
+      const untouched = !el.value || (name === `qty` && String(el.value) === `1`);
+      if (!untouched) return; // never overwrite what the user typed
+      el.value = value; el.classList.add(`suggested`); n++;
+      el.addEventListener(`input`, () => el.classList.remove(`suggested`), { once: true });
+    };
+    set(`name`, sug.name); set(`purpose`, sug.purpose); set(`category`, sug.category);
+    set(`tags`, sug.tags); if (sug.qty > 1) set(`qty`, sug.qty);
+    if (sug.notes) { set(`notes`, sug.notes); f.querySelector(`details`).open = true; }
+    if (n) toast(`AI filled ${n} field${n > 1 ? `s` : ``}. Check them before saving.`);
+    else toast(`AI had nothing to add to what you typed.`);
+  }
+
   $(`#photo`).addEventListener(`change`, async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     $(`#pp`).classList.add(`busy`);
     try {
-      ({ photo, thumb } = await processPhoto(file));
+      const p = await processPhoto(file);
+      ({ photo, thumb } = p); shot = p;
       $(`#pp .pp-view`).innerHTML = `<img src="${thumb}" alt="">`;
-      if (!$(`input[name=name]`).value) $(`input[name=name]`).focus();
-    } catch { toast(`Couldn’t read that photo`); }
+      drawAiRow();
+    } catch { toast(`Couldn’t read that photo`); return; }
     finally { $(`#pp`).classList.remove(`busy`); }
+    if (aiReady() && aiSettings().auto) runAi();
+    else if (!$(`input[name=name]`).value) $(`input[name=name]`).focus();
   });
+  drawAiRow();
 
   let again = false;
   $$(`button[type=submit]`, view).forEach((b) => b.addEventListener(`click`, () => { again = b.hasAttribute(`data-again`); }));
@@ -454,6 +516,78 @@ function viewEdit(view, r) {
     toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
     if (again) { location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`; }
     else location.hash = editing ? `#/item/${saved.id}` : `#/`;
+  });
+}
+
+/**
+ * Several items found in one photo: let the user review, rename and untick, then add them all.
+ * Resolves { added, locationId } | { single: suggestion } | null.
+ */
+function reviewItems(items, canvas, startLoc) {
+  return new Promise((resolve) => {
+    let done = false;
+    let locationId = startLoc;
+    const ticked = new Set(items.map((_, i) => i));
+    const finish = (v) => { done = true; resolve(v); };
+    sheet(`Found ${items.length} items`, async (el, close) => {
+      const crops = await Promise.all(items.map((it) => cropItem(canvas, it.box)));
+      const draw = () => {
+        el.innerHTML = `
+          <p class="muted small">Suggested by AI. Untick anything you don’t want and fix names before adding.</p>
+          <div class="review-list">
+            ${items.map((it, i) => `<div class="review-row">
+              <label class="tick"><input type="checkbox" data-i="${i}" ${ticked.has(i) ? `checked` : ``}></label>
+              <img src="${crops[i].thumb}" alt="">
+              <div class="review-main">
+                <input class="review-name suggested" data-name="${i}" value="${esc(it.name)}">
+                <small>${esc(it.purpose)}</small>
+                ${it.qty > 1 ? `<small>×${it.qty}</small>` : ``}
+              </div>
+              <button type="button" class="icon-btn" data-one="${i}" aria-label="Edit just this one">${icon(`edit`)}</button>
+            </div>`).join(``)}
+          </div>
+          <div class="field"><span>Where are they?</span>
+            <button type="button" class="loc-btn" data-loc>${icon(`place`)}<span>${locationId ? crumbs(locationId, { link: false }) : `<span class="muted">Choose a place</span>`}</span>${icon(`chevron`)}</button></div>
+          <div class="row-actions"><button type="button" class="btn primary full" data-add>Add selected</button></div>`;
+        updateCount();
+      };
+      const selected = () => [...ticked].sort((a, b) => a - b);
+      const updateCount = () => { const n = selected().length; const b = $(`[data-add]`, el); b.textContent = n ? `Add ${n} item${n > 1 ? `s` : ``}` : `Nothing selected`; b.disabled = !n; };
+      el.addEventListener(`change`, (e) => {
+        if (!e.target.matches(`[data-i]`)) return;
+        const i = Number(e.target.dataset.i);
+        if (e.target.checked) ticked.add(i); else ticked.delete(i);
+        updateCount();
+      });
+      el.addEventListener(`input`, (e) => {
+        if (e.target.matches(`[data-name]`)) { items[Number(e.target.dataset.name)].name = e.target.value; e.target.classList.remove(`suggested`); }
+      });
+      el.addEventListener(`click`, async (e) => {
+        const b = e.target.closest(`button`); if (!b) return;
+        if (b.dataset.one !== undefined) { finish({ single: items[Number(b.dataset.one)] }); close(); return; }
+        if (b.hasAttribute(`data-loc`)) {
+          // keep the review sheet; stack the picker on top
+          const id = await pickLocation(locationId, `Where are they?`);
+          if (id) { locationId = id; draw(); }
+          return;
+        }
+        if (b.hasAttribute(`data-add`)) {
+          if (!locationId) { const id = await pickLocation(``, `Where are they?`); if (!id) return; locationId = id; }
+          const picks = selected();
+          b.disabled = true; b.textContent = `Adding…`;
+          for (const i of picks) {
+            const it = items[i];
+            if (!it.name.trim()) continue;
+            await repo.saveItem({ name: it.name.trim(), purpose: it.purpose, category: it.category, tags: it.tags, qty: it.qty, notes: it.notes, locationId },
+              { photo: crops[i].photo, thumb: crops[i].thumb });
+          }
+          rememberLoc(locationId);
+          toast(`Added ${picks.length} item${picks.length > 1 ? `s` : ``} to ${repo.pathText(locationId)}`);
+          finish({ added: picks.length, locationId }); close();
+        }
+      });
+      draw();
+    }, { onClose: () => { if (!done) resolve(null); } });
   });
 }
 
@@ -546,8 +680,50 @@ async function printLabel(loc) {
   w.document.close();
 }
 
+/** Explicit opt-in for AI suggestions: explains the data flow, needs a checkbox + a working key. */
+function aiConsent(keyOnly = false) {
+  return new Promise((resolve) => {
+    let done = false;
+    sheet(keyOnly ? `Change API key` : `AI suggestions`, (el, close) => {
+      el.innerHTML = `<form class="stack consent">
+        ${keyOnly ? `` : `<div class="consent-points">
+          <p>${icon(`camera`)}<span>When you use it, a reduced copy of the photo is sent <b>from this phone directly to Google Gemini</b>, using your own API key. Stash has no server and never sees it.</span></p>
+          <p>${icon(`alert`)}<span>On Gemini’s <b>free tier</b>, Google may use what you send to improve its products, and people at Google may review it. Don’t photograph IDs, documents or anything private with AI on. Paid-tier keys aren’t used that way.</span></p>
+          <p>${icon(`check`)}<span>You always review suggestions before anything is saved. Nothing you typed gets overwritten.</span></p>
+          <p>${icon(`cloud`)}<span>The free tier allows a few hundred photos a day (check your limits in Google AI Studio). One photo of a bin can list many items.</span></p>
+        </div>`}
+        <ol class="key-steps">
+          <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in.</li>
+          <li>Tap <b>Create API key</b>, then copy it.</li>
+          <li>Paste it below. It’s stored only on this device, not in your Sheet.</li>
+        </ol>
+        <label class="field"><span>Gemini API key</span><input name="key" autocomplete="off" spellcheck="false" placeholder="AIza…" required></label>
+        ${keyOnly ? `` : `<label class="check"><input type="checkbox" name="agree" required><span>I understand that photos I choose to analyze are sent to Google Gemini.</span></label>`}
+        <p class="error-box" hidden></p>
+        <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">${keyOnly ? `Save key` : `Verify &amp; turn on`}</button></div>
+      </form>`;
+      const form = $(`form`, el); const err = $(`.error-box`, el);
+      $(`[data-no]`, el).onclick = () => { done = true; resolve(false); close(); };
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const key = form.elements.key.value.trim();
+        const btn = form.querySelector(`button.primary`); btn.disabled = true; btn.textContent = `Checking key…`; err.hidden = true;
+        try {
+          const model = await verifyKey(key);
+          saveAiSettings({ enabled: true, key, model, consentAt: aiSettings().consentAt || new Date().toISOString() });
+          done = true; resolve(true); close();
+          toast(keyOnly ? `Key updated` : `AI suggestions are on`);
+        } catch (ex) {
+          err.textContent = ex.message || String(ex); err.hidden = false;
+          btn.disabled = false; btn.innerHTML = keyOnly ? `Save key` : `Verify &amp; turn on`;
+        }
+      };
+    }, { onClose: () => { if (!done) resolve(false); } });
+  });
+}
+
 // ============================================================ More
-function viewMore(view) {
+function viewMore(view, r) {
   const g = repo.backend.kind === `google`;
   const total = repo.activeItems().length;
   const places = repo.locations.filter((l) => !l.deleted).length;
@@ -567,6 +743,16 @@ function viewMore(view) {
       </div>
       ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Family member’s Google email" required><button class="btn primary">Invite</button></form>
         <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, and choose “Join a shared inventory”.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
+
+      <div class="label-sm" id="ai">AI suggestions</div>
+      ${aiReady() ? `<div class="menu">
+          <div class="menu-info">${icon(`spark`)}<div><b>On</b><small>Model: ${esc(aiSettings().model)}</small><small>${aiUsageToday()} photo${aiUsageToday() === 1 ? `` : `s`} analyzed today on this device · resets 3 AM ET</small></div></div>
+          <label class="menu-switch"><span>Identify automatically when I take a photo</span><span class="switch"><input type="checkbox" data-aiauto ${aiSettings().auto ? `checked` : ``}><i></i></span></label>
+          <button data-m="aikey">${icon(`edit`)} Change API key</button>
+          <button data-m="aioff" class="danger">${icon(`x`)} Turn off and remove key</button>
+        </div>`
+        : `<div class="ai-card">${icon(`spark`)}<div><b>Fill in details from a photo</b><p>Gemini can name what’s in a photo, say what it’s for, and list several items from one shot of a bin or shelf. Off until you turn it on.</p>
+          <button class="btn primary" data-m="aion">Set up AI suggestions</button></div></div>`}
 
       <div class="label-sm">Your data</div>
       <div class="menu">
@@ -592,8 +778,16 @@ function viewMore(view) {
     catch (err) { toast(`Couldn’t invite: ${err.message}`); }
     finally { btn.disabled = false; }
   });
+  $(`[data-aiauto]`, view)?.addEventListener(`change`, (e) => saveAiSettings({ auto: e.target.checked }));
+  if (r?.params?.get(`ai`) === `1` && !aiReady()) setTimeout(() => aiConsent().then((ok) => ok && render()), 50);
+
   view.onclick = async (e) => {
     const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
+    if (m === `aion` || m === `aikey`) { if (await aiConsent(m === `aikey`)) render(); return; }
+    if (m === `aioff`) {
+      if (await confirmSheet(`Turn off AI suggestions?`, `The API key is removed from this device. Items already added keep their details.`, `Turn off`, true)) { disableAi(); render(); toast(`AI suggestions off`); }
+      return;
+    }
     if (m === `csv`) {
       const a = document.createElement(`a`);
       a.href = URL.createObjectURL(repo.exportCsv());

@@ -21,6 +21,11 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **Family sharing:** the owner invites by email (edit access to the sheet, view access to photos). The family member signs in and picks "Join a shared inventory".
 - **Offline:** the app shell is cached and data is cached on the device. Changes made offline queue up and sync when the connection returns.
 - **Export:** CSV (opens in Excel), or just open the Google Sheet.
+- **AI suggestions (optional, off by default):** each user turns it on in **More → AI suggestions**, agrees to a plain-language notice, and pastes their own Gemini API key from aistudio.google.com/apikey. The key is stored only on that device, never in the Sheet. A per-photo switch on the Add screen ("Identify with AI when I take a photo") controls whether a photo is analyzed.
+  - One item in the photo: empty fields are filled and marked "AI suggested" until edited. Anything the user typed is never overwritten.
+  - Several items (an open bin or shelf): a review sheet lists each with a cropped photo. Untick, rename, choose the location, then **Add selected**.
+  - Model `gemini-3.5-flash-lite` (falls back to `gemini-3.1-flash-lite`). Calls are paced under 15 per minute; hitting the daily limit shows a clear message and the user carries on manually.
+  - Free-tier note shown at opt-in: Google may use free-tier content to improve its products, so don't analyze IDs or private documents.
 - **Demo mode:** try everything without Google; data stays in that browser.
 
 ## Run it locally
@@ -81,7 +86,7 @@ Rules for editing the sheet by hand: it's fine to edit cell values and to sort o
 
 - Google access tokens last one hour. After that the status pill shows **Reconnect**; one tap renews it. Edits made meanwhile wait in the queue.
 - If two people edit the *same* item at the same moment, the last save wins.
-- No AI photo tagging yet. Planned as opt-in with the user's own Gemini key, so photos never go anywhere else.
+- AI suggestions use each user's own Gemini quota; the "photos analyzed today" count is per device, while Google's limit is per key's project.
 - Google accounts only.
 
 ## Files
@@ -95,6 +100,7 @@ js/config.js            ← your Client ID, API key, project number
 js/google.js            sign-in, Drive, Sheets, Picker wrappers
 js/store.js             data layer: cache, offline outbox, Google + demo backends
 js/search.js            purpose-aware search
+js/ai.js                optional Gemini suggestions (consent, key check, pacing, quota errors)
 js/image.js             on-device photo resize + thumbnail
 js/ui.js                sheets, toasts, icons
 js/app.js               screens and routing

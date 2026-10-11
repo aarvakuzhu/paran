@@ -1,8 +1,8 @@
 // Offline shell: cache the app files, never cache Google API calls (data stays in Drive + local cache).
-const VERSION = `stash-v2`;
+const VERSION = `stash-v3`;
 const SHELL = [
   `./`, `./index.html`, `./css/app.css`, `./manifest.webmanifest`,
-  `./js/app.js`, `./js/config.js`, `./js/google.js`, `./js/store.js`, `./js/search.js`, `./js/image.js`, `./js/ui.js`, `./js/idb.js`,
+  `./js/app.js`, `./js/config.js`, `./js/google.js`, `./js/store.js`, `./js/search.js`, `./js/image.js`, `./js/ui.js`, `./js/idb.js`, `./js/ai.js`,
   `./icons/icon-192.png`, `./icons/icon-512.png`,
 ];
 
