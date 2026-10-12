@@ -545,3 +545,58 @@ button.back .ic { width: 18px; height: 18px; }
 .field input.restored, .field textarea.restored { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
 .field:has(.restored) > span::after { content: " · restored"; font-weight: 500; color: var(--amber); font-size: 0.8rem; }
 .size-chips.restored .chip.on { background: var(--amber); border-color: var(--amber); }
+
+/* ---------- Find landing: cards ---------- */
+.find-top .hello { margin: 4px 0 12px; }
+.find-top .hello small { color: var(--ink-3); font-size: 0.95rem; }
+.find-top .hello h1 { margin: 0; font-size: 1.75rem; }
+.find-top.busy .hello { display: none; }
+.find-top #filters { display: none; }
+.find-top.searching #filters, .find-top.busy #filters { display: flex; }
+.tint { --tl: 84%; background: linear-gradient(135deg, hsl(var(--h) 32% var(--tl)), hsl(calc(var(--h) + 25) 30% calc(var(--tl) - 12%))); display: grid; place-items: center; color: hsl(var(--h) 25% 45%); }
+.tint svg { width: 28px; height: 28px; opacity: 0.55; }
+@media (prefers-color-scheme: dark) { .tint { --tl: 30%; color: hsl(var(--h) 25% 70%); } }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+.stat { display: block; text-align: left; background: var(--surface); border: 0; border-radius: 16px; padding: 12px 14px; box-shadow: var(--shadow); cursor: pointer; }
+.stat b { display: block; font-size: 1.6rem; letter-spacing: -0.02em; line-height: 1.2; }
+.stat span { font-size: 0.82rem; color: var(--ink-2); }
+.stat.warn { background: var(--amber-soft); }
+.stat.warn b { color: var(--amber); }
+
+.alerts { display: grid; gap: 8px; margin-top: 12px; }
+.alert-card { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); border-left: 4px solid var(--ink-3); }
+.alert-card.urgent { border-left-color: var(--amber); }
+.alert-card > div { flex: 1; min-width: 0; }
+.alert-card b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.alert-card small { display: block; color: var(--ink-2); font-size: 0.82rem; }
+.alert-card.urgent small { color: var(--amber); }
+.alert-card .btn { flex: none; }
+
+.dash-head { display: flex; justify-content: space-between; align-items: baseline; margin: 24px 0 10px; }
+.dash-head h2 { font-size: 1.15rem; }
+.dash-head .link.small { margin-top: 0; }
+.place-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.place-tile { background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; display: block; }
+.mosaic { display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; height: 96px; }
+.mosaic > * { width: 100%; height: 100%; object-fit: cover; min-height: 0; }
+.mosaic .m0 { grid-row: span 2; }
+.mosaic .m1 svg, .mosaic .m2 svg { width: 18px; height: 18px; }
+.pt-name { padding: 9px 12px 11px; }
+.pt-name b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pt-name span { font-size: 0.82rem; color: var(--ink-2); }
+
+.hscroll { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; margin: -6px -16px 0; padding: 6px 16px 10px; scroll-snap-type: x proximity; scroll-padding: 0 16px; }
+.hscroll::-webkit-scrollbar { display: none; }
+.hscroll > * { scroll-snap-align: start; }
+.person-card { flex: none; max-width: 82%; display: flex; align-items: center; gap: 10px; padding: 11px 16px 11px 12px; background: var(--surface); border: 0; border-radius: 16px; box-shadow: var(--shadow); text-align: left; cursor: pointer; }
+.person-card .avatar { width: 38px; height: 38px; border-radius: 50%; font-size: 0.9rem; flex: none; background: var(--amber-soft); color: var(--amber); }
+.person-card > span:last-child { min-width: 0; }
+.person-card b { display: block; }
+.person-card small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); font-size: 0.82rem; }
+.item-tile { flex: 0 0 136px; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow); overflow: hidden; display: block; }
+.it-img { display: grid; width: 100%; height: 112px; object-fit: cover; }
+.it-name { padding: 8px 10px 10px; }
+.it-name b { display: block; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.it-name span { display: block; font-size: 0.75rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.list-head .label-sm .link { margin-right: 8px; padding: 0; display: inline-flex; align-items: center; vertical-align: middle; }

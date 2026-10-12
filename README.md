@@ -13,7 +13,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 
 ## Screens
 
-- **Find** (landing page): search bar, category chips, then **Needs attention** (late pick-ups, pick-ups due today/tomorrow, items lent 30+ days, missing), **Out now** (who has your things), **Browse** (rooms with item counts) and **Recently added**. Typing replaces the dashboard with results.
+- **Find** (landing page, cards): greeting and search; category chips appear while searching. Then three count cards (**Items** opens the full list, **Out** turns amber when something is late, **Places**), **Needs attention** cards with a one-tap action (*Got it back* / *Picked up* / *Found it*), **Places** as photo tiles (a collage of what's inside), **Out now** person cards and **Recently added** photo cards (both scroll sideways). Items without a photo get a soft coloured tile. Typing replaces the dashboard with results; Select is on the results and All items lists.
 - **Places**: your places and what's in them. Opening a place shows **everything inside it**, grouped by the places below it. **Add item here** is the main action; Bring items here, Move, Rename, QR label and Delete are in the ⋯ menu (containers also show a **Label** button).
 - **+**: add an item. Photo, name, what it's for, where; category, quantity, extra search words, dates and notes are under *More details*. The tab bar is hidden while you fill it in.
 - **Out**: everything lent or reserved, grouped by person, overdue pick-ups first. A red badge on the tab counts late pick-ups.

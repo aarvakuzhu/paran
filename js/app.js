@@ -936,21 +936,56 @@ function viewFind(view) {
     if ([`lent`, `reserved`, `missing`].includes(f) && !repo.activeItems().some((i) => i.status === f)) findState.filter = ``;
     if (f.startsWith(`cat:`) && !cats.includes(f.slice(4))) findState.filter = ``;
   }
+  const first = (repo.user?.name || ``).split(` `)[0];
+  const hr = new Date().getHours();
+  const hello = `${hr < 12 ? `Good morning` : hr < 18 ? `Good afternoon` : `Good evening`}${first ? `, ${first}` : ``}`;
   view.innerHTML = `
-    <div class="search-wrap">
-      <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="What do you need? e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search"></label>
+    <div class="find-top" id="find-top">
+      <div class="hello"><small>${esc(hello)}</small><h1>Your stash</h1></div>
+      <div class="search-wrap">
+        <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="What do you need? e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search"></label>
+      </div>
+      ${cats.length ? `<div class="chips scroll" id="filters">${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}</div>` : `<div id="filters"></div>`}
     </div>
-    ${cats.length ? `<div class="chips scroll" id="filters">${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}</div>` : `<div id="filters"></div>`}
     <div id="results"></div>`;
-  const q = $(`#q`);
+  const q = $(`#q`); const top = $(`#find-top`);
+  // Category chips only while searching, so the landing page stays calm.
+  const searching = () => top.classList.toggle(`searching`, document.activeElement === q || Boolean(findState.q.trim() || findState.filter.startsWith(`cat:`)));
+  q.addEventListener(`focus`, searching);
+  q.addEventListener(`blur`, () => setTimeout(searching, 250)); // let a chip tap land first
   q.addEventListener(`input`, () => { findState.q = q.value; renderResults(); });
-  $(`#results`).addEventListener(`click`, (e) => { const b = e.target.closest(`[data-person]`); if (b) { e.preventDefault(); personSheet(b.dataset.person); } });
+  $(`#results`).addEventListener(`click`, async (e) => {
+    const p = e.target.closest(`[data-person]`); if (p) { e.preventDefault(); return personSheet(p.dataset.person); }
+    const s = e.target.closest(`[data-show]`); if (s) { e.preventDefault(); findState.filter = s.dataset.show; renderResults(); return window.scrollTo(0, 0); }
+    const q2 = e.target.closest(`[data-quick]`);
+    if (q2) {
+      e.preventDefault();
+      const it = repo.items.find((x) => x.id === q2.dataset.id); if (!it) return;
+      if (q2.dataset.quick === `return`) { await repo.returnItem(it); toast(`${it.name} returned`); }
+      else if (q2.dataset.quick === `pickup`) { await repo.pickUp(it); toast(`Lent to ${it.lentTo}`); }
+      else if (q2.dataset.quick === `found`) { await repo.markFound(it); toast(`Found`); }
+      renderResults();
+    }
+  });
   $(`#filters`).addEventListener(`click`, (e) => {
     const b = e.target.closest(`[data-f]`); if (!b) return;
     findState.filter = findState.filter === b.dataset.f ? `` : b.dataset.f;
-    renderResults();
+    renderResults(); searching();
   });
+  searching();
   renderResults();
+}
+
+/** A soft colour per word, so tiles without photos still look intentional (and differ from each other). */
+const TINTS = [150, 35, 265, 12, 205, 60, 330, 95];
+function tintOf(text) {
+  let h = 7; for (const ch of String(text || ``)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TINTS[h % TINTS.length];
+}
+function tileImg(item, cls) {
+  const t = repo.thumbs[item.id];
+  return t ? `<img class="${cls}" src="${t}" alt="" loading="lazy">`
+    : `<div class="${cls} tint" style="--h:${tintOf(item.id || item.name)}">${icon(`box`)}</div>`;
 }
 
 function renderResults() {
@@ -961,6 +996,7 @@ function renderResults() {
   $$(`#filters [data-f]`).forEach((b) => b.classList.toggle(`on`, b.dataset.f === findState.filter));
   const all = repo.activeItems();
   const f = findState.filter; const q = findState.q.trim();
+  $(`#find-top`)?.classList.toggle(`busy`, Boolean(q || f));
 
   if (!all.length) {
     const noPlaces = !repo.locations.some((l) => !l.deleted);
@@ -974,33 +1010,67 @@ function renderResults() {
     let list = all;
     if ([`lent`, `missing`, `reserved`].includes(f)) list = list.filter((i) => i.status === f);
     else if (f.startsWith(`cat:`)) list = list.filter((i) => i.category === f.slice(4));
-    list = q ? search(list, q, (id) => repo.pathText(id)) : [...list].sort((a, b) => a.name.localeCompare(b.name));
+    list = q ? search(list, q, (id) => repo.pathText(id))
+      : f === `recent` ? [...list].sort((a, b) => String(b.addedAt).localeCompare(String(a.addedAt)))
+      : [...list].sort((a, b) => a.name.localeCompare(b.name));
     if (q && !list.length) {
       box.innerHTML = `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Looks like you don’t have it logged. Maybe you don’t have one, or it hasn’t been added yet.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>`;
       return;
     }
-    box.innerHTML = `<div class="list-head"><div class="label-sm">${list.length} found</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div>
-      <div class="cards">${list.slice(0, 200).map((i) => itemCard(i)).join(``)}</div>`;
+    const title = !q && f === `all` ? `All items · ${list.length}` : !q && f === `recent` ? `Recently added` : `${list.length} found`;
+    const back = !q && (f === `all` || f === `recent`) ? `<button type="button" class="link small" data-show="">${icon(`back`)} Home</button>` : ``;
+    box.innerHTML = `<div class="list-head"><div class="label-sm">${back}${esc(title)}</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div>
+      <div class="cards">${list.slice(0, 300).map((i) => itemCard(i)).join(``)}</div>`;
     return;
   }
 
-  // ---- dashboard
+  // ---- dashboard (cards)
   const attention = all.map((i) => ({ i, r: attentionReason(i) })).filter((x) => x.r).sort((a, b) => a.r.rank - b.r.rank);
   const out = repo.people().filter((p) => p.holding.length || p.saved.length);
-  const recent = [...all].sort((a, b) => String(b.addedAt).localeCompare(String(a.addedAt))).slice(0, 6);
-  const rooms = repo.locations.filter((l) => !l.deleted && l.parentId && !repo.locById(l.parentId)?.parentId) // second level: Garage, Kitchen…
-    .map((l) => ({ l, n: repo.itemsIn(l.id, true).length })).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 8);
+  const outCount = all.filter((i) => i.status === `lent` || i.status === `reserved`).length;
+  const late = attention.filter((x) => x.r.urgent).length;
+  const placeCount = repo.locations.filter((l) => !l.deleted).length;
+  const recent = [...all].sort((a, b) => String(b.addedAt).localeCompare(String(a.addedAt))).slice(0, 10);
+  const live = repo.locations.filter((l) => !l.deleted);
+  let rooms = live.filter((l) => l.parentId && !repo.locById(l.parentId)?.parentId); // second level: Garage, Kitchen…
+  if (rooms.filter((l) => repo.itemsIn(l.id, true).length).length < 2) rooms = live.filter((l) => !l.parentId); // only top-level places so far
+  rooms = rooms.map((l) => ({ l, items: repo.itemsIn(l.id, true) })).filter((x) => x.items.length).sort((a, b) => b.items.length - a.items.length).slice(0, 6);
+  const mosaic = (items, l) => {
+    const pick = [...items.filter((i) => repo.thumbs[i.id]), ...items.filter((i) => !repo.thumbs[i.id])].slice(0, 3);
+    while (pick.length < 3) pick.push(null);
+    return pick.map((i, k) => (i ? tileImg(i, `m${k}`) : `<div class="m${k} tint" style="--h:${tintOf(`${l.id}${k}`)}"></div>`)).join(``);
+  };
+  const quick = (i) => i.status === `lent` ? [`return`, `Got it back`] : i.status === `reserved` ? [`pickup`, `Picked up`] : i.status === `missing` ? [`found`, `Found it`] : null;
+  const personLine = (p) => {
+    const lateN = [...p.holding, ...p.saved].filter((i) => attentionReason(i)?.urgent).length;
+    const bits = [];
+    if (p.holding.length) bits.push(`${p.holding.length} item${p.holding.length > 1 ? `s` : ``}`);
+    if (p.saved.length) bits.push(p.holding.length ? `${p.saved.length} reserved` : (dueText(p.saved[0].dueAt).text ? `Reserved · ${dueText(p.saved[0].dueAt).text}` : `${p.saved.length} reserved`));
+    if (lateN) bits.push(`${lateN} late`);
+    return bits.join(` · `);
+  };
   box.innerHTML = `
-    ${attention.length ? `<section class="dash"><div class="label-sm">Needs attention</div>
-      <div class="cards">${attention.slice(0, 5).map(({ i, r }) => itemCard(i, { reason: r })).join(``)}</div>
-      ${attention.length > 5 ? `<a class="link small" href="#/out">See all ${attention.length}</a>` : ``}</section>` : ``}
-    ${out.length ? `<section class="dash"><div class="list-head"><div class="label-sm">Out now</div><a class="link small" href="#/out">See all</a></div>
-      <div class="people-strip">${out.map((p) => `<button type="button" class="person-chip" data-person="${esc(p.key)}">
-        <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p.holding.length + p.saved.length}</b></button>`).join(``)}</div></section>` : ``}
-    ${rooms.length ? `<section class="dash"><div class="label-sm">Browse</div>
-      <div class="chips">${rooms.map(({ l, n }) => `<a class="chip room-chip" href="#/place/${esc(l.id)}">${icon(KIND_ICON[l.kind] || `room`)}${esc(l.name)} <small>${n}</small></a>`).join(``)}</div></section>` : ``}
-    <section class="dash"><div class="list-head"><div class="label-sm">Recently added</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div>
-      <div class="cards">${recent.map((i) => itemCard(i)).join(``)}</div></section>`;
+    <div class="stats">
+      <button type="button" class="stat" data-show="all"><b>${all.length}</b><span>Item${all.length === 1 ? `` : `s`}</span></button>
+      <a class="stat${late ? ` warn` : ``}" href="#/out"><b>${outCount}</b><span>Out${late ? ` · ${late} late` : ``}</span></a>
+      <a class="stat" href="#/places"><b>${placeCount}</b><span>Place${placeCount === 1 ? `` : `s`}</span></a>
+    </div>
+    ${attention.length ? `<div class="alerts">${attention.slice(0, 3).map(({ i, r }) => { const a = quick(i); return `
+      <a class="alert-card${r.urgent ? ` urgent` : ``}" href="#/item/${esc(i.id)}">${tileImg(i, `thumb sm`)}
+        <div><b>${esc(i.name)}</b><small>${esc(r.text)}</small></div>
+        ${a ? `<button type="button" class="btn small ghost" data-quick="${a[0]}" data-id="${esc(i.id)}">${a[1]}</button>` : ``}</a>`; }).join(``)}
+      ${attention.length > 3 ? `<a class="link small" href="#/out">See all ${attention.length}</a>` : ``}</div>` : ``}
+    ${rooms.length ? `<section class="dash"><div class="dash-head"><h2>Places</h2><a class="link small" href="#/places">All places</a></div>
+      <div class="place-tiles">${rooms.map(({ l, items }) => `<a class="place-tile" href="#/place/${esc(l.id)}">
+        <div class="mosaic">${mosaic(items, l)}</div>
+        <div class="pt-name"><b>${esc(l.name)}</b><span>${items.length} item${items.length === 1 ? `` : `s`}</span></div></a>`).join(``)}</div></section>` : ``}
+    ${out.length ? `<section class="dash"><div class="dash-head"><h2>Out now</h2><a class="link small" href="#/out">See all</a></div>
+      <div class="hscroll">${out.map((p) => `<button type="button" class="person-card" data-person="${esc(p.key)}">
+        <span class="avatar">${esc(initials(p.name))}</span><span><b>${esc(p.name)}</b><small>${esc(personLine(p))}</small></span></button>`).join(``)}</div></section>` : ``}
+    <section class="dash"><div class="dash-head"><h2>Recently added</h2><button type="button" class="link small" data-show="recent">See all</button></div>
+      <div class="hscroll">${recent.map((i) => { const parts = repo.pathOf(i.locationId).slice(-2).map((l) => l.name).join(` › `); return `
+        <a class="item-tile" href="#/item/${esc(i.id)}">${tileImg(i, `it-img`)}
+          <div class="it-name"><b>${esc(i.name)}</b><span>${esc(parts || `No location yet`)}</span></div></a>`; }).join(``)}</div></section>`;
 }
 
 // ============================================================ First-run setup: places in 30 seconds
