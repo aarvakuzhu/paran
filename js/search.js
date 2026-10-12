@@ -69,3 +69,35 @@ export function search(items, query, pathText) {
   }
   return results.sort((a, b) => b.score - a.score).map((r) => r.item);
 }
+
+// ---------------------------------------------------------------- duplicate detection (local, no AI)
+const STOP = new Set([`a`, `an`, `the`, `of`, `for`, `and`, `with`, `my`, `old`, `new`, `set`]);
+const nameWords = (s) => [...new Set(words(s).filter((w) => !STOP.has(w)).map(stem))];
+const sameWord = (a, b) => a === b || (a.length >= 4 && b.length >= 4 && editDistanceAtMost1(a, b));
+
+/** 0..1 similarity between two item names. 1 = same words (ignoring order, plurals, small typos). */
+export function nameSimilarity(a, b) {
+  const A = nameWords(a), B = nameWords(b);
+  if (!A.length || !B.length) return 0;
+  if (A.join(``) === B.join(``)) return 1; // "Screwdriver" vs "Screw driver"
+  const hits = A.filter((x) => B.some((y) => sameWord(x, y))).length;
+  const union = A.length + B.length - hits;
+  const jaccard = hits / union;
+  // "Stud finder" vs "Zircon stud finder": all words of the shorter name appear in the longer one
+  const contained = hits === Math.min(A.length, B.length) && Math.min(A.length, B.length) >= 2;
+  return contained ? Math.max(jaccard, 0.8) : jaccard;
+}
+
+/**
+ * Existing items that look like the same thing as `name`.
+ * Returns [{ item, score, samePlace }] best first (same place ranked above elsewhere), max 3.
+ */
+export function findDuplicates(items, name, { locationId = ``, excludeId = `` } = {}) {
+  if (!String(name || ``).trim()) return [];
+  return items
+    .filter((i) => i.id !== excludeId)
+    .map((item) => ({ item, score: nameSimilarity(name, item.name), samePlace: Boolean(locationId) && item.locationId === locationId }))
+    .filter((d) => d.score >= (d.samePlace ? 0.5 : 0.67))
+    .sort((a, b) => (b.samePlace - a.samePlace) || (b.score - a.score))
+    .slice(0, 3);
+}

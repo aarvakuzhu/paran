@@ -16,6 +16,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **Quick capture:** photo (resized on the phone), name, what it's for, location, optional category/tags/qty/warranty/expiry/notes. "Save & add another" keeps the same location for bulk logging.
 - **Location hierarchy:** Place → Room → Container, with any depth. Recently used spots appear first.
 - **Search by purpose:** matches name, "what it's for", tags, category, location and notes, with prefix and typo tolerance and a few synonyms ("fix a leak" finds plumber's tape). Every word must match.
+- **Duplicate check (on the phone, no AI):** saving a new item whose name matches an existing one (plurals, punctuation, small typos and word order ignored) asks first: *Open it*, *Same one, it's here now* (moves it), *I have another (+qty)*, or *Save as a new item*. Matches in the same place are flagged more readily. In the AI multi-item review, items already in the chosen place are labelled "Already here" and start unticked. Save locks after the first tap.
 - **Status:** Move, Lend (who has it), Got it back, Can't find / Found it. Every change is appended to the **Log** tab.
 - **QR labels:** print a label for any bin or shelf. Scanning it with the phone camera opens that place in the app.
 - **Family sharing:** the owner invites by email (edit access to the sheet, view access to photos). The family member signs in and picks "Join a shared inventory".

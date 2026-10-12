@@ -1,7 +1,7 @@
 import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, pickSpreadsheet } from './google.js';
 import { Repo } from './store.js';
-import { search } from './search.js';
+import { search, findDuplicates } from './search.js';
 import { processPhoto, cropItem } from './image.js';
 import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, verifyKey, aiUsageToday, AiError } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
@@ -504,18 +504,89 @@ function viewEdit(view, r) {
 
   let again = false;
   $$(`button[type=submit]`, view).forEach((b) => b.addEventListener(`click`, () => { again = b.hasAttribute(`data-again`); }));
+  let saving = false;
+  const lock = (on) => { saving = on; $$(`button[type=submit]`, view).forEach((b) => { b.disabled = on; }); };
+  const next = (id) => {
+    if (again) location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`;
+    else location.hash = id ? `#/item/${id}` : `#/`;
+  };
+
   $(`#f`).addEventListener(`submit`, async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
-    const fields = Object.fromEntries([...fd.entries()].filter(([k]) => k !== `photo`).map(([k, v]) => [k, String(v).trim()]));
-    fields.locationId = locationId;
-    fields.qty = Number(fields.qty) || 1;
-    if (editing) fields.id = editing.id;
-    const saved = await repo.saveItem(fields, { photo, thumb });
-    rememberLoc(locationId);
-    toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
-    if (again) { location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`; }
-    else location.hash = editing ? `#/item/${saved.id}` : `#/`;
+    if (saving) return; // a double tap must not create two items
+    lock(true);
+    try {
+      const fd = new FormData(e.target);
+      const fields = Object.fromEntries([...fd.entries()].filter(([k]) => k !== `photo`).map(([k, v]) => [k, String(v).trim()]));
+      fields.locationId = locationId;
+      fields.qty = Number(fields.qty) || 1;
+      if (editing) fields.id = editing.id;
+
+      if (!editing) {
+        const dups = findDuplicates(repo.activeItems(), fields.name, { locationId });
+        if (dups.length) {
+          const choice = await duplicatePrompt(fields, dups);
+          if (!choice) { lock(false); return; } // back to the form
+          if (choice.action === `open`) { location.hash = `#/item/${choice.item.id}`; return; }
+          if (choice.action === `move` || choice.action === `more`) {
+            const it = choice.item;
+            const patch = { id: it.id };
+            if (choice.action === `move`) { patch.locationId = locationId; patch.status = `home`; patch.lentTo = ``; }
+            else patch.qty = (Number(it.qty) || 1) + fields.qty;
+            const attach = photo && !it.photoId && !repo.thumbs[it.id]; // give it the photo if it had none
+            await repo.saveItem(patch, { ...(attach ? { photo, thumb } : {}), logAction: choice.action === `move` ? `moved` : `qty+${fields.qty}` });
+            rememberLoc(locationId);
+            toast(choice.action === `move` ? `Moved ${it.name} to ${repo.pathText(locationId)}` : `${it.name} is now ×${patch.qty}`);
+            return next(again ? null : it.id);
+          }
+          // choice.action === `new`: fall through and save as a separate item
+        }
+      }
+
+      const saved = await repo.saveItem(fields, { photo, thumb });
+      rememberLoc(locationId);
+      toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
+      next(editing ? saved.id : null);
+    } catch (err) {
+      console.error(err); toast(`Couldn’t save: ${err.message || err}`); lock(false);
+    }
+  });
+}
+
+/** "You may already have this". Resolves { action: open|move|more|new, item } or null (go back). */
+function duplicatePrompt(fields, dups) {
+  return new Promise((resolve) => {
+    let done = false;
+    const top = dups[0];
+    sheet(top.samePlace ? `Already here?` : `Already have it?`, (el, close) => {
+      const finish = (v) => { done = true; resolve(v); close(); };
+      el.innerHTML = `
+        <p class="muted">${top.samePlace
+          ? `There’s already something similar in <b>${esc(repo.pathText(fields.locationId))}</b>.`
+          : `You may already have this.`}</p>
+        <div class="dup-list">
+          ${dups.map((d, i) => `<div class="dup-row">
+            <div class="dup-item">${thumbHtml(d.item)}<div><b>${esc(d.item.name)}</b>${Number(d.item.qty) > 1 ? ` <span class="qty">×${esc(d.item.qty)}</span>` : ``}
+              <small>${icon(`place`)}${esc(repo.pathText(d.item.locationId) || `No location`)}${d.samePlace ? ` · same place` : ``}</small>
+              ${d.item.status === `lent` ? `<small class="warn">Lent to ${esc(d.item.lentTo || `someone`)}</small>` : ``}</div></div>
+            <div class="dup-actions">
+              <button type="button" class="btn ghost small" data-act="open" data-i="${i}">Open it</button>
+              ${!d.samePlace && fields.locationId ? `<button type="button" class="btn ghost small" data-act="move" data-i="${i}">Same one, it’s here now</button>` : ``}
+              <button type="button" class="btn ghost small" data-act="more" data-i="${i}">I have another (+${esc(fields.qty)})</button>
+            </div>
+          </div>`).join(``)}
+        </div>
+        <div class="row-actions">
+          <button type="button" class="btn ghost" data-back>Back to edit</button>
+          <button type="button" class="btn primary" data-new>Save as a new item</button>
+        </div>`;
+      el.onclick = (e) => {
+        const b = e.target.closest(`button`); if (!b) return;
+        if (b.hasAttribute(`data-back`)) return finish(null);
+        if (b.hasAttribute(`data-new`)) return finish({ action: `new` });
+        if (b.dataset.act) finish({ action: b.dataset.act, item: dups[Number(b.dataset.i)].item });
+      };
+    }, { onClose: () => { if (!done) resolve(null); } });
   });
 }
 
@@ -527,7 +598,8 @@ function reviewItems(items, canvas, startLoc) {
   return new Promise((resolve) => {
     let done = false;
     let locationId = startLoc;
-    const ticked = new Set(items.map((_, i) => i));
+    const hereDup = (it) => locationId && findDuplicates(repo.activeItems(), it.name, { locationId }).find((d) => d.samePlace);
+    const ticked = new Set(items.map((_, i) => i).filter((i) => !hereDup(items[i])));
     const finish = (v) => { done = true; resolve(v); };
     sheet(`Found ${items.length} items`, async (el, close) => {
       const crops = await Promise.all(items.map((it) => cropItem(canvas, it.box)));
@@ -540,6 +612,7 @@ function reviewItems(items, canvas, startLoc) {
               <img src="${crops[i].thumb}" alt="">
               <div class="review-main">
                 <input class="review-name suggested" data-name="${i}" value="${esc(it.name)}">
+                ${hereDup(it) ? `<small class="here-tag">Already here: ${esc(hereDup(it).item.name)}</small>` : ``}
                 <small>${esc(it.purpose)}</small>
                 ${it.qty > 1 ? `<small>×${it.qty}</small>` : ``}
               </div>
@@ -568,7 +641,7 @@ function reviewItems(items, canvas, startLoc) {
         if (b.hasAttribute(`data-loc`)) {
           // keep the review sheet; stack the picker on top
           const id = await pickLocation(locationId, `Where are they?`);
-          if (id) { locationId = id; draw(); }
+          if (id) { locationId = id; items.forEach((it, i) => { if (hereDup(it)) ticked.delete(i); }); draw(); }
           return;
         }
         if (b.hasAttribute(`data-add`)) {

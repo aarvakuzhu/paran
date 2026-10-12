@@ -295,3 +295,15 @@ details .field { margin-top: 10px; }
 .key-steps { margin: 4px 0; padding-left: 20px; font-size: 0.9rem; color: var(--ink-2); display: grid; gap: 4px; }
 .key-steps a { color: var(--accent); font-weight: 600; }
 .error-box[hidden] { display: none; }
+
+/* ---------- duplicates ---------- */
+.dup-list { display: grid; gap: 10px; margin: 10px 0 4px; }
+.dup-row { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: grid; gap: 10px; }
+.dup-item { display: flex; gap: 10px; align-items: flex-start; }
+.dup-item .thumb { width: 52px; height: 52px; }
+.dup-item > div { display: grid; gap: 2px; min-width: 0; }
+.dup-item small { display: flex; align-items: center; gap: 4px; color: var(--accent); font-size: 0.82rem; }
+.dup-item small .ic { width: 14px; height: 14px; }
+.dup-item small.warn { color: var(--amber); }
+.dup-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-main small.here-tag { color: var(--amber); font-weight: 600; }
