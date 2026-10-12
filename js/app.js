@@ -139,6 +139,7 @@ function onRepoChange() {
 
 // ============================================================ pre-app screens
 function renderWelcome(error) {
+  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
   const g = googleConfigured();
   app.innerHTML = `
   <main class="welcome">
@@ -163,6 +164,7 @@ function renderWelcome(error) {
 }
 
 function renderReconnect() {
+  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
   <main class="welcome">
     <div class="brand-mark">${icon(`box`)}</div>
@@ -176,6 +178,7 @@ function renderReconnect() {
 }
 
 function renderChoice(user) {
+  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
   <main class="welcome">
     <h1>Hi ${esc((user.name || ``).split(` `)[0] || `there`)}</h1>
@@ -196,6 +199,7 @@ function renderChoice(user) {
 }
 
 function renderLoading(msg) {
+  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `<main class="welcome"><div class="spinner"></div><p class="muted">${esc(msg)}</p></main>`;
 }
 
@@ -203,6 +207,7 @@ const googleG = () => `<svg class="g" viewBox="0 0 48 48" aria-hidden="true"><pa
 
 // ============================================================ shell + routing
 function renderShell() {
+  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
     <header class="topbar">
       <a href="#/" class="logo">${icon(`box`)}<span>${esc(CONFIG.APP_NAME)}</span></a>

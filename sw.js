@@ -1,7 +1,7 @@
 // App shell served from the device instantly (cache first). Google API calls are never cached here.
 // Updating: bump VERSION. The new version is downloaded in the background as one complete set,
 // then the page offers "Reload" (or picks it up on the next open). Files are never mixed across versions.
-const VERSION = `stash-v14`;
+const VERSION = `stash-v15`;
 const SHELL = [
   `./`, `./index.html`, `./css/app.css`, `./manifest.webmanifest`,
   `./js/app.js`, `./js/config.js`, `./js/google.js`, `./js/store.js`, `./js/search.js`, `./js/image.js`, `./js/ui.js`, `./js/idb.js`, `./js/ai.js`,
@@ -9,8 +9,17 @@ const SHELL = [
 ];
 
 self.addEventListener(`install`, (e) => {
-  // cache: 'reload' bypasses the browser's HTTP cache so the new set is really new
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: `reload` })))).then(() => self.skipWaiting()));
+  // Each file is requested as "<file>?v=<VERSION>" so neither the browser cache nor GitHub's CDN can hand back an older
+  // copy, then stored under its plain name. If any file fails, the install fails and the current version keeps running.
+  e.waitUntil((async () => {
+    const cache = await caches.open(VERSION);
+    await Promise.all(SHELL.map(async (u) => {
+      const res = await fetch(new Request(`${u}${u.includes(`?`) ? `&` : `?`}v=${VERSION}`, { cache: `no-store` }));
+      if (!res.ok) throw new Error(`${u}: ${res.status}`);
+      await cache.put(u, res);
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener(`activate`, (e) => {

@@ -23,12 +23,46 @@
     .splash { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px; background: #f6f3ee;
       font: 600 1.25rem/1 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif; color: #1d1b18; }
     .splash i { width: 64px; height: 64px; border-radius: 18px; background: #2f5d50; display: grid; place-items: center; }
+    .splash::after { content: "Loading…"; font: 400 0.9rem/1 ui-sans-serif, -apple-system, sans-serif; opacity: 0; animation: splashIn 0.3s 1.5s forwards; }
+    .splash:has(.splash-msg)::after { content: none; }
+    @keyframes splashIn { to { opacity: 0.6; } }
+    .splash-msg { max-width: 280px; text-align: center; font-weight: 400; font-size: 15px; line-height: 1.45; }
+    .splash-btn { min-width: 220px; min-height: 46px; border-radius: 999px; border: 1px solid #d9d3c8; background: transparent; font: 600 15px/1 ui-sans-serif, -apple-system, sans-serif; color: inherit; cursor: pointer; }
+    .splash-btn.primary { background: #2f5d50; border-color: #2f5d50; color: #fff; }
+    .splash-note { max-width: 260px; text-align: center; font-weight: 400; font-size: 12px; opacity: 0.7; }
     @media (prefers-color-scheme: dark) { .splash { background: #161513; color: #f1ede6; } }
   </style>
 </head>
 <body>
   <div id="app"><div class="splash" aria-label="Loading Stash"><i><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i>Stash</div></div>
   <div id="toasts" aria-live="polite"></div>
+  <script>
+    // Startup watchdog: if the app hasn't started (a failed or half-finished update, a bad connection),
+    // never leave the user on the logo. Offer Try again, and Repair = re-download the app files.
+    // Repair only clears the app's own files; the inventory (stored separately on this phone and in Google) is untouched.
+    (function () {
+      var shown = false;
+      function fail() {
+        if (window.__stashStarted || shown) return; shown = true;
+        var a = document.getElementById('app');
+        a.innerHTML = '<div class="splash"><i><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i>'
+          + '<div class="splash-msg">Stash didn’t start properly. This can happen right after an update.</div>'
+          + '<button class="splash-btn primary" onclick="location.reload()">Try again</button>'
+          + '<button class="splash-btn" onclick="window.__stashRepair()">Repair and reload</button>'
+          + '<small class="splash-note">Repair downloads the app again. Your inventory isn’t affected.</small></div>';
+      }
+      window.__stashRepair = function () {
+        var jobs = [];
+        try { if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
+        try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+        Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname + '?r=' + Date.now() + location.hash); });
+      };
+      setTimeout(fail, 8000);
+      // a module that fails to load or link reports here; give it a moment in case the app recovers
+      window.addEventListener('error', function () { setTimeout(fail, 1200); }, true);
+      window.addEventListener('unhandledrejection', function () { setTimeout(fail, 3000); });
+    })();
+  </script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>
