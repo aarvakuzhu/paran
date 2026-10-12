@@ -543,5 +543,5 @@ button.back .ic { width: 18px; height: 18px; }
 .restore-note { display: flex; gap: 10px; align-items: flex-start; background: var(--amber-soft); color: var(--amber); padding: 10px 12px; border-radius: 12px; font-size: 0.9rem; }
 .restore-note .ic { flex: none; margin-top: 2px; }
 .field input.restored, .field textarea.restored { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
-.field:has(.restored) > span::after { content: " · earlier version"; font-weight: 500; color: var(--amber); font-size: 0.8rem; }
+.field:has(.restored) > span::after { content: " · restored"; font-weight: 500; color: var(--amber); font-size: 0.8rem; }
 .size-chips.restored .chip.on { background: var(--amber); border-color: var(--amber); }

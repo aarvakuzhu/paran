@@ -232,7 +232,7 @@ function renderStatus() {
   const map = {
     synced: [`ok`, `Saved`], idle: [`ok`, `Saved`], syncing: [`busy`, `Saving…`],
     pending: [`warn`, `${pending} to save`], offline: [`warn`, pending ? `Offline · ${pending} waiting` : `Offline`],
-    auth: [`warn`, pending ? `${pending} waiting · tap to sync` : `Tap to sync`], error: [`bad`, `Sync issue`],
+    auth: [`warn`, pending ? `${pending} waiting · tap to sync` : `Tap to sync`], error: [`bad`, `Not saved yet`],
   };
   const [cls, label] = repo.backend.kind === `demo` ? [`demo`, `Demo`] : (map[s] || map.idle);
   el.className = `status ${cls}`;
@@ -712,8 +712,8 @@ async function aiMergeIntoItem(itemId) {
       before.notes = cur.notes || ``; patch.notes = cur.notes ? `${cur.notes}\n${line}` : line; said.push(r.model ? `model ${r.model}` : `specs`);
     }
     if (!said.length) { toast(`AI found nothing new in the photos`); return; }
-    await repo.saveItem({ id: itemId, ...patch }, { info: `AI from ${imgs.length} photo${imgs.length > 1 ? `s` : ``}: ${said.join(`, `)}` });
-    toast(`AI updated ${said.join(`, `)}. See History to compare.`, { action: `Undo`, ms: 9000, onAction: () => repo.saveItem({ id: itemId, ...before }, { info: `Undid the AI update` }) });
+    await repo.saveItem({ id: itemId, ...patch }, { info: `Updated by AI (${imgs.length} photo${imgs.length > 1 ? `s` : ``}): ${said.join(`, `)}` });
+    toast(`AI updated ${said.join(`, `)}. You can restore earlier text from History.`, { action: `Undo`, ms: 9000, onAction: () => repo.saveItem({ id: itemId, ...before }, { info: `Undid the AI update` }) });
   } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000 }); }
 }
 
@@ -795,7 +795,7 @@ function describeEntry(e, prev) {
       const picked = prev?.action === `reserved` && Repo.personKey(prev.detail) === Repo.personKey(e.detail);
       return { title: `${picked ? `Picked up by` : `Lent to`} ${person(e.detail)}` };
     }
-    case e.action === `returned`: return { title: e.detail ? `Returned by ${person(e.detail)}` : `Back home` };
+    case e.action === `returned`: return { title: e.detail ? `Returned by ${person(e.detail)}` : `Returned` };
     case e.action === `reserved`: return { title: `Reserved for ${person(e.detail)}`, note: due ? `Pick up by ${esc(new Date(`${due}T00:00`).toLocaleDateString(undefined, { weekday: `short`, month: `short`, day: `numeric` }))}` : `` };
     case e.action === `unreserved`: return { title: `No longer reserved for ${e.detail ? person(e.detail) : `them`}` };
     case e.action === `missing`: return { title: `Marked missing` };
@@ -822,9 +822,9 @@ function itemHistoryHtml(item) {
         <div class="ih-field">${esc(FIELD_LABEL[f])}</div>
         <div class="ih-old">${ch[f][0] ? esc(ch[f][0]) : `<i>empty</i>`}</div>
         <div class="ih-new">${ch[f][1] ? esc(ch[f][1]) : `<i>empty</i>`}</div>
-        <button type="button" class="btn ghost small" data-useold="${esc(e.ts)}" data-field="${f}">Use old</button></div>`).join(``)}
-      ${fields.length > 1 ? `<button type="button" class="link small" data-useold="${esc(e.ts)}" data-field="*">Use all old values</button>` : ``}</div>` : ``;
-    const title = fields.length && /^AI\b/.test(e.info || ``) ? `${icon(`spark`)} ${esc(e.info.split(`:`)[0])}` : d.title;
+        <button type="button" class="btn ghost small" data-useold="${esc(e.ts)}" data-field="${f}">Restore</button></div>`).join(``)}
+      ${fields.length > 1 ? `<button type="button" class="link small" data-useold="${esc(e.ts)}" data-field="*">Restore all</button>` : ``}</div>` : ``;
+    const title = fields.length && /^(AI\b|Updated by AI)/.test(e.info || ``) ? `${icon(`spark`)} ${esc(e.info.split(`:`)[0].replace(/^AI from (.+)$/, `Updated by AI ($1)`))}` : d.title;
     return `<div class="ih-row${i >= SHOW ? ` extra` : ``}">
       <span class="ih-ic">${icon(d.icon || ACTION_ICON[e.action] || `edit`)}</span>
       <div><div class="ih-title">${title}</div>${diff || (d.note ? `<div class="ih-note">${d.note}</div>` : ``)}
@@ -862,7 +862,7 @@ function historyText(h) {
 function personSheet(key) {
   const person = repo.people().find((p) => p.key === key);
   if (!person) return toast(`No lending history for that name yet`);
-  sheet(`Borrower`, (el, close) => {
+  sheet(person.name, (el, close) => {
     const draw = () => {
       const p = repo.people().find((x) => x.key === key) || { ...person, holding: [], saved: [] };
       const hist = repo.personHistory(key);
@@ -900,7 +900,7 @@ function personSheet(key) {
       if (b.dataset.open) { close(); location.hash = `#/item/${b.dataset.open}`; return; }
       if (b.dataset.back) {
         const it = repo.items.find((i) => i.id === b.dataset.back);
-        if (it) { await repo.returnItem(it); toast(`${it.name} is back`); draw(); }
+        if (it) { await repo.returnItem(it); toast(`${it.name} returned`); draw(); }
         return;
       }
       if (b.dataset.pick) {
@@ -1084,7 +1084,7 @@ function viewOut(view) {
             <span class="pc-items">${items.slice(0, 4).map((i) => esc(i.name)).join(`, `)}${items.length > 4 ? ` +${items.length - 4}` : ``}</span></div>
           ${icon(`chevron`)}</button>`; }).join(``)}</div>`
         : `<div class="empty">${icon(`lend`, `big`)}<p>Use <b>Lend or reserve</b> on any item to keep track of who has it.</p></div>`}
-      ${past.length ? `<div class="label-sm">Lent before</div><div class="chips">${past.map((p) => `<button type="button" class="chip" data-person="${esc(p.key)}">${esc(p.name)}</button>`).join(``)}</div>` : ``}
+      ${past.length ? `<div class="label-sm">Past borrowers</div><div class="chips">${past.map((p) => `<button type="button" class="chip" data-person="${esc(p.key)}">${esc(p.name)}</button>`).join(``)}</div>` : ``}
     </div>`;
   view.onclick = (e) => { const b = e.target.closest(`[data-person]`); if (b) { e.preventDefault(); personSheet(b.dataset.person); } };
 }
@@ -1097,7 +1097,7 @@ function viewItem(view, r) {
   const due = dueText(item.dueAt);
   const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)}<div class="grow"><span>Lent to ${personBtn}</span>${lentSinceText(item)}</div></div>`
     : item.status === `reserved` ? `<div class="banner reserved${due.late ? ` late` : ``}">${icon(`clock`)}<div class="grow"><span>Reserved for ${personBtn}</span>${due.text ? `<small>${esc(due.text)}</small>` : ``}</div>
-        <button type="button" class="btn text small" data-a="unsave">Cancel</button></div>`
+        <button type="button" class="btn text small" data-a="unsave">Cancel reservation</button></div>`
     : item.status === `missing` ? `<div class="banner missing">${icon(`alert`)} Marked missing</div>` : ``;
   const tags = String(item.tags || ``).split(`,`).map((t) => t.trim()).filter(Boolean);
   const hasPhoto = Boolean(repo.thumbs[item.id] || item.photoId);
@@ -1188,7 +1188,7 @@ function viewItem(view, r) {
       const who = item.lentTo; const was = item.dueAt;
       await repo.cancelReservation(item);
       toast(`No longer reserved for ${who}`, { action: `Undo`, ms: 6000, onAction: () => repo.reserveItem(item, who, was) });
-    } else if (a === `return`) { await repo.returnItem(item); toast(`Back home`); }
+    } else if (a === `return`) { await repo.returnItem(item); toast(`Returned`); }
     else if (a === `found`) { await repo.markFound(item); toast(`Found`); }
   };
 }
@@ -1204,7 +1204,7 @@ function itemMenu(item) {
     el.innerHTML = `<div class="menu">
       <a href="#/edit/${esc(item.id)}" data-m="edit">${icon(`edit`)} Edit details</a>
       ${item.status === `lent` || item.status === `reserved` ? `` : `<button data-m="lend">${icon(`lend`)} Lend or reserve</button>`}
-      ${item.status === `missing` ? `<button data-m="found">${icon(`check`)} Found it</button>` : `<button data-m="missing">${icon(`alert`)} I can’t find it</button>`}
+      ${item.status === `missing` ? `<button data-m="found">${icon(`check`)} Found it</button>` : `<button data-m="missing">${icon(`alert`)} Mark as missing</button>`}
       <button data-m="delete" class="danger">${icon(`trash`)} Remove from inventory</button></div>`;
     el.onclick = async (e) => {
       const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
@@ -1237,7 +1237,7 @@ function viewEdit(view, r) {
       <label class="photo-pick" id="pp">
         <input type="file" accept="image/*" capture="environment" id="photo" hidden>
         <div class="pp-view">${editing && repo.thumbs[editing.id] ? `<img src="${repo.thumbs[editing.id]}" alt="">` : `<div class="pp-empty">${icon(`camera`)}<span>Take a photo</span></div>`}</div>
-        <div class="pp-busy" hidden><div class="spinner"></div><span>Identifying…</span></div>
+        <div class="pp-busy" hidden><div class="spinner"></div><span>Reading photos…</span></div>
       </label>
       <div id="xstrip"></div>
       <div id="aiRow"></div>
@@ -1255,7 +1255,7 @@ function viewEdit(view, r) {
           <label class="field"><span>How many</span><input name="qty" type="number" min="0" inputmode="numeric" value="${esc(item.qty || 1)}"></label>
         </div>
         <datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join(``)}</datalist>
-        <label class="field"><span>Other search words <small>(optional)</small></span><input name="tags" value="${esc(item.tags)}" placeholder="e.g. plumbing, teflon"></label>
+        <label class="field"><span>Search words <small>(optional)</small></span><input name="tags" value="${esc(item.tags)}" placeholder="e.g. plumbing, teflon"></label>
         <div class="two">
           <label class="field"><span>Warranty until</span><input name="warranty" type="date" value="${esc(item.warranty)}"></label>
           <label class="field"><span>Expires</span><input name="expiry" type="date" value="${esc(item.expiry)}"></label>
@@ -1331,7 +1331,7 @@ function viewEdit(view, r) {
     const row = $(`#aiRow`); if (!row) return;
     if (!aiReady()) {
       let hidden = false; try { hidden = localStorage.getItem(`stash.aiPromoHidden`) === `1`; } catch { /* ignore */ }
-      row.innerHTML = editing || hidden ? `` : `<div class="ai-setup"><a href="#/more?ai=1">${icon(`spark`)}<span>Let AI fill in the details from your photo</span><b>Set up</b></a>
+      row.innerHTML = editing || hidden ? `` : `<div class="ai-setup"><a href="#/more?ai=1">${icon(`spark`)}<span>Let AI suggest details from your photos</span><b>Set up</b></a>
         <button type="button" class="icon-btn" data-hidepromo aria-label="Don’t show again">${icon(`x`)}</button></div>`;
       const x = row.querySelector(`[data-hidepromo]`);
       if (x) x.onclick = () => { try { localStorage.setItem(`stash.aiPromoHidden`, `1`); } catch { /* ignore */ } row.innerHTML = ``; toast(`You can turn AI on any time in More`); };
@@ -1339,8 +1339,8 @@ function viewEdit(view, r) {
     }
     const s = aiSettings();
     row.innerHTML = `<div class="ai-row">
-        <label class="switch"><input type="checkbox" id="aiAuto" ${s.auto ? `checked` : ``}><i></i><span>${icon(`spark`)} Identify with AI when I take a photo</span></label>
-        ${shot ? `<button type="button" class="btn ghost small" id="aiRun">${icon(`spark`)} Suggest details</button>` : ``}
+        <label class="switch"><input type="checkbox" id="aiAuto" ${s.auto ? `checked` : ``}><i></i><span>${icon(`spark`)} Suggest details from photos</span></label>
+        ${shot ? `<button type="button" class="btn ghost small" id="aiRun">${icon(`spark`)} Suggest now</button>` : ``}
       </div>`;
     $(`#aiAuto`).onchange = (e) => saveAiSettings({ auto: e.target.checked });
     const run = $(`#aiRun`); if (run) run.onclick = () => runAi();
@@ -1407,7 +1407,7 @@ function viewEdit(view, r) {
   });
   drawAiRow(); drawStrip();
 
-  // "Use old" from History: put the earlier value(s) back into the form. Nothing changes until Save.
+  // "Restore" from History: put the earlier value(s) back into the form. Nothing changes until Save.
   if (editing && r.params.get(`restore`)) {
     const entry = repo.log.find((x) => x.itemId === editing.id && x.ts === r.params.get(`restore`));
     const ch = Repo.parseChanges(entry?.changes); delete ch._ai;
@@ -1423,7 +1423,7 @@ function viewEdit(view, r) {
       el.closest(`details`)?.setAttribute(`open`, ``);
     }
     if (keys.length) {
-      $(`h1`, view).insertAdjacentHTML(`afterend`, `<div class="restore-note">${icon(`ret`)}<span>Earlier ${esc(keys.map((k) => FIELD_LABEL[k].toLowerCase()).join(`, `))} from ${esc(fmtWhen(entry.ts))} put back. Check it, then tap <b>Save</b> to keep it, or Cancel.</span></div>`);
+      $(`h1`, view).insertAdjacentHTML(`afterend`, `<div class="restore-note">${icon(`ret`)}<span>Earlier ${esc(keys.map((k) => FIELD_LABEL[k].toLowerCase()).join(`, `))} from ${esc(fmtWhen(entry.ts))} restored. Tap <b>Save</b> to keep it, or Cancel.</span></div>`);
       setTimeout(() => first?.scrollIntoView({ block: `center`, behavior: `smooth` }), 150);
     } else toast(`That earlier version isn’t available any more`);
   }
@@ -1501,13 +1501,13 @@ function duplicatePrompt(fields, dups) {
               ${d.item.status === `lent` ? `<small class="warn">Lent to ${esc(d.item.lentTo || `someone`)}</small>` : ``}</div></div>
             <div class="dup-actions">
               <button type="button" class="btn ghost small" data-act="open" data-i="${i}">Open it</button>
-              ${!d.samePlace && fields.locationId ? `<button type="button" class="btn ghost small" data-act="move" data-i="${i}">Same one, it’s here now</button>` : ``}
+              ${!d.samePlace && fields.locationId ? `<button type="button" class="btn ghost small" data-act="move" data-i="${i}">It moved here</button>` : ``}
               <button type="button" class="btn ghost small" data-act="more" data-i="${i}">I have another (+${esc(fields.qty)})</button>
             </div>
           </div>`).join(``)}
         </div>
         <div class="row-actions">
-          <button type="button" class="btn ghost" data-back>Back to edit</button>
+          <button type="button" class="btn ghost" data-back>Keep editing</button>
           <button type="button" class="btn primary" data-new>Save as a new item</button>
         </div>`;
       el.onclick = (e) => {
@@ -1613,7 +1613,7 @@ function viewPlace(view, r) {
       <div class="place-head">
         <h1>${loc ? `${icon(KIND_ICON[loc.kind] || `box`)} ${esc(loc.name)}` : `Places`}</h1>
         ${loc ? `<div class="detail-tools">
-            ${loc.kind === `container` ? `<button class="btn ghost small" data-a="qr">${icon(`qr`)} Label</button>` : ``}
+            ${loc.kind === `container` ? `<button class="btn ghost small" data-a="qr">${icon(`qr`)} QR label</button>` : ``}
             <button class="icon-btn" data-a="menu" aria-label="Place options">${icon(`more`)}</button></div>` : ``}
       </div>
       ${loc ? `<a class="btn primary full" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>` : ``}
@@ -1649,7 +1649,7 @@ function placeMenu(loc) {
       <button data-m="move">${icon(`move`)} Move ${esc(loc.name)} to another place</button>
       <button data-m="rename">${icon(`edit`)} Rename</button>
       <button data-m="qr">${icon(`qr`)} Print QR label</button>
-      <button data-m="delete" class="danger">${icon(`trash`)} Delete place</button></div>`;
+      <button data-m="delete" class="danger">${icon(`trash`)} Remove place</button></div>`;
     el.onclick = async (e) => {
       const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
       close();
@@ -1666,7 +1666,7 @@ function placeMenu(loc) {
       else if (m === `delete`) {
         const n = repo.itemsIn(loc.id, true).length + repo.descendantIds(loc.id).size - 1;
         if (n) return toast(`Move or remove what’s inside first`);
-        if (await confirmSheet(`Delete ${loc.name}?`, `This place is empty.`, `Delete`, true)) { repo.deleteLocation(loc); location.hash = loc.parentId ? `#/place/${loc.parentId}` : `#/places`; }
+        if (await confirmSheet(`Remove ${loc.name}?`, `This place is empty.`, `Remove`, true)) { repo.deleteLocation(loc); location.hash = loc.parentId ? `#/place/${loc.parentId}` : `#/places`; }
       }
     };
   });
@@ -1702,7 +1702,7 @@ async function printLabel(loc) {
 function aiConsent(keyOnly = false) {
   return new Promise((resolve) => {
     let done = false;
-    sheet(keyOnly ? `Change API key` : `AI suggestions`, (el, close) => {
+    sheet(keyOnly ? `Change Gemini key` : `AI suggestions`, (el, close) => {
       el.innerHTML = `<form class="stack consent">
         ${keyOnly ? `` : `<div class="consent-points">
           <p>${icon(`camera`)}<span>When you use it, a reduced copy of the photo is sent <b>from this phone directly to Google Gemini</b>, using your own API key. Stash has no server and never sees it.</span></p>
@@ -1715,7 +1715,7 @@ function aiConsent(keyOnly = false) {
           <li>Tap <b>Create API key</b>, then copy it.</li>
           <li>Paste it below. It’s stored only on this device, not in your Sheet.</li>
         </ol>
-        <label class="field"><span>Gemini API key</span><input name="key" autocomplete="off" spellcheck="false" placeholder="AIza…" required></label>
+        <label class="field"><span>Gemini key</span><input name="key" autocomplete="off" spellcheck="false" placeholder="AIza…" required></label>
         ${keyOnly ? `` : `<label class="check"><input type="checkbox" name="agree" required><span>I understand that photos I choose to analyze are sent to Google Gemini.</span></label>`}
         <p class="error-box" hidden></p>
         <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">${keyOnly ? `Save key` : `Verify &amp; turn on`}</button></div>
@@ -1765,24 +1765,24 @@ function viewMore(view, r) {
       <div class="label-sm" id="ai">AI suggestions</div>
       ${aiReady() ? `<div class="menu">
           <div class="menu-info">${icon(`spark`)}<div><b>On</b><small>Model: ${esc(aiSettings().model)}</small><small>${aiUsageToday()} photo${aiUsageToday() === 1 ? `` : `s`} analyzed today on this device · resets 3 AM ET</small></div></div>
-          <label class="menu-switch"><span>Identify automatically when I take a photo</span><span class="switch"><input type="checkbox" data-aiauto ${aiSettings().auto ? `checked` : ``}><i></i></span></label>
-          <button data-m="aikey">${icon(`edit`)} Change API key</button>
+          <label class="menu-switch"><span>Suggest details from photos</span><span class="switch"><input type="checkbox" data-aiauto ${aiSettings().auto ? `checked` : ``}><i></i></span></label>
+          <button data-m="aikey">${icon(`edit`)} Change Gemini key</button>
           <button data-m="aioff" class="danger">${icon(`x`)} Turn off and remove key</button>
         </div>`
-        : `<div class="ai-card">${icon(`spark`)}<div><b>Fill in details from a photo</b><p>Gemini can name what’s in a photo, say what it’s for, and list several items from one shot of a bin or shelf. Off until you turn it on.</p>
+        : `<div class="ai-card">${icon(`spark`)}<div><b>AI suggestions</b><p>Gemini can name what’s in a photo, say what it’s for, and list several items from one shot of a bin or shelf. Off until you turn it on.</p>
           <button class="btn primary" data-m="aion">Set up AI suggestions</button></div></div>`}
 
       <div class="label-sm">Your data</div>
       <div class="menu">
         ${g ? `<a href="${esc(repo.backend.sheetUrl)}" target="_blank" rel="noopener">${icon(`sheet`)} Open the Google Sheet</a>` : ``}
-        <button data-m="csv">${icon(`download`)} Export as CSV (Excel)</button>
-        <button data-m="sync">${icon(`cloud`)} Sync now</button>
+        <button data-m="csv">${icon(`download`)} Download spreadsheet (CSV)</button>
+        <button data-m="sync">${icon(`cloud`)} Refresh now</button>
       </div>
 
       <div class="label-sm">Account</div>
       <div class="menu">
         ${g ? `<button data-m="signout">${icon(`out`)} Sign out</button>`
-          : `${googleConfigured() ? `<button data-m="google">${googleG()} Switch to Google Drive</button>` : ``}
+          : `${googleConfigured() ? `<button data-m="google">${googleG()} Sign in with Google</button>` : ``}
              <button data-m="reset" class="danger">${icon(`trash`)} Clear demo data</button>`}
       </div>
       <p class="fine center">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? `Everything is in your Drive folder “${esc(CONFIG.ROOT_FOLDER_NAME)}”.` : ``}</p>

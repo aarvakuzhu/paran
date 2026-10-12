@@ -544,7 +544,7 @@ export class Repo extends EventTarget {
   fieldSetByAi(itemId, field) {
     for (const e of this.itemHistory(itemId)) { // newest first
       const ch = Repo.parseChanges(e.changes);
-      if (field in ch) return /^AI\b/.test(e.info || ``);
+      if (field in ch) return /^(AI\b|Updated by AI)/.test(e.info || ``);
       if (e.action === `added`) return Array.isArray(ch._ai) && ch._ai.includes(field);
     }
     return false;
@@ -556,7 +556,7 @@ export class Repo extends EventTarget {
     if (action === `reserved` && item.dueAt) return `due ${item.dueAt}`;
     if (action !== `edited` || !before) return ``;
     const short = (v) => { const t = String(v ?? ``).replace(/\s+/g, ` `).trim(); return t ? (t.length > 40 ? `${t.slice(0, 39)}…` : t) : `empty`; };
-    const labels = { name: `Name`, purpose: `What it’s for`, category: `Category`, size: `Size`, tags: `Search words`, qty: `Qty`, warranty: `Warranty`, expiry: `Expires`, notes: `Notes` };
+    const labels = { name: `Name`, purpose: `What it’s for`, category: `Category`, size: `Size`, tags: `Search words`, qty: `How many`, warranty: `Warranty`, expiry: `Expires`, notes: `Notes` };
     const changes = Object.entries(labels)
       .filter(([k]) => String(before[k] ?? ``) !== String(item[k] ?? ``))
       .map(([k, label]) => `${label}: ${short(before[k])} → ${short(item[k])}`);
