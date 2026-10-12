@@ -73,7 +73,7 @@ The Client ID and API key are not secrets in a browser app; they are protected b
 3. The app is at `https://aarvakuzhu.github.io/stash/`. Make sure `https://aarvakuzhu.github.io` is in the OAuth client's JavaScript origins.
 4. On the phone, open the URL, then **Share → Add to Home Screen** (iOS) or **Install app** (Android Chrome).
 
-After changing files, bump `VERSION` in `sw.js` so installed copies pick up the update.
+After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on the phone (no network wait), downloads a new version in the background as one complete set, and applies it either straight away (if the app was only just opened) or after the user taps **Reload** on the "new version ready" prompt.
 
 ## How sharing works (and its limits)
 

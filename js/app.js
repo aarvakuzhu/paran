@@ -26,9 +26,28 @@ function dueText(due) {
   return { text: `pick up by ${new Date(`${due}T00:00`).toLocaleDateString(undefined, { weekday: `short`, month: `short`, day: `numeric` })}`, late: false };
 }
 
+// ============================================================ updates
+// The app opens from the copy on the phone. When a new version has finished downloading in the background,
+// offer a reload (or apply it silently if the app was only just opened).
+const bootedAt = Date.now();
+function registerServiceWorker() {
+  if (!(`serviceWorker` in navigator) || location.protocol === `file:`) return;
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  navigator.serviceWorker.register(`./sw.js`, { updateViaCache: `none` }).then((reg) => {
+    document.addEventListener(`visibilitychange`, () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+  let reloading = false;
+  navigator.serviceWorker.addEventListener(`controllerchange`, () => {
+    if (!hadController || reloading) return; // first install: nothing to update
+    const busy = document.querySelector(`.sheet-wrap.open, .viewer`) || [`add`, `edit`].includes(route().name);
+    if (Date.now() - bootedAt < 4000 && !busy) { reloading = true; location.reload(); return; }
+    toast(`A new version of Stash is ready`, { action: `Reload`, ms: 15000, onAction: () => { reloading = true; location.reload(); } });
+  });
+}
+
 // ============================================================ boot
 async function boot() {
-  if (`serviceWorker` in navigator && location.protocol !== `file:`) navigator.serviceWorker.register(`./sw.js`).catch(() => {});
+  registerServiceWorker();
   window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
   installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
