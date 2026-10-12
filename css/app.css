@@ -374,3 +374,26 @@ body.selecting .view { padding-bottom: calc(var(--tabbar-h) + 100px + env(safe-a
 .bring-row small { color: var(--ink-3); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bring-row:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .sticky-actions { position: sticky; bottom: 0; background: var(--bg); padding-top: 10px; margin-top: 6px; }
+
+/* ---------- save for later ---------- */
+.badge.reserved { background: var(--accent-soft); color: var(--accent); }
+.badge.reserved.late, small.late { color: var(--red) !important; }
+.badge.reserved.late { background: var(--red-soft); }
+.banner.reserved { background: var(--accent-soft); color: var(--accent); align-items: center; }
+.banner.reserved.late { background: var(--red-soft); color: var(--red); }
+.banner .grow { flex: 1; display: grid; }
+.banner .grow small { font-size: 0.82rem; opacity: 0.9; }
+.banner .btn.text { color: inherit; min-height: 32px; padding: 0 6px; text-decoration: underline; }
+.act.hi { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.act.hi .ic { color: var(--accent-ink); }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; background: var(--surface-2); border-radius: 12px; }
+.seg button { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.seg button .ic { width: 18px; height: 18px; }
+.seg button.on { background: var(--surface); color: var(--accent); box-shadow: var(--shadow); }
+[data-duebox][hidden] { display: none; }
+[data-duebox] .chips { margin: 0 0 6px; }
+[data-duebox] .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.tl-row.saved > i { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tl-row.saved small { color: var(--accent); }
+.tl-row.cancelled > i { background: var(--ink-3); }
+.tl-row.cancelled .link-plain { color: var(--ink-3); text-decoration: line-through; }

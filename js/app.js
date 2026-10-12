@@ -13,7 +13,18 @@ let findState = { q: ``, filter: `` };
 
 const app = $(`#app`);
 const KIND_ICON = { place: `home`, room: `room`, container: `box` };
-const STATUS_LABEL = { lent: `Lent out`, missing: `Missing`, home: `` };
+const STATUS_LABEL = { lent: `Lent out`, missing: `Missing`, reserved: `Saved for`, home: `` };
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, `0`)}-${String(d.getDate()).padStart(2, `0`)}`; };
+const isoDay = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, `0`)}-${String(d.getDate()).padStart(2, `0`)}`; };
+/** "by Fri, Oct 16", "today", "2 days late" for a YYYY-MM-DD pick-up date. */
+function dueText(due) {
+  if (!due) return { text: ``, late: false };
+  const days = Math.round((new Date(`${due}T00:00`) - new Date(`${todayStr()}T00:00`)) / 86400000);
+  if (days < 0) return { text: `${-days} day${days === -1 ? `` : `s`} late`, late: true };
+  if (days === 0) return { text: `pick up today`, late: false };
+  if (days === 1) return { text: `pick up tomorrow`, late: false };
+  return { text: `pick up by ${new Date(`${due}T00:00`).toLocaleDateString(undefined, { weekday: `short`, month: `short`, day: `numeric` })}`, late: false };
+}
 
 // ============================================================ boot
 async function boot() {
@@ -194,7 +205,10 @@ function thumbHtml(item, cls = `thumb`) {
 
 function itemCard(item) {
   const path = repo.pathText(item.locationId);
-  const badge = STATUS_LABEL[item.status] ? `<span class="badge ${esc(item.status)}">${esc(STATUS_LABEL[item.status])}${item.status === `lent` && item.lentTo ? ` · ${esc(item.lentTo)}` : ``}</span>` : ``;
+  const due = item.status === `reserved` ? dueText(item.dueAt) : { text: `` };
+  const badge = item.status === `reserved`
+    ? `<span class="badge reserved${due.late ? ` late` : ``}">Saved for ${esc(item.lentTo || `someone`)}${due.text ? ` · ${esc(due.text)}` : ``}</span>`
+    : STATUS_LABEL[item.status] ? `<span class="badge ${esc(item.status)}">${esc(STATUS_LABEL[item.status])}${item.status === `lent` && item.lentTo ? ` · ${esc(item.lentTo)}` : ``}</span>` : ``;
   const cls = `${sel.on ? ` selectable` : ``}${sel.ids.has(item.id) ? ` selected` : ``}`;
   return `<a class="card${cls}" href="#/item/${esc(item.id)}" data-id="${esc(item.id)}">
     <span class="sel-tick" aria-hidden="true">${icon(`check`)}</span>
@@ -442,44 +456,114 @@ const daysBetween = (a, b = new Date().toISOString()) => {
 const dayText = (n) => (n === null ? `` : n === 0 ? `today` : n === 1 ? `1 day` : `${n} days`);
 const initials = (name) => String(name || `?`).trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join(``).toUpperCase();
 
-/** Free-text "who has it?" with a dropdown of people you've lent to before. Resolves the name or null. */
-function lendSheet(item) {
+/**
+ * Lend now or save for later. Free-text name with a dropdown of people you've lent to before.
+ * Resolves { name, mode: 'now'|'later', dueAt } or null.
+ */
+function lendSheet(item, { mode: startMode = `now` } = {}) {
   return new Promise((resolve) => {
-    let done = false;
+    let done = false; let mode = startMode; let picked = ``;
     const people = repo.people();
-    sheet(`Lend ${item.name}`, (el, close) => {
+    sheet(item.name, (el, close) => {
       const finish = (v) => { done = true; resolve(v); close(); };
       el.innerHTML = `<form class="stack lend-form" autocomplete="off">
-          <label class="field"><span>Who has it?</span>
+          <div class="seg" role="tablist">
+            <button type="button" data-mode="now" role="tab">${icon(`lend`)} Lend now</button>
+            <button type="button" data-mode="later" role="tab">${icon(`clock`)} Save for later</button>
+          </div>
+          <label class="field"><span data-wholabel></span>
             <input name="who" placeholder="Type a name" required autocomplete="off" autocapitalize="words" enterkeyhint="done"></label>
           <div class="suggest" role="listbox"></div>
-          <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">Lend</button></div>
+          <div class="field" data-duebox hidden><span>Pick up by <small>(optional)</small></span>
+            <div class="chips" data-quick>
+              <button type="button" class="chip" data-due="${isoDay(0)}">Today</button>
+              <button type="button" class="chip" data-due="${isoDay(1)}">Tomorrow</button>
+              <button type="button" class="chip" data-due="${isoDay(3)}">In 3 days</button>
+              <button type="button" class="chip" data-due="${isoDay(7)}">Next week</button>
+            </div>
+            <input type="date" name="due" min="${todayStr()}">
+          </div>
+          <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary" data-ok></button></div>
         </form>`;
-      const input = $(`input`, el); const box = $(`.suggest`, el);
+      const input = $(`[name=who]`, el); const box = $(`.suggest`, el); const due = $(`[name=due]`, el);
+      const drawMode = () => {
+        $$(`[data-mode]`, el).forEach((b) => b.classList.toggle(`on`, b.dataset.mode === mode));
+        $(`[data-wholabel]`, el).textContent = mode === `now` ? `Who has it?` : `Who is it for?`;
+        $(`[data-duebox]`, el).hidden = mode !== `later`;
+        $(`[data-ok]`, el).textContent = mode === `now` ? `Lend` : `Save for them`;
+      };
+      const drawQuick = () => $$(`[data-due]`, el).forEach((c) => c.classList.toggle(`on`, c.dataset.due === due.value));
       const draw = () => {
         const q = Repo.personKey(input.value);
-        const list = q
-          ? people.filter((p) => p.key.includes(q)).sort((a, b) => (b.key.startsWith(q) - a.key.startsWith(q)))
-          : people;
+        const list = (q ? people.filter((p) => p.key.includes(q)).sort((a, b) => (b.key.startsWith(q) - a.key.startsWith(q))) : people)
+          .filter((p) => p.key !== q || !picked); // hide the exact match once chosen
         box.innerHTML = list.slice(0, 6).map((p) => `<button type="button" class="suggest-row" data-name="${esc(p.name)}" role="option">
             <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span>
-            <small>${p.holding.length ? `has ${p.holding.length} now` : `lent ${p.total}×`}</small></button>`).join(``);
+            <small>${[p.holding.length ? `has ${p.holding.length}` : ``, p.saved.length ? `${p.saved.length} saved` : ``].filter(Boolean).join(` · `) || `lent ${p.total}×`}</small></button>`).join(``);
         box.hidden = !list.length;
         if (!q && list.length) box.insertAdjacentHTML(`afterbegin`, `<div class="label-sm">People you’ve lent to</div>`);
       };
-      input.addEventListener(`input`, draw);
-      box.onclick = (e) => { const b = e.target.closest(`[data-name]`); if (b) finish(b.dataset.name); };
-      $(`[data-no]`, el).onclick = () => finish(null);
-      $(`form`, el).onsubmit = (e) => {
-        e.preventDefault();
-        const typed = input.value.trim(); if (!typed) return;
+      const submit = (nameRaw) => {
+        const typed = String(nameRaw || ``).trim(); if (!typed) { input.focus(); return; }
         const same = people.find((p) => p.key === Repo.personKey(typed));
-        finish(same ? same.name : typed); // reuse the existing spelling so one person stays one person
+        finish({ name: same ? same.name : typed, mode, dueAt: mode === `later` ? due.value : `` }); // reuse existing spelling
       };
-      draw();
+      el.addEventListener(`click`, (e) => {
+        const m = e.target.closest(`[data-mode]`); if (m) { mode = m.dataset.mode; drawMode(); return; }
+        const d = e.target.closest(`[data-due]`); if (d) { due.value = due.value === d.dataset.due ? `` : d.dataset.due; drawQuick(); }
+      });
+      due.addEventListener(`input`, drawQuick);
+      input.addEventListener(`input`, () => { picked = ``; draw(); });
+      box.onclick = (e) => {
+        const b = e.target.closest(`[data-name]`); if (!b) return;
+        if (mode === `now`) return submit(b.dataset.name); // one tap to lend
+        input.value = b.dataset.name; picked = b.dataset.name; draw(); // saving: still lets you set a date
+      };
+      $(`[data-no]`, el).onclick = () => finish(null);
+      $(`form`, el).onsubmit = (e) => { e.preventDefault(); submit(input.value); };
+      drawMode(); draw();
       setTimeout(() => input.focus(), 250);
     }, { onClose: () => { if (!done) resolve(null); } });
   });
+}
+
+/** Lend or save an item, asking first if it's already saved for someone else. */
+async function lendOrSave(item, opts) {
+  const res = await lendSheet(item, opts); if (!res) return;
+  const savedFor = item.status === `reserved` ? item.lentTo : ``;
+  if (savedFor && Repo.personKey(savedFor) !== Repo.personKey(res.name)) {
+    const ok = await confirmSheet(`Saved for ${savedFor}`, `${item.name} is saved for ${savedFor}. ${res.mode === `now` ? `Lend it to ${res.name}` : `Save it for ${res.name}`} instead?`, `Yes, ${res.mode === `now` ? `lend` : `save`} to ${res.name}`);
+    if (!ok) return;
+  }
+  if (res.mode === `now`) {
+    if (savedFor && Repo.personKey(savedFor) === Repo.personKey(res.name)) await repo.pickUp(item);
+    else await repo.lendItem(item, res.name);
+    toast(`Lent to ${res.name}`);
+  } else {
+    await repo.reserveItem(item, res.name, res.dueAt);
+    toast(`Saved for ${res.name}${res.dueAt ? ` · ${dueText(res.dueAt).text}` : ``}`);
+  }
+}
+
+function historyState(h) {
+  if (h.lentAt && !h.returnedAt) return `open`;
+  if (h.savedAt && !h.lentAt && !h.cancelledAt) return `saved`;
+  if (h.cancelledAt && !h.lentAt) return `cancelled`;
+  return ``;
+}
+function historyText(h) {
+  const parts = [];
+  if (h.savedAt) parts.push(`Saved ${fmtDate(h.savedAt)}`);
+  if (h.lentAt) parts.push(`${h.savedAt ? `picked up` : `lent`} ${fmtDate(h.lentAt)}`);
+  if (h.cancelledAt && !h.lentAt) parts.push(`cancelled ${fmtDate(h.cancelledAt)}`);
+  else if (h.savedAt && !h.lentAt) {
+    const d = dueText(h.item?.dueAt); parts.push(d.text ? `waiting, ${d.text}` : `waiting for pickup`);
+  } else if (h.returnedAt) {
+    const n = daysBetween(h.lentAt, h.returnedAt);
+    parts.push(`${h.how && h.how !== `returned` ? `closed` : `returned`} ${fmtDate(h.returnedAt)} (${n === 0 ? `same day` : dayText(n)})`);
+  } else if (h.lentAt) parts.push(`still out, ${dayText(daysBetween(h.lentAt))}`);
+  const s = parts.join(` → `);
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /** Person card: what they have now + lend/return history. */
@@ -488,12 +572,23 @@ function personSheet(key) {
   if (!person) return toast(`No lending history for that name yet`);
   sheet(`Borrower`, (el, close) => {
     const draw = () => {
-      const p = repo.people().find((x) => x.key === key) || { ...person, holding: [] };
+      const p = repo.people().find((x) => x.key === key) || { ...person, holding: [], saved: [] };
       const hist = repo.personHistory(key);
-      const sinceOf = (id) => hist.find((h) => h.itemId === id && !h.returnedAt)?.lentAt;
+      const sinceOf = (id) => hist.find((h) => h.itemId === id && h.lentAt && !h.returnedAt)?.lentAt;
+      const borrowed = hist.filter((h) => h.lentAt).length;
+      const summary = [p.holding.length ? `Has ${p.holding.length} item${p.holding.length > 1 ? `s` : ``} now` : `Has nothing of yours now`,
+        p.saved.length ? `${p.saved.length} saved` : ``, borrowed ? `borrowed ${borrowed} time${borrowed === 1 ? `` : `s`}` : ``].filter(Boolean).join(` · `);
       el.innerHTML = `
         <div class="person-head"><span class="avatar">${esc(initials(p.name))}</span>
-          <div><b>${esc(p.name)}</b><small>${p.holding.length ? `Has ${p.holding.length} item${p.holding.length > 1 ? `s` : ``} now` : `Has nothing of yours now`} · borrowed ${hist.length} time${hist.length === 1 ? `` : `s`}</small></div></div>
+          <div><b>${esc(p.name)}</b><small>${esc(summary)}</small></div></div>
+        ${p.saved.length ? `<div class="label-sm">Saved for ${esc(p.name)}</div>
+          <div class="list">${p.saved.map((it) => { const d = dueText(it.dueAt); return `<div class="list-row hold-row">
+              ${thumbHtml(it, `thumb sm`)}
+              <button type="button" class="hold-main" data-open="${esc(it.id)}"><b>${esc(it.name)}</b><small class="${d.late ? `late` : ``}">${esc(d.text || `no pick-up date`)} · ${esc(repo.pathText(it.locationId) || `no location`)}</small></button>
+              <button type="button" class="icon-btn" data-unsave="${esc(it.id)}" aria-label="Cancel">${icon(`x`)}</button>
+              <button type="button" class="btn ghost small" data-pick="${esc(it.id)}">Picked up</button>
+            </div>`; }).join(``)}</div>
+          ${p.saved.length > 1 ? `<div class="row-actions"><button type="button" class="btn primary" data-pickall>Picked up everything</button></div>` : ``}` : ``}
         ${p.holding.length ? `<div class="label-sm">Has now</div>
           <div class="list">${p.holding.map((it) => `<div class="list-row hold-row">
               ${thumbHtml(it, `thumb sm`)}
@@ -502,12 +597,10 @@ function personSheet(key) {
             </div>`).join(``)}</div>
           ${p.holding.length > 1 ? `<div class="row-actions"><button type="button" class="btn primary" data-all>Got everything back</button></div>` : ``}` : ``}
         <div class="label-sm">History</div>
-        ${hist.length ? `<div class="timeline">${hist.map((h) => `<div class="tl-row ${h.returnedAt ? `` : `open`}">
+        ${hist.length ? `<div class="timeline">${hist.map((h) => `<div class="tl-row ${historyState(h)}">
             <i></i>
             <div><button type="button" class="link-plain" ${h.item ? `data-open="${esc(h.itemId)}"` : `disabled`}>${esc(h.itemName)}</button>
-              <small>Lent ${esc(fmtDate(h.lentAt))}${h.returnedAt
-                ? ` · ${h.how && h.how !== `returned` ? `closed` : `returned`} ${esc(fmtDate(h.returnedAt))} (${daysBetween(h.lentAt, h.returnedAt) === 0 ? `same day` : dayText(daysBetween(h.lentAt, h.returnedAt))})`
-                : ` · still out${h.lentAt ? `, ${dayText(daysBetween(h.lentAt))}` : ``}`}</small></div>
+              <small>${esc(historyText(h))}</small></div>
           </div>`).join(``)}</div>` : `<p class="muted">No history yet.</p>`}`;
     };
     el.onclick = async (e) => {
@@ -517,6 +610,21 @@ function personSheet(key) {
         const it = repo.items.find((i) => i.id === b.dataset.back);
         if (it) { await repo.returnItem(it); toast(`${it.name} is back`); draw(); }
         return;
+      }
+      if (b.dataset.pick) {
+        const it = repo.items.find((i) => i.id === b.dataset.pick);
+        if (it) { await repo.pickUp(it); toast(`${it.name} is now lent to ${it.lentTo}`); draw(); }
+        return;
+      }
+      if (b.dataset.unsave) {
+        const it = repo.items.find((i) => i.id === b.dataset.unsave);
+        if (it) { await repo.cancelReservation(it); toast(`No longer saved for ${person.name}`); draw(); }
+        return;
+      }
+      if (b.hasAttribute(`data-pickall`)) {
+        const p = repo.people().find((x) => x.key === key);
+        for (const it of p?.saved || []) await repo.pickUp(it);
+        toast(`${person.name} picked up everything`); draw(); return;
       }
       if (b.hasAttribute(`data-all`)) {
         const p = repo.people().find((x) => x.key === key);
@@ -532,6 +640,12 @@ function personSheet(key) {
 function viewFind(view) {
   const cats = repo.categories();
   const lent = repo.activeItems().filter((i) => i.status === `lent`).length;
+  const saved = repo.activeItems().filter((i) => i.status === `reserved`).length;
+  { // drop a filter whose chip no longer exists (e.g. the last saved item was picked up)
+    const f = findState.filter;
+    const counts = { lent, missing: repo.activeItems().filter((i) => i.status === `missing`).length, reserved: saved };
+    if ((f in counts && !counts[f]) || (f.startsWith(`cat:`) && !cats.includes(f.slice(4)))) findState.filter = ``;
+  }
   const missing = repo.activeItems().filter((i) => i.status === `missing`).length;
   view.innerHTML = `
     <div class="search-wrap">
@@ -539,6 +653,7 @@ function viewFind(view) {
     </div>
     <div class="chips scroll" id="filters">
       ${lent ? `<button class="chip" data-f="lent">Lent out · ${lent}</button>` : ``}
+      ${saved ? `<button class="chip" data-f="reserved">Saved for someone · ${saved}</button>` : ``}
       ${missing ? `<button class="chip" data-f="missing">Missing · ${missing}</button>` : ``}
       ${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}
     </div>
@@ -556,10 +671,13 @@ function viewFind(view) {
 
 function renderResults() {
   const box = $(`#results`); if (!box) return;
+  const sig = [`lent`, `missing`, `reserved`].map((st) => repo.activeItems().some((i) => i.status === st)).join() + repo.categories().join();
+  if (box.dataset.sig && box.dataset.sig !== sig) { box.dataset.sig = ``; return viewFind($(`#view`)); } // chips changed
+  box.dataset.sig = sig;
   $$(`#filters [data-f]`).forEach((b) => b.classList.toggle(`on`, b.dataset.f === findState.filter));
   let list = repo.activeItems();
   const f = findState.filter;
-  if (f === `lent` || f === `missing`) list = list.filter((i) => i.status === f);
+  if (f === `lent` || f === `missing` || f === `reserved`) list = list.filter((i) => i.status === f);
   else if (f.startsWith(`cat:`)) list = list.filter((i) => i.category === f.slice(4));
   const q = findState.q.trim();
   if (q) list = search(list, q, (id) => repo.pathText(id));
@@ -574,10 +692,11 @@ function renderResults() {
     return;
   }
   const heading = q || f ? `${list.length} found` : `Recently updated`;
-  const holders = f === `lent` ? repo.people().filter((p) => p.holding.length) : [];
-  box.innerHTML = (holders.length ? `<div class="label-sm">Who has your things</div>
+  const field = f === `lent` ? `holding` : f === `reserved` ? `saved` : ``;
+  const holders = field ? repo.people().filter((p) => p[field].length) : [];
+  box.innerHTML = (holders.length ? `<div class="label-sm">${field === `holding` ? `Who has your things` : `Waiting to pick up`}</div>
       <div class="people-strip">${holders.map((p) => `<button type="button" class="person-chip" data-person="${esc(p.key)}">
-        <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p.holding.length}</b></button>`).join(``)}</div>` : ``)
+        <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p[field].length}</b></button>`).join(``)}</div>` : ``)
     + `<div class="list-head"><div class="label-sm">${esc(heading)}</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div><div class="cards">${list.slice(0, q || f ? 200 : 30).map(itemCard).join(``)}</div>`;
 }
 
@@ -585,7 +704,11 @@ function renderResults() {
 function viewItem(view, r) {
   const item = repo.items.find((i) => i.id === r.id && !i.deleted);
   if (!item) { view.innerHTML = `<div class="empty"><h3>Item not found</h3><a class="btn ghost" href="#/">Back</a></div>`; return; }
-  const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)} Lent to <button type="button" class="person-link" data-person="${esc(Repo.personKey(item.lentTo))}">${esc(item.lentTo || `someone`)}</button></div>`
+  const personBtn = `<button type="button" class="person-link" data-person="${esc(Repo.personKey(item.lentTo))}">${esc(item.lentTo || `someone`)}</button>`;
+  const due = dueText(item.dueAt);
+  const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)} Lent to ${personBtn}</div>`
+    : item.status === `reserved` ? `<div class="banner reserved${due.late ? ` late` : ``}">${icon(`clock`)}<div class="grow"><span>Saved for ${personBtn}</span>${due.text ? `<small>${esc(due.text)}</small>` : ``}</div>
+        <button type="button" class="btn text small" data-a="unsave">Cancel</button></div>`
     : item.status === `missing` ? `<div class="banner missing">${icon(`alert`)} Marked missing</div>` : ``;
   const tags = String(item.tags || ``).split(`,`).map((t) => t.trim()).filter(Boolean);
   view.innerHTML = `
@@ -606,7 +729,9 @@ function viewItem(view, r) {
       ${item.notes ? `<div class="block"><div class="label-sm">Notes</div><p class="pre">${esc(item.notes)}</p></div>` : ``}
       <div class="actions-grid">
         <button class="act" data-a="move">${icon(`move`)}Move</button>
-        ${item.status === `lent` ? `<button class="act" data-a="return">${icon(`ret`)}Got it back</button>` : `<button class="act" data-a="lend">${icon(`lend`)}Lend</button>`}
+        ${item.status === `lent` ? `<button class="act" data-a="return">${icon(`ret`)}Got it back</button>`
+          : item.status === `reserved` ? `<button class="act hi" data-a="pickup">${icon(`check`)}Picked up</button>`
+          : `<button class="act" data-a="lend">${icon(`lend`)}Lend / Save</button>`}
         ${item.status === `missing` ? `<button class="act" data-a="found">${icon(`check`)}Found it</button>` : `<button class="act" data-a="missing">${icon(`alert`)}Can’t find</button>`}
         <a class="act" href="#/edit/${esc(item.id)}">${icon(`edit`)}Edit</a>
       </div>
@@ -628,8 +753,13 @@ function viewItem(view, r) {
       const id = await pickLocation(item.locationId, `Move to…`);
       if (id) await moveWithUndo([item], id);
     } else if (a === `lend`) {
-      const to = await lendSheet(item);
-      if (to) { await repo.lendItem(item, to); toast(`Marked as lent to ${to}`); }
+      await lendOrSave(item);
+    } else if (a === `pickup`) {
+      await repo.pickUp(item); toast(`Lent to ${item.lentTo}`);
+    } else if (a === `unsave`) {
+      const who = item.lentTo;
+      await repo.cancelReservation(item);
+      toast(`No longer saved for ${who}`, { action: `Undo`, ms: 6000, onAction: () => repo.reserveItem(item, who, item.dueAt) });
     } else if (a === `return`) { await repo.returnItem(item); toast(`Back home`); }
     else if (a === `missing`) { await repo.markMissing(item); toast(`Marked missing`); }
     else if (a === `found`) { await repo.markFound(item); toast(`Found`); }
@@ -1080,7 +1210,7 @@ function viewMore(view, r) {
 
       ${(() => { const ppl = repo.people(); return ppl.length ? `<div class="label-sm">People you lend to</div>
         <div class="menu">${ppl.slice(0, 30).map((p) => `<button data-person="${esc(p.key)}"><span class="avatar sm">${esc(initials(p.name))}</span>
-          <span class="grow">${esc(p.name)}</span><small class="${p.holding.length ? `warn` : ``}">${p.holding.length ? `has ${p.holding.length}` : `all returned`}</small></button>`).join(``)}</div>` : ``; })()}
+          <span class="grow">${esc(p.name)}</span><small class="${p.holding.length + p.saved.length ? `warn` : ``}">${[p.holding.length ? `has ${p.holding.length}` : ``, p.saved.length ? `${p.saved.length} saved` : ``].filter(Boolean).join(` · `) || `all returned`}</small></button>`).join(``)}</div>` : ``; })()}
 
       <div class="label-sm" id="ai">AI suggestions</div>
       ${aiReady() ? `<div class="menu">

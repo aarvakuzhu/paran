@@ -6,7 +6,12 @@ import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
-  `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`];
+  `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
+  `dueAt`]; // columns added later go AFTER thumb so older sheets stay aligned
+const THUMB_COL = colLetterOf(ITEM_COLS.indexOf(`thumb`));
+const BEFORE_THUMB = colLetterOf(ITEM_COLS.indexOf(`thumb`) - 1);
+const AFTER_THUMB = [ITEM_COLS.indexOf(`thumb`) + 1, ITEM_COLS.length - 1].map(colLetterOf);
+function colLetterOf(n) { let s = ``; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 export const LOC_COLS = [`id`, `name`, `parentId`, `kind`, `notes`, `createdBy`, `createdAt`, `deleted`];
 export const MEMBER_COLS = [`email`, `role`, `photoFolderId`, `invitedBy`, `joinedAt`];
 export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`];
@@ -84,6 +89,7 @@ class GoogleBackend {
       else return { user: this.user, needsChoice: true };
     }
     localStorage.setItem(this.prefKey(), this.sheetId);
+    await this.ensureHeaders();
     await this.ensurePhotoFolder();
     return { user: this.user, label: this.isOwner ? `Your Google Drive` : `Shared inventory` };
   }
@@ -106,6 +112,17 @@ class GoogleBackend {
       { email: this.user.email, role: `owner`, invitedBy: ``, joinedAt: now() }, MEMBER_COLS)]);
     this.sheetId = ss.spreadsheetId; this.rootFolderId = root.id; this.isOwner = true;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
+  }
+
+  /** Older sheets: add header cells for columns introduced since (they're always appended at the end). */
+  async ensureHeaders() {
+    const key = `stash.hdr.${this.sheetId}`;
+    if (localStorage.getItem(key) === String(ITEM_COLS.length)) return;
+    const r = await sheets.get(this.sheetId, `Items!1:1`);
+    const header = (r.values?.[0] || []).map(String);
+    const isPrefix = header.every((h, i) => h === ITEM_COLS[i]);
+    if (header.length < ITEM_COLS.length && isPrefix) await sheets.update(this.sheetId, `Items!A1`, [ITEM_COLS]);
+    localStorage.setItem(key, String(ITEM_COLS.length));
   }
 
   async ensurePhotoFolder() {
@@ -133,12 +150,15 @@ class GoogleBackend {
 
   async fetchAll() {
     const r = await sheets.batchGet(this.sheetId, [
-      `Items!A1:${colLetter(ITEM_COLS.length - 2)}`, // everything except the thumb column
+      `Items!A1:${BEFORE_THUMB}`, // everything except the (large) thumb column…
       `Locations!A1:${lastCol(LOC_COLS)}`,
       `Members!A1:${lastCol(MEMBER_COLS)}`,
       `Log!A1:${lastCol(LOG_COLS)}`,
+      `Items!${AFTER_THUMB[0]}1:${AFTER_THUMB[1]}`, // …plus columns added after it
     ]);
-    const [items, locs, members, log] = r.valueRanges.map((v) => v.values);
+    const [left, locs, members, log, right] = r.valueRanges.map((v) => v.values || []);
+    const items = left.map((row, i) => [...row, ...Array(Math.max(0, ITEM_COLS.indexOf(`thumb`) - row.length)).fill(``), ``, ...(right[i] || [])]);
+    if (items[0]) items[0].splice(ITEM_COLS.indexOf(`thumb`), 1, `thumb`);
     return {
       log: rowsToObjects(log, LOG_COLS).slice(-5000),
       items: rowsToObjects(items, ITEM_COLS.filter((c) => c !== `thumb`)),
@@ -148,7 +168,7 @@ class GoogleBackend {
   }
 
   async fetchThumbs() {
-    const tc = lastCol(ITEM_COLS);
+    const tc = THUMB_COL;
     const r = await sheets.batchGet(this.sheetId, [`Items!A:A`, `Items!${tc}:${tc}`]);
     const ids = r.valueRanges[0].values || [];
     const th = r.valueRanges[1].values || [];
@@ -339,7 +359,7 @@ export class Repo extends EventTarget {
   async saveItem(fields, { photo, thumb, logAction, detail } = {}) {
     const existing = fields.id && this.items.find((i) => i.id === fields.id);
     const item = existing ? { ...existing, ...fields } : {
-      id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``,
+      id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``, dueAt: ``,
       photoId: ``, photoUrl: ``, warranty: ``, expiry: ``, notes: ``, addedBy: this.user.email, addedAt: now(),
       deleted: ``, ...fields,
     };
@@ -363,8 +383,14 @@ export class Repo extends EventTarget {
     return ``;
   }
 
-  moveItem(item, locationId) { return this.saveItem({ id: item.id, locationId, status: `home`, lentTo: `` }, { logAction: `moved` }); }
-  lendItem(item, to) { return this.saveItem({ id: item.id, status: `lent`, lentTo: to.trim() }, { logAction: `lent`, detail: to.trim() }); }
+  moveItem(item, locationId) {
+    const keep = item.status === `reserved`; // a saved item stays saved for its person when moved
+    return this.saveItem({ id: item.id, locationId, ...(keep ? {} : { status: `home`, lentTo: `` }) }, { logAction: `moved` });
+  }
+  reserveItem(item, to, dueAt = ``) { return this.saveItem({ id: item.id, status: `reserved`, lentTo: to.trim(), dueAt }, { logAction: `reserved`, detail: to.trim() }); }
+  pickUp(item) { return this.saveItem({ id: item.id, status: `lent`, dueAt: `` }, { logAction: `lent`, detail: item.lentTo }); }
+  cancelReservation(item) { return this.saveItem({ id: item.id, status: `home`, lentTo: ``, dueAt: `` }, { logAction: `unreserved`, detail: item.lentTo }); }
+  lendItem(item, to) { return this.saveItem({ id: item.id, status: `lent`, lentTo: to.trim(), dueAt: `` }, { logAction: `lent`, detail: to.trim() }); }
   returnItem(item) { return this.saveItem({ id: item.id, status: `home`, lentTo: `` }, { logAction: `returned`, detail: item.lentTo || `` }); }
   markMissing(item) { return this.saveItem({ id: item.id, status: `missing` }, { logAction: `missing` }); }
   markFound(item) { return this.saveItem({ id: item.id, status: `home` }, { logAction: `found` }); }
@@ -394,7 +420,7 @@ export class Repo extends EventTarget {
   }
 
   exportCsv() {
-    const cols = [`name`, `purpose`, `category`, `tags`, `location`, `qty`, `status`, `lentTo`, `warranty`, `expiry`, `notes`, `photoUrl`, `addedBy`, `addedAt`];
+    const cols = [`name`, `purpose`, `category`, `tags`, `location`, `qty`, `status`, `lentTo`, `dueAt`, `warranty`, `expiry`, `notes`, `photoUrl`, `addedBy`, `addedAt`];
     const esc = (v) => `"${String(v ?? ``).replace(/"/g, `""`)}"`;
     const lines = [cols.join(`,`)];
     for (const i of this.activeItems()) lines.push(cols.map((c) => esc(c === `location` ? this.pathText(i.locationId) : i[c])).join(`,`));
@@ -404,49 +430,67 @@ export class Repo extends EventTarget {
   // ---------------- people you lend to (derived from lends; no separate list to maintain)
   static personKey(name) { return String(name || ``).trim().toLowerCase().replace(/\s+/g, ` `); }
 
-  /** Lend periods: [{ itemId, name, key, lentAt, returnedAt|null }], oldest first. */
+  /**
+   * Lend periods incl. reservations: [{ itemId, name, key, savedAt, lentAt, returnedAt, cancelledAt, how }], oldest first.
+   * A reservation that's picked up becomes the same period (savedAt → lentAt → returnedAt).
+   */
   lendPeriods() {
-    const open = new Map(); const out = [];
+    const openLend = new Map(); const openRes = new Map(); const out = [];
+    const mk = (e, extra) => ({ itemId: e.itemId, name: String(e.detail), key: Repo.personKey(e.detail), savedAt: null, lentAt: null, returnedAt: null, cancelledAt: null, ...extra });
     const sorted = [...this.log].filter((e) => e.ts && e.itemId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
     for (const e of sorted) {
-      const cur = open.get(e.itemId);
-      if (e.action === `lent` && e.detail) {
-        if (cur) { cur.returnedAt = e.ts; } // lent again without a return: close the previous one
-        const p = { itemId: e.itemId, name: String(e.detail), key: Repo.personKey(e.detail), lentAt: e.ts, returnedAt: null };
-        out.push(p); open.set(e.itemId, p);
-      } else if (cur && [`returned`, `moved`, `found`, `removed`].includes(e.action)) {
-        cur.returnedAt = e.ts; cur.how = e.action; open.delete(e.itemId);
+      const id = e.itemId; const k = Repo.personKey(e.detail);
+      if (e.action === `reserved` && e.detail) {
+        const r = openRes.get(id); if (r) r.cancelledAt = e.ts;
+        const p = mk(e, { savedAt: e.ts }); out.push(p); openRes.set(id, p);
+      } else if (e.action === `unreserved`) {
+        const r = openRes.get(id); if (r) { r.cancelledAt = e.ts; openRes.delete(id); }
+      } else if (e.action === `lent` && e.detail) {
+        const cur = openLend.get(id); if (cur) cur.returnedAt = e.ts;
+        const r = openRes.get(id); let p;
+        if (r && r.key === k) { p = r; p.lentAt = e.ts; p.name = String(e.detail); }
+        else { if (r) r.cancelledAt = e.ts; p = mk(e, { lentAt: e.ts }); out.push(p); }
+        openRes.delete(id); openLend.set(id, p);
+      } else if ([`returned`, `moved`, `found`, `removed`].includes(e.action)) {
+        const cur = openLend.get(id); if (cur) { cur.returnedAt = e.ts; cur.how = e.action; openLend.delete(id); }
+        if (e.action === `removed`) { const r = openRes.get(id); if (r) { r.cancelledAt = e.ts; openRes.delete(id); } }
       }
     }
-    // items marked lent without a matching log entry (e.g. older data): treat as open since unknown
+    // current state without matching log entries (older data): show as open
     for (const it of this.activeItems()) {
-      if (it.status === `lent` && it.lentTo && !out.some((p) => p.itemId === it.id && !p.returnedAt)) {
-        out.push({ itemId: it.id, name: it.lentTo, key: Repo.personKey(it.lentTo), lentAt: it.updatedAt || ``, returnedAt: null });
-      }
+      if (!it.lentTo) continue;
+      const fake = { itemId: it.id, detail: it.lentTo };
+      if (it.status === `lent` && !out.some((p) => p.itemId === it.id && p.lentAt && !p.returnedAt)) out.push(mk(fake, { lentAt: it.updatedAt || `` }));
+      if (it.status === `reserved` && !out.some((p) => p.itemId === it.id && p.savedAt && !p.lentAt && !p.cancelledAt)) out.push(mk(fake, { savedAt: it.updatedAt || `` }));
     }
     return out;
   }
 
-  /** Everyone you've lent to: [{ key, name, holding: [items], lastAt, total }], most recent first. */
+  /** Everyone you've lent to or saved things for: [{ key, name, holding, saved, lastAt, total }], most relevant first. */
   people() {
     const map = new Map();
     for (const p of this.lendPeriods()) {
-      const e = map.get(p.key) || { key: p.key, name: p.name, holding: [], lastAt: ``, total: 0 };
-      e.total++;
-      if (String(p.lentAt) >= String(e.lastAt)) { e.lastAt = p.lentAt; e.name = p.name; } // latest spelling wins
+      const e = map.get(p.key) || { key: p.key, name: p.name, holding: [], saved: [], lastAt: ``, total: 0 };
+      if (p.lentAt) e.total++;
+      const at = p.lentAt || p.savedAt || ``;
+      if (String(at) >= String(e.lastAt)) { e.lastAt = at; e.name = p.name; } // latest spelling wins
       map.set(p.key, e);
     }
     for (const it of this.activeItems()) {
-      if (it.status === `lent` && it.lentTo) map.get(Repo.personKey(it.lentTo))?.holding.push(it);
+      if (!it.lentTo) continue;
+      const e = map.get(Repo.personKey(it.lentTo)); if (!e) continue;
+      if (it.status === `lent`) e.holding.push(it);
+      if (it.status === `reserved`) e.saved.push(it);
     }
-    return [...map.values()].sort((a, b) => (b.holding.length > 0) - (a.holding.length > 0) || String(b.lastAt).localeCompare(String(a.lastAt)));
+    const busy = (p) => p.holding.length + p.saved.length > 0;
+    return [...map.values()].sort((a, b) => busy(b) - busy(a) || String(b.lastAt).localeCompare(String(a.lastAt)));
   }
 
   personHistory(key) {
     const name = (id) => this.items.find((i) => i.id === id)?.name || `Removed item`;
     return this.lendPeriods().filter((p) => p.key === key)
       .map((p) => ({ ...p, itemName: name(p.itemId), item: this.items.find((i) => i.id === p.itemId && !i.deleted) }))
-      .sort((a, b) => String(b.lentAt).localeCompare(String(a.lentAt)));
+      .sort((a, b) => String(b.lentAt || b.savedAt).localeCompare(String(a.lentAt || a.savedAt)));
   }
 
   // ---------------- demo seed
@@ -466,7 +510,8 @@ export class Repo extends EventTarget {
     S(`Extension cord 25 ft`, `Outdoor lights, pressure washer`, `Electrical`, `outdoor, power`, shelf.id, { qty: 2 });
     S(`Car jump starter`, `Dead car battery`, `Car`, `battery, emergency`, shelf.id, { warranty: `2027-05-01` });
     S(`Spare house keys`, `Lockout backup, give to house sitter`, `Keys`, `keys, backup`, drawer.id);
-    S(`Christmas lights (warm white)`, `Front porch and tree`, `Holiday`, `christmas, decor, lights`, bigBox.id, { qty: 4 });
+    S(`Christmas lights (warm white)`, `Front porch and tree`, `Holiday`, `christmas, decor, lights`, bigBox.id, { qty: 4 })
+      .then((it) => this.reserveItem(it, `Kumar`, new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)));
     S(`Pressure washer`, `Driveway and deck cleaning`, `Outdoor`, `cleaning, deck`, garage.id).then((pw) => this.lendItem(pw, `Ravi`));
     this.setStatus(`synced`);
   }
