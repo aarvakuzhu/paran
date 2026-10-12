@@ -2,8 +2,8 @@ import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSpreadsheet, AuthError } from './google.js';
 import { Repo } from './store.js';
 import { search, findDuplicates } from './search.js';
-import { processPhoto, processExtraPhoto, cropItem } from './image.js';
-import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, readLabel, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
+import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 
 const MODE_KEY = `stash.mode`;
@@ -666,47 +666,48 @@ async function lendOrSave(item, opts) {
 }
 
 // ---------------- full-screen photo, inside the app (no Drive page, no second login)
-const PHOTO_KINDS = {
-  close: { label: `Close-up`, hint: `label, model, specs` },
-  scale: { label: `Scale`, hint: `next to a hand, shoe or ruler` },
-  other: { label: `Photo`, hint: `` },
-};
 const SIZE_HINT = { Pocket: `keys, cables`, 'Hand-held': `drill, book`, Shoebox: `fits in a shoebox`, 'Carry-on': `suitcase-sized`, Large: `needs two hands`, Furniture: `needs two people` };
+const MAX_PHOTOS = 6; // main + 5 more
 
-/** Main photo + close-up + scale tiles for an item (live: adding saves straight away). */
-function photoStripHtml(item) {
-  const xs = repo.photosOf(item);
-  const tile = (kind) => {
-    const p = xs.find((x) => x.kind === kind); const k = PHOTO_KINDS[kind];
-    if (p) {
-      const t = repo.thumbs[`x:${p.pid}`];
-      return `<button type="button" class="ptile" data-view="${esc(p.pid)}">${t ? `<img src="${t}" alt="${esc(k.label)}">` : `<span class="ph">${icon(`photo`)}</span>`}<span class="ptag">${esc(k.label)}</span></button>`;
-    }
-    return `<label class="ptile add"><input type="file" accept="image/*" capture="environment" hidden data-xadd="${kind}">${icon(`plus`)}<b>${esc(k.label)}</b><small>${esc(k.hint)}</small></label>`;
-  };
-  return `<div class="pstrip">${tile(`close`)}${tile(`scale`)}</div>`;
+/** Row of additional photos + an "add more" tile. `tiles` = [{ key, thumb }] */
+function photoRowHtml(tiles, { canAdd = true } = {}) {
+  return `<div class="pstrip">${tiles.map((t) => `<button type="button" class="ptile" data-view="${esc(t.key)}">${t.thumb ? `<img src="${t.thumb}" alt="Photo">` : `<span class="ph">${icon(`photo`)}</span>`}</button>`).join(``)}
+    ${canAdd ? `<label class="ptile add"><input type="file" accept="image/*" multiple hidden data-xadd>${icon(`plus`)}<b>${tiles.length ? `More` : `More photos`}</b><small>other sides, labels, size</small></label>` : ``}</div>`;
 }
+function itemPhotoRowHtml(item) {
+  const xs = repo.photosOf(item);
+  return photoRowHtml(xs.map((p) => ({ key: p.pid, thumb: repo.thumbs[`x:${p.pid}`] })), { canAdd: xs.length + 1 < MAX_PHOTOS });
+}
+/** Up to 6 of the item's photos, reduced for AI (skips any this device can't read). */
+async function itemAiImages(item, { skipCover = false } = {}) {
+  const out = [];
+  const add = async (getUrl) => { try { const url = await getUrl(); if (url) out.push(await shrinkForAi(await (await fetch(url)).blob())); } catch { /* skip */ } };
+  if (!skipCover && (item.photoId || repo.thumbs[item.id])) await add(() => repo.photoObjectUrl(item));
+  for (const p of repo.photosOf(item)) { if (out.length >= MAX_PHOTOS) break; await add(() => repo.extraPhotoUrl(p)); }
+  return out;
+}
+const specLine = (r) => [r.model, r.details].filter(Boolean).join(` · `);
 
-/** After a close-up: read model/specs into notes. After a scale photo: estimate the size. Both undoable. */
-async function aiFromExtraPhoto(item, kind, aiImage) {
+/** Saved item: look at all its photos and fill in what's missing. Never overwrites what's there; Undo restores. */
+async function aiMergeIntoItem(itemId) {
   if (!aiReady() || !aiSettings().auto) return;
+  const item = repo.items.find((i) => i.id === itemId); if (!item) return;
   try {
-    if (kind === `close`) {
-      const r = await readLabel(await aiImage());
-      const line = [r.model, r.details].filter(Boolean).join(` · `);
-      if (!line) return;
-      const cur = repo.items.find((i) => i.id === item.id); if (!cur || String(cur.notes || ``).includes(r.model || line)) return;
-      const before = cur.notes || ``;
-      await repo.saveItem({ id: item.id, notes: before ? `${before}\n${line}` : line }, { info: `AI read the label: ${line}` });
-      toast(`Read from the label: ${line}`, { action: `Undo`, ms: 7000, onAction: () => repo.saveItem({ id: item.id, notes: before }) });
-    } else if (kind === `scale`) {
-      const [first] = await analyzePhoto(await aiImage(), { categories: [], location: `` });
-      const cur = repo.items.find((i) => i.id === item.id);
-      if (!first?.size || !cur || cur.size) return;
-      await repo.saveItem({ id: item.id, size: first.size });
-      toast(`Looks ${first.size.toLowerCase()}-sized`, { action: `Undo`, ms: 7000, onAction: () => repo.saveItem({ id: item.id, size: `` }) });
+    const imgs = await itemAiImages(item); if (!imgs.length) return;
+    toast(`Looking at ${imgs.length} photo${imgs.length > 1 ? `s` : ``}…`, { ms: 15000 });
+    const r = await describeItem(imgs, item, { categories: repo.categories() });
+    const cur = repo.items.find((i) => i.id === itemId); if (!cur) return;
+    const patch = {}; const before = {}; const said = [];
+    const fill = (k, v, label) => { if (v && !String(cur[k] ?? ``).trim()) { patch[k] = v; before[k] = cur[k] || ``; said.push(label); } };
+    fill(`purpose`, r.purpose, `what it’s for`); fill(`category`, r.category, `category`); fill(`size`, r.size, `size (${r.size})`); fill(`tags`, r.tags, `search words`);
+    const line = specLine(r);
+    if (line && !String(cur.notes || ``).toLowerCase().includes((r.model || line).toLowerCase())) {
+      before.notes = cur.notes || ``; patch.notes = cur.notes ? `${cur.notes}\n${line}` : line; said.push(r.model ? `model ${r.model}` : `specs`);
     }
-  } catch (err) { if (err instanceof AiError) toast(err.message, { ms: 5000 }); }
+    if (!said.length) { toast(`AI found nothing new in the photos`); return; }
+    await repo.saveItem({ id: itemId, ...patch }, { info: `AI from photos: ${said.join(`, `)}` });
+    toast(`AI added ${said.join(`, `)}`, { action: `Undo`, ms: 9000, onAction: () => repo.saveItem({ id: itemId, ...before }) });
+  } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000 }); }
 }
 
 // ---------------- full-screen photos, inside the app (no Drive page, no second login); swipe between them
@@ -714,7 +715,7 @@ function photoViewer(item, startKey = `main`) {
   const slides = [];
   if (repo.thumbs[item.id] || item.photoId) slides.push({ key: `main`, label: `Photo`, thumb: repo.thumbs[item.id], load: () => repo.photoObjectUrl(item), url: item.photoUrl });
   for (const p of repo.photosOf(item)) {
-    slides.push({ key: p.pid, pid: p.pid, label: (PHOTO_KINDS[p.kind] || PHOTO_KINDS.other).label, thumb: repo.thumbs[`x:${p.pid}`], load: () => repo.extraPhotoUrl(p), url: p.url, removable: true });
+    slides.push({ key: p.pid, pid: p.pid, label: `Photo`, thumb: repo.thumbs[`x:${p.pid}`], load: () => repo.extraPhotoUrl(p), url: p.url, removable: true });
   }
   if (!slides.length) return;
   let idx = Math.max(0, slides.findIndex((x) => x.key === startKey));
@@ -736,7 +737,7 @@ function photoViewer(item, startKey = `main`) {
   const show = () => {
     const sl = slides[idx]; const my = ++token;
     stage.innerHTML = sl.thumb ? `<img src="${sl.thumb}" alt="${esc(item.name)} – ${esc(sl.label)}">` : `<div class="spinner"></div>`;
-    cap.innerHTML = `<b>${esc(item.name)}</b> · ${esc(sl.label)}${sl.removable ? ` <button type="button" class="link-light" data-remove>Remove</button>` : ``}`;
+    cap.innerHTML = `<b>${esc(item.name)}</b>${slides.length > 1 ? ` · ${idx + 1} of ${slides.length}` : ``}${sl.removable ? ` <button type="button" class="link-light" data-remove>Remove</button>` : ``}`;
     note.textContent = ``;
     $$(`.viewer-dots i`, wrap).forEach((d, i) => d.classList.toggle(`on`, i === idx));
     sl.load().then((url) => {
@@ -756,7 +757,7 @@ function photoViewer(item, startKey = `main`) {
     const dot = e.target.closest(`.viewer-dots i`); if (dot) { idx = Number(dot.dataset.i); return show(); }
     if (e.target.closest(`[data-remove]`)) {
       const sl = slides[idx];
-      if (await confirmSheet(`Remove this ${sl.label.toLowerCase()} photo?`, `The item keeps its other photos.`, `Remove`, true)) { close(); await repo.removeExtraPhoto(item.id, sl.pid); toast(`Photo removed`); }
+      if (await confirmSheet(`Remove this photo?`, `The item keeps its other photos.`, `Remove`, true)) { close(); await repo.removeExtraPhoto(item.id, sl.pid); toast(`Photo removed`); }
       return;
     }
     if (e.target === wrap || e.target.closest(`.viewer-x`) || e.target.classList.contains(`viewer-stage`)) close();
@@ -1098,7 +1099,7 @@ function viewItem(view, r) {
       </div>
       ${hasPhoto ? `<div class="hero zoomable">${thumbHtml(item, `hero-img`)}</div>`
         : `<label class="add-photo"><input type="file" accept="image/*" capture="environment" hidden data-addphoto>${icon(`camera`)}<span>Add a photo</span></label>`}
-      ${photoStripHtml(item)}
+      ${hasPhoto ? itemPhotoRowHtml(item) : ``}
       <h1>${esc(item.name)}${Number(item.qty) > 1 ? ` <span class="qty">×${esc(item.qty)}</span>` : ``}</h1>
       ${status}
       <div class="where"><div class="label-sm">Where</div><div class="crumbs">${crumbs(item.locationId)}</div></div>
@@ -1126,20 +1127,21 @@ function viewItem(view, r) {
     if (img?.tagName === `IMG`) img.src = url; else $(`.hero`, view).innerHTML = `<img class="hero-img" src="${url}" alt="">`;
   }).catch(() => { /* not signed in right now: thumbnail stays */ });
 
-  $$(`[data-xadd]`, view).forEach((input) => input.addEventListener(`change`, async (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
-    const kind = e.target.dataset.xadd;
-    try {
-      const x = await processExtraPhoto(file);
-      await repo.addExtraPhoto(item.id, kind, x);
-      toast(`${PHOTO_KINDS[kind].label} photo added`);
-      aiFromExtraPhoto(item, kind, x.aiImage);
-    } catch { toast(`Couldn’t read that photo`); }
-  }));
+  $(`[data-xadd]`, view)?.addEventListener(`change`, async (e) => {
+    const files = [...(e.target.files || [])]; if (!files.length) return;
+    let added = 0; let capped = false;
+    for (const file of files) {
+      if (repo.photosOf(repo.items.find((i) => i.id === item.id)).length + 1 >= MAX_PHOTOS) { capped = true; break; }
+      try { if (await repo.addExtraPhoto(item.id, await processExtraPhoto(file))) added++; } catch { toast(`Couldn’t read one of the photos`); }
+    }
+    const capNote = capped ? ` (${MAX_PHOTOS} is the most per item)` : ``;
+    if (added) { toast(`${added} photo${added > 1 ? `s` : ``} added${capNote}`); aiMergeIntoItem(item.id); }
+    else if (capped) toast(`An item can have up to ${MAX_PHOTOS} photos`);
+  });
 
   $(`[data-addphoto]`, view)?.addEventListener(`change`, async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    try { const { photo, thumb } = await processPhoto(file); await repo.saveItem({ id: item.id }, { photo, thumb, logAction: `edited`, info: `New photo` }); toast(`Photo added`); }
+    try { const { photo, thumb } = await processPhoto(file); await repo.saveItem({ id: item.id }, { photo, thumb, logAction: `edited`, info: `New photo` }); toast(`Photo added`); aiMergeIntoItem(item.id); }
     catch { toast(`Couldn’t read that photo`); }
   });
 
@@ -1262,41 +1264,48 @@ function viewEdit(view, r) {
     $(`#sizes`).classList.remove(`suggested`); drawSizes();
   };
 
-  // close-up and scale photos: added to the item straight away when editing, kept until Save when adding
-  const pendingExtras = {}; // kind -> { photo, thumb, aiImage }
+  // more photos of the same item: saved straight away when editing, kept until Save when adding
+  const pendingExtras = []; // [{ key, photo, thumb, aiImage }]
   const drawStrip = () => {
     const box = $(`#xstrip`); if (!box) return;
-    if (editing) { box.innerHTML = photoStripHtml(repo.items.find((i) => i.id === editing.id) || editing); }
-    else {
-      box.innerHTML = `<div class="pstrip">${[`close`, `scale`].map((kind) => {
-        const k = PHOTO_KINDS[kind]; const p = pendingExtras[kind];
-        return p ? `<label class="ptile"><input type="file" accept="image/*" capture="environment" hidden data-xadd="${kind}"><img src="${p.thumb}" alt=""><span class="ptag">${esc(k.label)}</span></label>`
-          : `<label class="ptile add"><input type="file" accept="image/*" capture="environment" hidden data-xadd="${kind}">${icon(`plus`)}<b>${esc(k.label)}</b><small>${esc(k.hint)}</small></label>`;
-      }).join(``)}</div>`;
-    }
-    $$(`[data-xadd]`, box).forEach((input) => input.addEventListener(`change`, async (e) => {
-      const file = e.target.files?.[0]; if (!file) return;
-      const kind = e.target.dataset.xadd;
-      try {
-        const x = await processExtraPhoto(file);
-        if (editing) { await repo.addExtraPhoto(editing.id, kind, x); toast(`${PHOTO_KINDS[kind].label} photo added`); drawStrip(); aiFromExtraPhoto(editing, kind, x.aiImage); return; }
-        pendingExtras[kind] = x; drawStrip();
-        if (aiReady() && aiSettings().auto) suggestFromExtra(kind, x);
-      } catch { toast(`Couldn’t read that photo`); }
-    }));
-  };
-  // while adding: close-up → model/specs into notes (and a name if empty); scale → size
-  async function suggestFromExtra(kind, x) {
-    try {
-      if (kind === `close`) {
-        const r = await readLabel(await x.aiImage());
-        const line = [r.model, r.details].filter(Boolean).join(` · `);
-        applySuggestion({ name: r.name || ``, notes: line }, { quietIfNone: true });
-      } else {
-        const [first] = await analyzePhoto(await x.aiImage(), { categories: cats, location: `` });
-        if (first?.size) applySuggestion({ size: first.size }, { quietIfNone: true });
+    const coverTaken = Boolean(photo || (editing && (repo.thumbs[editing.id] || editing.photoId)));
+    if (!coverTaken) { box.innerHTML = ``; return; } // the big photo area comes first
+    if (editing) box.innerHTML = itemPhotoRowHtml(repo.items.find((i) => i.id === editing.id) || editing);
+    else box.innerHTML = photoRowHtml(pendingExtras.map((p) => ({ key: p.key, thumb: p.thumb })), { canAdd: pendingExtras.length + 1 < MAX_PHOTOS });
+    $(`[data-xadd]`, box)?.addEventListener(`change`, async (e) => {
+      const files = [...(e.target.files || [])]; if (!files.length) return;
+      for (const file of files) {
+        const count = editing ? repo.photosOf(repo.items.find((i) => i.id === editing.id)).length : pendingExtras.length;
+        if (count + 1 >= MAX_PHOTOS) { toast(`An item can have up to ${MAX_PHOTOS} photos`); break; }
+        try {
+          const x = await processExtraPhoto(file);
+          if (editing) await repo.addExtraPhoto(editing.id, x);
+          else pendingExtras.push({ key: `p${Date.now()}${Math.random()}`, ...x });
+        } catch { toast(`Couldn’t read one of the photos`); }
       }
-    } catch (err) { if (err instanceof AiError) toast(err.message, { ms: 5000 }); }
+      drawStrip();
+      if (aiReady() && aiSettings().auto) describeFromAllPhotos();
+    });
+    box.onclick = (e) => { // tap a pending photo to remove it before saving
+      const t = e.target.closest(`[data-view]`); if (!t) return;
+      if (editing) { photoViewer(repo.items.find((i) => i.id === editing.id), t.dataset.view); return; }
+      const i = pendingExtras.findIndex((p) => p.key === t.dataset.view);
+      if (i >= 0) confirmSheet(`Remove this photo?`, `It hasn’t been saved yet.`, `Remove`, true).then((ok) => { if (ok) { pendingExtras.splice(i, 1); drawStrip(); } });
+    };
+  };
+  // AI looks at every photo of this item together and merges what it sees into the form
+  async function describeFromAllPhotos() {
+    busy(true);
+    try {
+      const imgs = editing ? [...(shot ? [await shot.aiImage()] : []), ...await itemAiImages(repo.items.find((i) => i.id === editing.id), { skipCover: Boolean(shot) })]
+        : [...(shot ? [await shot.aiImage()] : []), ...await Promise.all(pendingExtras.map((p) => p.aiImage()))];
+      if (!imgs.length) return;
+      const f = $(`#f`);
+      const current = Object.fromEntries([`name`, `purpose`, `category`, `notes`, `size`].map((k) => [k, f.elements[k]?.value || ``]));
+      const r = await describeItem(imgs.slice(0, MAX_PHOTOS), current, { categories: cats });
+      applySuggestion({ ...r, notes: specLine(r) }, { quietIfNone: true, mergeNotes: true });
+    } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000 }); }
+    finally { busy(false); }
   }
   const drawAiRow = () => {
     const row = $(`#aiRow`); if (!row) return;
@@ -1339,14 +1348,19 @@ function viewEdit(view, r) {
     } finally { busy(false); }
   }
 
-  function applySuggestion(sug, { quietIfNone = false } = {}) {
+  function applySuggestion(sug, { quietIfNone = false, mergeNotes = false } = {}) {
     const f = $(`#f`); let n = 0;
-    if (sug.size && !sizeInput().value) { sizeInput().value = sug.size; drawSizes(); $(`#sizes`).classList.add(`suggested`); n++; }
+    if (sug.size && (!sizeInput().value || $(`#sizes`).classList.contains(`suggested`)) && sizeInput().value !== sug.size) { sizeInput().value = sug.size; drawSizes(); $(`#sizes`).classList.add(`suggested`); n++; }
+    if (mergeNotes && sug.notes) { // keep what's in Notes; add the model/specs line if it isn't there yet
+      const el = f.elements.notes;
+      if (el.value && !el.classList.contains(`suggested`) && !el.value.toLowerCase().includes(sug.notes.toLowerCase())) { el.value = `${el.value}\n${sug.notes}`; n++; }
+      if (el.value && !el.classList.contains(`suggested`)) sug = { ...sug, notes: `` };
+    }
     const set = (name, value) => {
       const el = f.elements[name];
       if (!el || !value) return;
-      const untouched = !el.value || (name === `qty` && String(el.value) === `1`);
-      if (!untouched) return; // never overwrite what the user typed
+      const untouched = !el.value || el.classList.contains(`suggested`) || (name === `qty` && String(el.value) === `1`);
+      if (!untouched || el.value === String(value)) return; // never overwrite what the user typed
       el.value = value; el.classList.add(`suggested`); n++;
       el.addEventListener(`input`, () => el.classList.remove(`suggested`), { once: true });
     };
@@ -1365,10 +1379,10 @@ function viewEdit(view, r) {
       const p = await processPhoto(file);
       ({ photo, thumb } = p); shot = p;
       $(`#pp .pp-view`).innerHTML = `<img src="${thumb}" alt="">`;
-      drawAiRow();
+      drawAiRow(); drawStrip();
     } catch { toast(`Couldn’t read that photo`); return; }
     finally { $(`#pp`).classList.remove(`busy`); }
-    if (aiReady() && aiSettings().auto) runAi();
+    if (aiReady() && aiSettings().auto) (pendingExtras.length || editing ? describeFromAllPhotos() : runAi()); // one photo may show many items; several photos show one
     else if (!$(`input[name=name]`).value) $(`input[name=name]`).focus();
   });
   drawAiRow(); drawStrip();
@@ -1417,7 +1431,7 @@ function viewEdit(view, r) {
       }
 
       const saved = await repo.saveItem(fields, { photo, thumb });
-      for (const [kind, x] of Object.entries(pendingExtras)) await repo.addExtraPhoto(saved.id, kind, x, { log: false });
+      for (const x of pendingExtras) await repo.addExtraPhoto(saved.id, x, { log: false });
       rememberLoc(locationId);
       toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
       next(editing ? saved.id : null);

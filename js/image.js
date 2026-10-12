@@ -41,11 +41,17 @@ export async function processPhoto(file) {
   return { photo, thumb: thumbOf(canvas), canvas, aiImage: () => toBlob(draw(canvas, 1024), 0.8) };
 }
 
-/** Extra photos (close-up, scale): full photo + a smaller preview so several fit in one sheet cell. */
+/** Additional photos: full photo + a small preview, so up to five fit in one sheet cell. */
 export async function processExtraPhoto(file) {
   const bmp = await loadBitmap(file);
   const canvas = draw(bmp, 1600);
-  return { photo: await toBlob(canvas, 0.85), thumb: thumbOf(canvas, { max: 220, limit: 14000 }), aiImage: () => toBlob(draw(canvas, 1280), 0.85) };
+  return { photo: await toBlob(canvas, 0.85), thumb: thumbOf(canvas, { max: 180, limit: 8000 }), aiImage: () => toBlob(draw(canvas, 1024), 0.8) };
+}
+
+/** A stored photo (Blob) reduced for sending to AI. */
+export async function shrinkForAi(blob) {
+  const bmp = await loadBitmap(blob);
+  return toBlob(draw(bmp, 1024), 0.8);
 }
 
 /** Crop one item out of the photo using a Gemini box [ymin, xmin, ymax, xmax] on a 0–1000 scale. */

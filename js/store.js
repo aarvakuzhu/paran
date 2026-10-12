@@ -8,7 +8,7 @@ import { blobs } from './idb.js';
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
   `dueAt`, `size`, `photos`]; // columns added later go AFTER thumb so older sheets stay aligned
-// photos: JSON list of extra photos [{ pid, kind: close|scale|other, id, url, thumb }]. In memory the thumbs live in repo.thumbs.
+// photos: JSON list of additional photos [{ pid, id, url, thumb }]. In memory the thumbs live in repo.thumbs.
 const THUMB_COL = colLetterOf(ITEM_COLS.indexOf(`thumb`));
 const BEFORE_THUMB = colLetterOf(ITEM_COLS.indexOf(`thumb`) - 1);
 const AFTER_THUMB = [ITEM_COLS.indexOf(`thumb`) + 1, ITEM_COLS.length - 1].map(colLetterOf);
@@ -428,7 +428,7 @@ export class Repo extends EventTarget {
     const list = item ? this.photosOf(item) : [];
     const entry = list.find((p) => p.pid === op.pid);
     if (blob && entry) {
-      const { photoId, photoUrl } = await this.backend.uploadPhoto(blob, op.itemId, `${op.itemId}-${entry.kind}-${op.pid}.jpg`);
+      const { photoId, photoUrl } = await this.backend.uploadPhoto(blob, op.itemId, `${op.itemId}-${op.pid}.jpg`);
       entry.id = photoId; entry.url = photoUrl;
       item.photos = JSON.stringify(list);
       this.outbox.splice(1, 0, { kind: `item`, data: { ...item } });
@@ -453,15 +453,16 @@ export class Repo extends EventTarget {
     for (const p of list) if (p.thumb) { this.thumbs[`x:${p.pid}`] = p.thumb; delete p.thumb; }
     item.photos = list.length ? JSON.stringify(list) : ``;
   }
-  async addExtraPhoto(itemId, kind, { photo, thumb }, { log = true } = {}) {
+  static MAX_EXTRA_PHOTOS = 5; // + the main photo = 6; their previews must fit one sheet cell
+  async addExtraPhoto(itemId, { photo, thumb }, { log = true } = {}) {
     const item = this.items.find((i) => i.id === itemId); if (!item) return null;
+    const list = this.photosOf(item);
+    if (list.length >= Repo.MAX_EXTRA_PHOTOS) return null;
     const pid = uid();
-    const list = this.photosOf(item).filter((p) => kind === `other` || p.kind !== kind); // one close-up, one scale
-    list.push({ pid, kind, id: ``, url: `` });
+    list.push({ pid, id: ``, url: `` });
     this.thumbs[`x:${pid}`] = thumb;
     await blobs.put(`pending:x:${pid}`, photo);
-    const label = { close: `Close-up photo`, scale: `Scale photo` }[kind] || `Photo`;
-    await this.saveItem({ id: itemId, photos: JSON.stringify(list) }, { logAction: log ? `edited` : null, info: `${label} added`, noLog: !log });
+    await this.saveItem({ id: itemId, photos: JSON.stringify(list) }, { logAction: log ? `edited` : null, info: `Photo added`, noLog: !log });
     this.outbox.push({ kind: `xphoto`, itemId, pid });
     this.saveCache(); this.flush();
     return pid;
@@ -470,7 +471,8 @@ export class Repo extends EventTarget {
     const item = this.items.find((i) => i.id === itemId); if (!item) return;
     const gone = this.photosOf(item).find((p) => p.pid === pid);
     const list = this.photosOf(item).filter((p) => p.pid !== pid);
-    await this.saveItem({ id: itemId, photos: list.length ? JSON.stringify(list) : `` }, { logAction: `edited`, info: `${{ close: `Close-up`, scale: `Scale` }[gone?.kind] || ``} photo removed`.trim() });
+    if (gone) delete this.thumbs[`x:${gone.pid}`];
+    await this.saveItem({ id: itemId, photos: list.length ? JSON.stringify(list) : `` }, { logAction: `edited`, info: `Photo removed` });
   }
   extraPhotoUrl(entry) {
     return blobs.get(`pending:x:${entry.pid}`).then((b) => (b ? URL.createObjectURL(b) : entry.id ? this.backend.photoObjectUrl({ photoId: entry.id }) : null));

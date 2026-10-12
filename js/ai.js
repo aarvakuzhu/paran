@@ -104,31 +104,51 @@ async function blobToBase64(blob) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const SIZES = [`Pocket`, `Hand-held`, `Shoebox`, `Carry-on`, `Large`, `Furniture`];
 
-const LABEL_SCHEMA = {
+const DESCRIBE_SCHEMA = {
   type: `OBJECT`,
-  properties: { model: { type: `STRING` }, details: { type: `STRING` }, name: { type: `STRING` } },
-  required: [`model`, `details`],
+  properties: {
+    name: { type: `STRING` }, purpose: { type: `STRING` }, category: { type: `STRING` },
+    tags: { type: `ARRAY`, items: { type: `STRING` } }, size: { type: `STRING` },
+    model: { type: `STRING` }, details: { type: `STRING` },
+  },
+  required: [`name`, `purpose`, `category`, `tags`, `size`, `model`, `details`],
 };
-/** Close-up of a label or nameplate: read brand/model and key specs. Returns { model, details, name }. */
-export async function readLabel(image) {
+
+/**
+ * Several photos of ONE item (all sides, labels, next to other things). Combines what's visible across them.
+ * `current` = details already known, so the answer builds on them instead of starting over.
+ */
+export async function describeItem(images, current = {}, { categories = [] } = {}) {
+  const known = Object.entries({ name: current.name, purpose: current.purpose, category: current.category, size: current.size, notes: current.notes })
+    .filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(`; `);
   const text = [
-    `This is a close-up photo of a product label, nameplate, tag or packaging for a home inventory app.`,
-    `Read what is printed. Do not guess anything you cannot read.`,
-    `- model: brand and model or part number exactly as printed (e.g. "DeWalt DCD771"); empty if none is legible.`,
-    `- details: up to 3 short useful specs as one line separated by " · " (e.g. "20V · 1/2 in chuck · 2 speeds"): size, capacity, voltage, wattage, battery type, filter size, expiry. Empty if none.`,
-    `- name: a short plain name for the product if it is clear from the label (e.g. "Cordless drill"); otherwise empty.`,
-  ].join(`\n`);
-  const out = await callGemini(image, text, LABEL_SCHEMA);
-  return { model: str(out.model, 80), details: str(out.details, 160), name: str(out.name, 60) };
+    `These ${images.length} photo${images.length > 1 ? `s all show the same single item` : ` shows one item`} for a home inventory app: different sides, close-ups of labels, or the item next to other things.`,
+    `Combine what you can see across all photos. Do not guess anything you cannot see.`,
+    known ? `Details already recorded (keep their wording when they are right): ${known}.` : ``,
+    `- name: short and specific, 2 to 6 words; include brand or model only if legible.`,
+    `- purpose: one short sentence on what a person would use it for.`,
+    `- category: one or two words.${categories.length ? ` Prefer one of: ${categories.slice(0, 40).join(`, `)}.` : ``}`,
+    `- tags: 3 to 6 lowercase search words including common synonyms.`,
+    `- size: one of ${SIZES.join(`, `)}, judged from hands, furniture, rulers or other familiar objects in any photo; empty if you can't tell.`,
+    `- model: brand and model or part number exactly as printed on any label; empty if none is legible.`,
+    `- details: up to 3 short specs as one line separated by " · " (capacity, voltage, dimensions, filter size, expiry); empty if none visible.`,
+  ].filter(Boolean).join(`\n`);
+  const o = await callGemini(images, text, DESCRIBE_SCHEMA);
+  return {
+    name: str(o.name, 80), purpose: str(o.purpose, 200), category: str(o.category, 40),
+    tags: (Array.isArray(o.tags) ? o.tags : []).map((t) => str(t, 30).toLowerCase()).filter(Boolean).slice(0, 8).join(`, `),
+    size: SIZES.find((z) => z.toLowerCase() === String(o.size || ``).trim().toLowerCase()) || ``,
+    model: str(o.model, 80), details: str(o.details, 160),
+  };
 }
 
 /** Returns a cleaned list of suggested items. `image` is a JPEG Blob (~1024px). */
 export async function analyzePhoto(image, context = {}) {
-  const parsed = await callGemini(image, prompt(context), SCHEMA);
+  const parsed = await callGemini([image], prompt(context), SCHEMA);
   return clean(parsed.items || []);
 }
 
-async function callGemini(image, promptText, schema) {
+async function callGemini(images, promptText, schema) {
   const s = aiSettings();
   if (!s.enabled || !s.key) throw new AiError(`key`, `AI suggestions are not set up.`);
   if (!navigator.onLine) throw new AiError(`network`, `You’re offline. Fill in the details yourself, or try again later.`);
@@ -138,7 +158,7 @@ async function callGemini(image, promptText, schema) {
   lastCallAt = Date.now();
 
   const body = {
-    contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: `image/jpeg`, data: await blobToBase64(image) } }] }],
+    contents: [{ parts: [{ text: promptText }, ...await Promise.all(images.map(async (img) => ({ inline_data: { mime_type: `image/jpeg`, data: await blobToBase64(img) } })))] }],
     generationConfig: { response_mime_type: `application/json`, response_schema: schema, temperature: 0.2 },
   };
 

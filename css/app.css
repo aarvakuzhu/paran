@@ -525,3 +525,8 @@ button.back .ic { width: 18px; height: 18px; }
 /* sheets and messages must sit above the photo viewer */
 .sheet-wrap { z-index: 90; }
 #toasts { z-index: 95; }
+/* generic photo row */
+.pstrip { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; grid-template-columns: none; }
+.pstrip::-webkit-scrollbar { display: none; }
+.pstrip .ptile { flex: none; width: 84px; height: 84px; }
+.pstrip .ptile.add { width: 108px; }
