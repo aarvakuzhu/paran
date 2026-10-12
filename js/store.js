@@ -15,7 +15,10 @@ const AFTER_THUMB = [ITEM_COLS.indexOf(`thumb`) + 1, ITEM_COLS.length - 1].map(c
 function colLetterOf(n) { let s = ``; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 export const LOC_COLS = [`id`, `name`, `parentId`, `kind`, `notes`, `createdBy`, `createdAt`, `deleted`];
 export const MEMBER_COLS = [`email`, `role`, `photoFolderId`, `invitedBy`, `joinedAt`];
-export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`, `info`]; // info: what changed / pick-up date / moved from
+export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`, `info`, `changes`];
+// info: readable summary (what changed / pick-up date / moved from). changes: JSON { field: [before, after] } so an edit can be undone;
+// on `added` it is { _ai: [fields AI suggested] } so AI may refine its own suggestions later but never what someone typed.
+export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `qty`, `warranty`, `expiry`, `notes`];
 
 const TABS = [
   { name: `Items`, cols: ITEM_COLS },
@@ -502,7 +505,7 @@ export class Repo extends EventTarget {
   categories() { return [...new Set(this.activeItems().map((i) => i.category).filter(Boolean))].sort(); }
 
   // ---------------- mutations
-  async saveItem(fields, { photo, thumb, logAction, detail, info, noLog = false } = {}) {
+  async saveItem(fields, { photo, thumb, logAction, detail, info, noLog = false, aiFields = [] } = {}) {
     const existing = fields.id && this.items.find((i) => i.id === fields.id);
     const before = existing ? { ...existing } : null;
     const item = existing ? { ...existing, ...fields } : {
@@ -519,12 +522,32 @@ export class Repo extends EventTarget {
     const action = logAction || (existing ? `edited` : `added`);
     if (!noLog) {
       const entry = { ts: now(), itemId: item.id, action, detail: detail ?? this.logDetail(action, item), by: this.user.email,
-        info: info ?? this.logInfo(action, before, item, Boolean(photo)) };
+        info: info ?? this.logInfo(action, before, item, Boolean(photo)), changes: this.changesJson(before, item, aiFields) };
       this.log.push(entry);
       this.outbox.push({ kind: `log`, data: entry });
     }
     this.saveCache(); this.emit(); this.flush();
     return item;
+  }
+
+  /** Exact before/after of the descriptive fields (kept whole, up to 4,000 characters each) so they can be restored. */
+  changesJson(before, item, aiFields) {
+    if (!before) return aiFields.length ? JSON.stringify({ _ai: aiFields }) : ``;
+    const cut = (v) => String(v ?? ``).slice(0, 4000);
+    const ch = {};
+    for (const f of TRACKED_FIELDS) if (String(before[f] ?? ``) !== String(item[f] ?? ``)) ch[f] = [cut(before[f]), cut(item[f])];
+    return Object.keys(ch).length ? JSON.stringify(ch) : ``;
+  }
+  static parseChanges(v) { try { const o = JSON.parse(v || `{}`); return o && typeof o === `object` ? o : {}; } catch { return {}; } }
+
+  /** Was this field last set by AI (so AI may refine it), rather than typed by a person? */
+  fieldSetByAi(itemId, field) {
+    for (const e of this.itemHistory(itemId)) { // newest first
+      const ch = Repo.parseChanges(e.changes);
+      if (field in ch) return /^AI\b/.test(e.info || ``);
+      if (e.action === `added`) return Array.isArray(ch._ai) && ch._ai.includes(field);
+    }
+    return false;
   }
 
   /** Extra context for the history: what an edit changed, where a move came from, a pick-up date. */

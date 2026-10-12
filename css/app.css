@@ -530,3 +530,18 @@ button.back .ic { width: 18px; height: 18px; }
 .pstrip::-webkit-scrollbar { display: none; }
 .pstrip .ptile { flex: none; width: 84px; height: 84px; }
 .pstrip .ptile.add { width: 108px; }
+
+/* ---------- history before/after ---------- */
+.ih-diff { display: grid; gap: 8px; margin: 4px 0 2px; }
+.ih-change { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 8px 10px; background: var(--bg); border-radius: 10px; }
+.ih-field { grid-column: 1 / -1; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); font-weight: 600; }
+.ih-old { grid-column: 1; font-size: 0.86rem; color: var(--ink-3); text-decoration: line-through; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ih-new { grid-column: 1; font-size: 0.88rem; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ih-old i, .ih-new i { text-decoration: none; color: var(--ink-3); }
+.ih-change .btn { grid-column: 2; grid-row: 2 / span 2; align-self: center; }
+.ih-title .ic { width: 15px; height: 15px; color: var(--accent); vertical-align: -2px; }
+.restore-note { display: flex; gap: 10px; align-items: flex-start; background: var(--amber-soft); color: var(--amber); padding: 10px 12px; border-radius: 12px; font-size: 0.9rem; }
+.restore-note .ic { flex: none; margin-top: 2px; }
+.field input.restored, .field textarea.restored { background: var(--amber-soft); border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); }
+.field:has(.restored) > span::after { content: " · earlier version"; font-weight: 500; color: var(--amber); font-size: 0.8rem; }
+.size-chips.restored .chip.on { background: var(--amber); border-color: var(--amber); }

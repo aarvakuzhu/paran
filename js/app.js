@@ -276,6 +276,7 @@ function render() {
   const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places` }[r.name] || `find`;
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
   document.body.classList.toggle(`focus-mode`, r.name === `add` || r.name === `edit` || r.name === `setup`); // no tab bar while filling a form
+  if (routeChanged && (r.name === `add` || r.name === `edit`)) $$(`#toasts .toast`).forEach((t) => t.remove()); // an Undo from another screen doesn't belong here
   updateOutBadge();
   const view = $(`#view`);
   const y = window.scrollY;
@@ -703,15 +704,16 @@ async function aiMergeIntoItem(itemId) {
     const r = await describeItem(imgs, item, { categories: repo.categories() });
     const cur = repo.items.find((i) => i.id === itemId); if (!cur) return;
     const patch = {}; const before = {}; const said = [];
-    const fill = (k, v, label) => { if (v && !String(cur[k] ?? ``).trim()) { patch[k] = v; before[k] = cur[k] || ``; said.push(label); } };
+    const mayChange = (k) => !String(cur[k] ?? ``).trim() || repo.fieldSetByAi(itemId, k); // empty, or AI's own earlier guess
+    const fill = (k, v, label) => { if (v && mayChange(k) && String(cur[k] ?? ``) !== v) { patch[k] = v; before[k] = cur[k] || ``; said.push(label); } };
     fill(`purpose`, r.purpose, `what it’s for`); fill(`category`, r.category, `category`); fill(`size`, r.size, `size (${r.size})`); fill(`tags`, r.tags, `search words`);
     const line = specLine(r);
     if (line && !String(cur.notes || ``).toLowerCase().includes((r.model || line).toLowerCase())) {
       before.notes = cur.notes || ``; patch.notes = cur.notes ? `${cur.notes}\n${line}` : line; said.push(r.model ? `model ${r.model}` : `specs`);
     }
     if (!said.length) { toast(`AI found nothing new in the photos`); return; }
-    await repo.saveItem({ id: itemId, ...patch }, { info: `AI from photos: ${said.join(`, `)}` });
-    toast(`AI added ${said.join(`, `)}`, { action: `Undo`, ms: 9000, onAction: () => repo.saveItem({ id: itemId, ...before }) });
+    await repo.saveItem({ id: itemId, ...patch }, { info: `AI from ${imgs.length} photo${imgs.length > 1 ? `s` : ``}: ${said.join(`, `)}` });
+    toast(`AI updated ${said.join(`, `)}. See History to compare.`, { action: `Undo`, ms: 9000, onAction: () => repo.saveItem({ id: itemId, ...before }, { info: `Undid the AI update` }) });
   } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000 }); }
 }
 
@@ -805,6 +807,8 @@ function describeEntry(e, prev) {
   }
 }
 
+const FIELD_LABEL = { name: `Name`, purpose: `What it’s for`, category: `Category`, size: `Size`, tags: `Search words`, qty: `How many`, warranty: `Warranty until`, expiry: `Expires`, notes: `Notes` };
+
 function itemHistoryHtml(item) {
   const hist = repo.itemHistory(item.id);
   if (!hist.length) return ``;
@@ -812,9 +816,18 @@ function itemHistoryHtml(item) {
   const rows = hist.map((e, i) => {
     const d = describeEntry(e, hist[i + 1]);
     const who = whoName(e.by);
+    const ch = Repo.parseChanges(e.changes); delete ch._ai;
+    const fields = Object.keys(ch).filter((f) => FIELD_LABEL[f]);
+    const diff = fields.length ? `<div class="ih-diff">${fields.map((f) => `<div class="ih-change">
+        <div class="ih-field">${esc(FIELD_LABEL[f])}</div>
+        <div class="ih-old">${ch[f][0] ? esc(ch[f][0]) : `<i>empty</i>`}</div>
+        <div class="ih-new">${ch[f][1] ? esc(ch[f][1]) : `<i>empty</i>`}</div>
+        <button type="button" class="btn ghost small" data-useold="${esc(e.ts)}" data-field="${f}">Use old</button></div>`).join(``)}
+      ${fields.length > 1 ? `<button type="button" class="link small" data-useold="${esc(e.ts)}" data-field="*">Use all old values</button>` : ``}</div>` : ``;
+    const title = fields.length && /^AI\b/.test(e.info || ``) ? `${icon(`spark`)} ${esc(e.info.split(`:`)[0])}` : d.title;
     return `<div class="ih-row${i >= SHOW ? ` extra` : ``}">
       <span class="ih-ic">${icon(d.icon || ACTION_ICON[e.action] || `edit`)}</span>
-      <div><div class="ih-title">${d.title}</div>${d.note ? `<div class="ih-note">${d.note}</div>` : ``}
+      <div><div class="ih-title">${title}</div>${diff || (d.note ? `<div class="ih-note">${d.note}</div>` : ``)}
         <small>${esc(fmtWhen(e.ts))}${who ? ` · by ${esc(who)}` : ``}</small></div></div>`;
   }).join(``);
   return `<div class="label-sm">History</div><div class="ih">${rows}</div>
@@ -1157,6 +1170,8 @@ function viewItem(view, r) {
     if (who) { personSheet(who.dataset.person); return; }
     if (e.target.closest(`.hero.zoomable`)) { photoViewer(item, `main`); return; }
     const pv = e.target.closest(`[data-view]`); if (pv) { photoViewer(item, pv.dataset.view); return; }
+    const uo = e.target.closest(`[data-useold]`);
+    if (uo) { location.hash = `#/edit/${item.id}?restore=${encodeURIComponent(uo.dataset.useold)}&f=${uo.dataset.field}`; return; }
     if (e.target.closest(`[data-hist-all]`)) { $(`.ih`, view).classList.add(`all`); e.target.closest(`[data-hist-all]`).remove(); return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
@@ -1392,6 +1407,27 @@ function viewEdit(view, r) {
   });
   drawAiRow(); drawStrip();
 
+  // "Use old" from History: put the earlier value(s) back into the form. Nothing changes until Save.
+  if (editing && r.params.get(`restore`)) {
+    const entry = repo.log.find((x) => x.itemId === editing.id && x.ts === r.params.get(`restore`));
+    const ch = Repo.parseChanges(entry?.changes); delete ch._ai;
+    const want = r.params.get(`f`);
+    const keys = Object.keys(ch).filter((k) => FIELD_LABEL[k] && (want === `*` || k === want));
+    const f = $(`#f`); let first = null;
+    for (const k of keys) {
+      const old = ch[k][0];
+      if (k === `size`) { sizeInput().value = old; drawSizes(); $(`#sizes`).classList.add(`restored`); first ||= $(`#sizes`); continue; }
+      const el = f.elements[k]; if (!el) continue;
+      el.value = old; el.classList.remove(`suggested`); el.classList.add(`restored`); first ||= el;
+      el.addEventListener(`input`, () => el.classList.remove(`restored`), { once: true });
+      el.closest(`details`)?.setAttribute(`open`, ``);
+    }
+    if (keys.length) {
+      $(`h1`, view).insertAdjacentHTML(`afterend`, `<div class="restore-note">${icon(`ret`)}<span>Earlier ${esc(keys.map((k) => FIELD_LABEL[k].toLowerCase()).join(`, `))} from ${esc(fmtWhen(entry.ts))} put back. Check it, then tap <b>Save</b> to keep it, or Cancel.</span></div>`);
+      setTimeout(() => first?.scrollIntoView({ block: `center`, behavior: `smooth` }), 150);
+    } else toast(`That earlier version isn’t available any more`);
+  }
+
   let again = false;
   $$(`button[type=submit]`, view).forEach((b) => b.addEventListener(`click`, () => { again = b.hasAttribute(`data-again`); }));
   let saving = false;
@@ -1435,7 +1471,8 @@ function viewEdit(view, r) {
         }
       }
 
-      const saved = await repo.saveItem(fields, { photo, thumb });
+      const aiFields = editing ? [] : [...$$(`#f .suggested`, view).map((el) => el.name), ...($(`#sizes`).classList.contains(`suggested`) ? [`size`] : [])].filter(Boolean);
+      const saved = await repo.saveItem(fields, { photo, thumb, aiFields });
       for (const x of pendingExtras) await repo.addExtraPhoto(saved.id, x, { log: false });
       rememberLoc(locationId);
       toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
