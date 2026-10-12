@@ -412,3 +412,18 @@ body.selecting .view { padding-bottom: calc(var(--tabbar-h) + 100px + env(safe-a
 .ih-note { font-size: 0.86rem; color: var(--ink-2); overflow-wrap: anywhere; }
 .ih-row small { color: var(--ink-3); font-size: 0.78rem; }
 [data-hist-all] { margin-top: 8px; }
+
+/* ---------- photo viewer ---------- */
+.hero.zoomable { cursor: zoom-in; position: relative; }
+.hero.zoomable::after { content: ""; position: absolute; right: 10px; bottom: 10px; width: 34px; height: 34px; border-radius: 50%;
+  background: rgb(0 0 0 / 45%) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M15 4h5v5M9 20H4v-5M20 4l-6 6M4 20l6-6'/%3E%3C/svg%3E") center / 18px no-repeat; }
+.viewer { position: fixed; inset: 0; z-index: 80; background: rgb(0 0 0 / 0%); transition: background 0.2s; display: grid; grid-template-rows: 1fr auto; }
+.viewer.open { background: rgb(0 0 0 / 92%); }
+.viewer-stage { display: grid; place-items: center; overflow: auto; padding: calc(56px + env(safe-area-inset-top)) 8px 8px; touch-action: pinch-zoom; }
+.viewer-stage img { max-width: 100%; max-height: calc(100vh - 140px); object-fit: contain; border-radius: 6px; opacity: 0; transition: opacity 0.2s; }
+.viewer.open .viewer-stage img { opacity: 1; }
+.viewer-x { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 10px; width: 42px; height: 42px; border-radius: 50%; border: 0;
+  background: rgb(255 255 255 / 15%); color: #fff; display: grid; place-items: center; cursor: pointer; z-index: 1; }
+.viewer-bar { color: #fff; padding: 10px 16px calc(16px + env(safe-area-inset-bottom)); display: grid; gap: 6px; text-align: center; }
+.viewer-note { font-size: 0.86rem; color: rgb(255 255 255 / 75%); }
+.viewer-note a { color: #fff; text-decoration: underline; }

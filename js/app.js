@@ -1,5 +1,5 @@
 import { CONFIG } from './config.js';
-import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, pickSpreadsheet } from './google.js';
+import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSpreadsheet, AuthError } from './google.js';
 import { Repo } from './store.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, cropItem } from './image.js';
@@ -37,6 +37,7 @@ async function boot() {
   const mode = localStorage.getItem(MODE_KEY);
   if (mode === `demo`) return start(`demo`);
   if (mode === `google` && googleConfigured()) {
+    if (resumeGoogle()) return;            // open instantly from the phone's copy, sync when Google says OK
     if (hasValidToken()) return start(`google`);
     return renderReconnect();
   }
@@ -55,10 +56,57 @@ async function start(kind, { interactive = false, choice } = {}) {
     repo.addEventListener(`status`, renderStatus);
     renderShell();
     render();
+    if (kind === `google`) installQuietRenew();
   } catch (e) {
     console.error(e);
     renderWelcome(e.message || String(e));
   }
+}
+
+/** Reopen straight into the inventory from the saved session; no sign-in screen. */
+function resumeGoogle() {
+  const r = new Repo(`google`);
+  if (!r.resume()) return false;
+  repo = r;
+  repo.addEventListener(`change`, onRepoChange);
+  repo.addEventListener(`status`, renderStatus);
+  renderShell(); render();
+  if (hasValidToken()) repo.refresh();
+  else repo.setStatus(navigator.onLine ? `auth` : `offline`);
+  installQuietRenew();
+  return true;
+}
+
+// ---- quiet renew: Google tokens last ~1 hour and a browser app can't refresh them in the background
+// without a server. So the first tap after (or just before) expiry renews it, using the saved account
+// as a hint: the Google popup usually opens and closes by itself, no account picker, no consent screen.
+let renewing = null; let lastRenewFail = 0;
+function needsRenew() { return repo?.backend.kind === `google` && navigator.onLine && tokenTimeLeft() < 5 * 60_000; }
+async function renewNow({ quiet = true } = {}) {
+  if (renewing) return renewing;
+  renewing = (async () => {
+    try {
+      await signIn({ silent: true, hint: repo.user?.email || `` });
+      await repo.refresh();
+      if (!quiet) toast(`Synced`);
+      return true;
+    } catch (e) {
+      lastRenewFail = Date.now();
+      if (!quiet) toast(`Couldn’t reach Google: ${e.message}`);
+      repo.setStatus(`auth`);
+      return false;
+    } finally { renewing = null; }
+  })();
+  return renewing;
+}
+let quietInstalled = false;
+function installQuietRenew() {
+  if (quietInstalled) return; quietInstalled = true;
+  document.addEventListener(`click`, (e) => {
+    if (!needsRenew() || renewing || Date.now() - lastRenewFail < 120_000) return;
+    if (e.target.closest(`#status`)) return; // the status pill handles its own tap
+    renewNow(); // inside a user gesture, so the browser allows Google's popup
+  }, true);
 }
 
 function onRepoChange() {
@@ -158,7 +206,7 @@ function renderStatus() {
   const map = {
     synced: [`ok`, `Saved`], idle: [`ok`, `Saved`], syncing: [`busy`, `Saving…`],
     pending: [`warn`, `${pending} to save`], offline: [`warn`, pending ? `Offline · ${pending} waiting` : `Offline`],
-    auth: [`warn`, `Reconnect`], error: [`bad`, `Sync issue`],
+    auth: [`warn`, pending ? `${pending} waiting · tap to sync` : `Tap to sync`], error: [`bad`, `Sync issue`],
   };
   const [cls, label] = repo.backend.kind === `demo` ? [`demo`, `Demo`] : (map[s] || map.idle);
   el.className = `status ${cls}`;
@@ -167,11 +215,7 @@ function renderStatus() {
 
 async function onStatusClick() {
   if (repo.backend.kind === `demo`) return toast(`Demo mode: data stays in this browser. Sign in with Google from More.`);
-  if (repo.status === `auth`) {
-    try { await signIn({ silent: true }); await repo.refresh(); toast(`Reconnected`); }
-    catch (e) { toast(e.message); }
-    return;
-  }
+  if (repo.status === `auth` || needsRenew()) { await renewNow({ quiet: false }); return; }
   if (repo.status === `error`) return toast(`Sync failed: ${repo.lastError?.message || `unknown error`}`, { action: `Retry`, onAction: () => repo.refresh() });
   repo.refresh();
 }
@@ -545,6 +589,33 @@ async function lendOrSave(item, opts) {
   }
 }
 
+// ---------------- full-screen photo, inside the app (no Drive page, no second login)
+function photoViewer(item) {
+  const wrap = document.createElement(`div`);
+  wrap.className = `viewer`;
+  wrap.innerHTML = `<button type="button" class="viewer-x" aria-label="Close">${icon(`x`)}</button>
+    <div class="viewer-stage">${repo.thumbs[item.id] ? `<img src="${repo.thumbs[item.id]}" alt="${esc(item.name)}">` : `<div class="spinner"></div>`}</div>
+    <div class="viewer-bar"><b>${esc(item.name)}</b><span class="viewer-note"></span></div>`;
+  document.body.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add(`open`));
+  const close = () => { wrap.classList.remove(`open`); setTimeout(() => wrap.remove(), 200); document.removeEventListener(`keydown`, onKey); };
+  const onKey = (e) => { if (e.key === `Escape`) close(); };
+  document.addEventListener(`keydown`, onKey);
+  wrap.addEventListener(`click`, (e) => { if (e.target === wrap || e.target.closest(`.viewer-x`) || e.target.classList.contains(`viewer-stage`)) close(); });
+  const note = $(`.viewer-note`, wrap); const stage = $(`.viewer-stage`, wrap);
+  const show = (url) => { stage.innerHTML = `<img src="${url}" alt="${esc(item.name)}">`; note.textContent = ``; };
+  const load = () => repo.photoObjectUrl(item).then((url) => {
+    if (url) return show(url);
+    if (!repo.thumbs[item.id]) stage.innerHTML = `<p class="muted">No photo yet.</p>`;
+    else if (item.photoUrl) note.innerHTML = `Preview only. The full photo is in ${esc((item.addedBy || `another member`).split(`@`)[0])}’s Drive. <a href="${esc(item.photoUrl)}" target="_blank" rel="noopener">Open in Drive</a>`;
+  }).catch((err) => {
+    if (!(err instanceof AuthError)) return;
+    note.innerHTML = `<button type="button" class="btn small primary" data-load>Load full photo</button>`;
+    $(`[data-load]`, note).onclick = async (ev) => { ev.stopPropagation(); note.textContent = `Loading…`; if (await renewNow()) load(); else note.textContent = `Couldn’t reach Google. Showing preview.`; };
+  });
+  load();
+}
+
 // ---------------- item history
 const fmtWhen = (iso) => {
   const d = new Date(iso); if (isNaN(d)) return ``;
@@ -786,19 +857,25 @@ function viewItem(view, r) {
         ${item.status === `missing` ? `<button class="act" data-a="found">${icon(`check`)}Found it</button>` : `<button class="act" data-a="missing">${icon(`alert`)}Can’t find</button>`}
         <a class="act" href="#/edit/${esc(item.id)}">${icon(`edit`)}Edit</a>
       </div>
-      ${item.photoUrl ? `<a class="btn ghost full" href="${esc(item.photoUrl)}" target="_blank" rel="noopener">${icon(`ext`)} Full photo in Drive</a>` : ``}
       ${itemHistoryHtml(item)}
       <button class="btn text danger full" data-a="delete">${icon(`trash`)} Remove from inventory</button>
     </div>`;
 
   // Show the full-size photo when this device can read it (own photos / demo).
-  repo.photoObjectUrl(item).then((url) => { const img = $(`.hero-img`, view); if (url && img?.tagName === `IMG`) img.src = url; else if (url) $(`.hero`, view).innerHTML = `<img class="hero-img" src="${url}" alt="">`; });
+  // Full-size photo from the phone's cache or Drive; tap to view it full screen.
+  repo.photoObjectUrl(item).then((url) => {
+    if (!url) return;
+    const img = $(`.hero-img`, view);
+    if (img?.tagName === `IMG`) img.src = url; else $(`.hero`, view).innerHTML = `<img class="hero-img" src="${url}" alt="">`;
+  }).catch(() => { /* not signed in right now: thumbnail stays */ });
+  if (repo.thumbs[item.id] || item.photoId) $(`.hero`, view).classList.add(`zoomable`);
 
   view.onclick = async (e) => {
     const tag = e.target.closest(`[data-tag]`);
     if (tag) { e.preventDefault(); findState = { q: tag.dataset.tag, filter: `` }; location.hash = `#/`; return; }
     const who = e.target.closest(`[data-person]`);
     if (who) { personSheet(who.dataset.person); return; }
+    if (e.target.closest(`.hero.zoomable`)) { photoViewer(item); return; }
     if (e.target.closest(`[data-hist-all]`)) { $(`.ih`, view).classList.add(`all`); e.target.closest(`[data-hist-all]`).remove(); return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
@@ -1319,7 +1396,7 @@ function viewMore(view, r) {
     if (m === `sync`) { await repo.refresh(); toast(repo.status === `synced` ? `Up to date` : `Sync: ${repo.status}`); }
     if (m === `signout`) {
       if (repo.outbox.length && !(await confirmSheet(`Sign out?`, `${repo.outbox.length} change(s) haven’t reached Google yet and will be lost.`, `Sign out anyway`, true))) return;
-      signOut(); localStorage.removeItem(MODE_KEY); location.hash = ``; location.reload();
+      signOut(); [MODE_KEY, `stash.session`].forEach((k) => localStorage.removeItem(k)); location.hash = ``; location.reload();
     }
     if (m === `google`) { localStorage.removeItem(MODE_KEY); start(`google`, { interactive: true }); }
     if (m === `reset` && await confirmSheet(`Clear demo data?`, `Removes everything stored in this browser.`, `Clear`, true)) {

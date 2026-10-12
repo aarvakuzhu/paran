@@ -22,9 +22,10 @@ function loadScript(src) {
 export const googleConfigured = () => Boolean(CONFIG.CLIENT_ID);
 export const pickerConfigured = () => Boolean(CONFIG.API_KEY && CONFIG.APP_ID);
 
+// Kept in localStorage (not sessionStorage) so closing and reopening the app within the hour needs no sign-in.
 function restoreToken() {
   try {
-    const t = JSON.parse(sessionStorage.getItem(TOKEN_KEY) || `null`);
+    const t = JSON.parse(localStorage.getItem(TOKEN_KEY) || `null`);
     if (t && t.expires_at > Date.now() + 60_000) token = t;
   } catch { /* ignore */ }
 }
@@ -38,21 +39,28 @@ async function ensureClient() {
     callback: (resp) => {
       if (resp.error) { pendingReject?.(new Error(resp.error_description || resp.error)); return; }
       token = { access_token: resp.access_token, expires_at: Date.now() + (resp.expires_in - 60) * 1000 };
-      try { sessionStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch { /* ignore */ }
+      try { localStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch { /* ignore */ }
       pendingResolve?.(token);
     },
     error_callback: (err) => pendingReject?.(new Error(err?.message || err?.type || `Sign-in was cancelled`)),
   });
 }
 
-/** Ask Google for a token. Must be called from a user gesture the first time (popup). */
-export async function signIn({ silent = false } = {}) {
+/**
+ * Ask Google for a token. Needs a user gesture (it may open a popup).
+ * silent: no account picker or consent screen if the user already agreed; with `hint` Google picks the right account,
+ * so the popup usually opens and closes by itself.
+ */
+export async function signIn({ silent = false, hint = `` } = {}) {
   await ensureClient();
   return new Promise((resolve, reject) => {
     pendingResolve = resolve; pendingReject = reject;
-    tokenClient.requestAccessToken({ prompt: silent ? `` : `select_account` });
+    tokenClient.requestAccessToken({ prompt: silent ? `` : `select_account`, ...(hint ? { hint, login_hint: hint } : {}) });
   });
 }
+
+/** ms until the current token expires (0 if none). */
+export function tokenTimeLeft() { if (!token) restoreToken(); return token ? Math.max(0, token.expires_at - Date.now()) : 0; }
 
 export function hasValidToken() {
   if (!token) restoreToken();
@@ -62,7 +70,7 @@ export function hasValidToken() {
 export function signOut() {
   if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token.access_token, () => {});
   token = null;
-  sessionStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
 }
 
 export class AuthError extends Error {}
@@ -73,7 +81,7 @@ async function api(url, opts = {}) {
     ...opts,
     headers: { Authorization: `Bearer ${token.access_token}`, ...(opts.headers || {}) },
   });
-  if (res.status === 401) { token = null; sessionStorage.removeItem(TOKEN_KEY); throw new AuthError(`Session expired`); }
+  if (res.status === 401) { token = null; localStorage.removeItem(TOKEN_KEY); throw new AuthError(`Session expired`); }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { const j = await res.json(); msg = j.error?.message || msg; } catch { /* ignore */ }

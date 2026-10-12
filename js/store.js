@@ -63,6 +63,10 @@ class DemoBackend {
   get cacheKey() { return `demo`; }
 }
 
+const SESSION_KEY = `stash.session`;
+const PHOTO_LRU_KEY = `stash.photoLRU`;
+const PHOTO_CACHE_MAX = 150;
+
 class GoogleBackend {
   kind = `google`;
   user = null; sheetId = null; photoFolderId = null; rootFolderId = null; isOwner = true;
@@ -91,8 +95,25 @@ class GoogleBackend {
     localStorage.setItem(this.prefKey(), this.sheetId);
     await this.ensureHeaders();
     await this.ensurePhotoFolder();
-    return { user: this.user, label: this.isOwner ? `Your Google Drive` : `Shared inventory` };
+    this.saveSession();
+    return { user: this.user, label: this.label() };
   }
+
+  label() { return this.isOwner ? `Your Google Drive` : `Shared inventory`; }
+
+  // Remember enough to reopen straight into the cached inventory, even before Google has re-issued a token.
+  saveSession() {
+    const { user, sheetId, isOwner, rootFolderId, photoFolderId, sheetUrl } = this;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, isOwner, rootFolderId, photoFolderId, sheetUrl }));
+  }
+  static savedSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || `null`); } catch { return null; } }
+  resume() {
+    const s = GoogleBackend.savedSession(); if (!s?.sheetId) return null;
+    Object.assign(this, s);
+    return { user: this.user, label: this.label() };
+  }
+  /** After a resume, finish the one-time checks once we have a token. */
+  async afterResume() { await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession(); }
 
   async inspectSheet() {
     const m = await drive.meta(this.sheetId);
@@ -214,10 +235,28 @@ class GoogleBackend {
     return { photoId: f.id, photoUrl: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view` };
   }
 
-  async photoObjectUrl(item) {
-    if (!item.photoId) return null;
-    try { return URL.createObjectURL(await drive.downloadBlob(item.photoId)); }
-    catch { return null; } // photo added by another member: use the Drive link instead
+  /** Full photo from this device's cache, else from Drive (then cached). Throws AuthError when a sign-in is needed. */
+  photoObjectUrl(item) {
+    if (!item.photoId) return Promise.resolve(null);
+    // one download per photo even if the screen asks twice while it's loading
+    this.inflight ||= new Map();
+    if (!this.inflight.has(item.photoId)) {
+      const p = this.loadPhoto(item).finally(() => this.inflight.delete(item.photoId));
+      this.inflight.set(item.photoId, p);
+    }
+    return this.inflight.get(item.photoId).then((blob) => (blob ? URL.createObjectURL(blob) : null));
+  }
+
+  async loadPhoto(item) {
+    const key = `photo:${item.photoId}`;
+    const cached = await blobs.get(key).catch(() => null);
+    if (cached) { touchLru(item.photoId); return cached; }
+    let blob;
+    try { blob = await drive.downloadBlob(item.photoId); }
+    catch (e) { if (e instanceof AuthError) throw e; return null; } // e.g. a photo in another member's Drive
+    await blobs.put(key, blob).catch(() => {});
+    touchLru(item.photoId);
+    return blob;
   }
 
   async invite(email) {
@@ -227,6 +266,14 @@ class GoogleBackend {
   }
 
   forgetSheet() { localStorage.removeItem(this.prefKey()); }
+}
+
+function touchLru(photoId) {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(PHOTO_LRU_KEY) || `[]`); } catch { /* ignore */ }
+  list = [photoId, ...list.filter((x) => x !== photoId)];
+  for (const old of list.splice(PHOTO_CACHE_MAX)) blobs.del(`photo:${old}`).catch(() => {});
+  try { localStorage.setItem(PHOTO_LRU_KEY, JSON.stringify(list)); } catch { /* ignore */ }
 }
 
 // ------------------------------------------------------------------ repository
@@ -254,6 +301,15 @@ export class Repo extends EventTarget {
     return info;
   }
 
+  /** Open from the saved session and local cache without any network call. Returns info or null. */
+  resume() {
+    if (this.backend.kind !== `google`) return null;
+    const info = this.backend.resume(); if (!info) return null;
+    this.user = info.user; this.label = info.label; this.needsResumeChecks = true;
+    this.loadCache(); this.emit();
+    return info;
+  }
+
   loadCache() {
     try {
       const c = JSON.parse(localStorage.getItem(this.key) || `null`);
@@ -272,6 +328,10 @@ export class Repo extends EventTarget {
 
   /** Pull latest from the backend, keeping any local edits still waiting in the outbox. */
   async refresh() {
+    if (this.needsResumeChecks) {
+      try { await this.backend.afterResume(); this.needsResumeChecks = false; }
+      catch (e) { this.handleError(e); return; }
+    }
     await this.flush();
     if (!navigator.onLine) return;
     try {
