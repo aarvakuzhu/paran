@@ -103,17 +103,39 @@ class GoogleBackend {
 
   // Remember enough to reopen straight into the cached inventory, even before Google has re-issued a token.
   saveSession() {
+    if (this.legacy) return;
     const { user, sheetId, isOwner, rootFolderId, photoFolderId, sheetUrl } = this;
     localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, isOwner, rootFolderId, photoFolderId, sheetUrl }));
   }
   static savedSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || `null`); } catch { return null; } }
   resume() {
-    const s = GoogleBackend.savedSession(); if (!s?.sheetId) return null;
+    const s = GoogleBackend.savedSession() || GoogleBackend.legacySession(); if (!s?.sheetId) return null;
     Object.assign(this, s);
     return { user: this.user, label: this.label() };
   }
+
+  /** Installs from before sessions were saved: rebuild one from the keys they already have on the device. */
+  static legacySession() {
+    try {
+      const key = Object.keys(localStorage).find((k) => k.startsWith(`stash.sheet.`) && localStorage.getItem(k));
+      if (!key) return null;
+      const email = key.slice(`stash.sheet.`.length);
+      const sheetId = localStorage.getItem(key);
+      if (!localStorage.getItem(`stash.cache.${sheetId}`)) return null; // nothing cached to show yet
+      return { user: { email, name: email.split(`@`)[0] }, sheetId, isOwner: true, rootFolderId: null,
+        photoFolderId: localStorage.getItem(`stash.photos.${email}.${sheetId}`), sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, legacy: true };
+    } catch { return null; }
+  }
+
   /** After a resume, finish the one-time checks once we have a token. */
-  async afterResume() { await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession(); }
+  async afterResume() {
+    if (this.legacy) {
+      const u = await userinfo();
+      this.user = { email: u.email, name: u.name || u.email, picture: u.picture };
+      await this.inspectSheet(); this.legacy = false;
+    }
+    await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession();
+  }
 
   async inspectSheet() {
     const m = await drive.meta(this.sheetId);
@@ -329,7 +351,7 @@ export class Repo extends EventTarget {
   /** Pull latest from the backend, keeping any local edits still waiting in the outbox. */
   async refresh() {
     if (this.needsResumeChecks) {
-      try { await this.backend.afterResume(); this.needsResumeChecks = false; }
+      try { await this.backend.afterResume(); this.needsResumeChecks = false; this.user = this.backend.user; this.label = this.backend.label(); }
       catch (e) { this.handleError(e); return; }
     }
     await this.flush();
