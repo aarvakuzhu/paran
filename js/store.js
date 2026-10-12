@@ -7,7 +7,8 @@ import { blobs } from './idb.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
-  `dueAt`]; // columns added later go AFTER thumb so older sheets stay aligned
+  `dueAt`, `size`, `photos`]; // columns added later go AFTER thumb so older sheets stay aligned
+// photos: JSON list of extra photos [{ pid, kind: close|scale|other, id, url, thumb }]. In memory the thumbs live in repo.thumbs.
 const THUMB_COL = colLetterOf(ITEM_COLS.indexOf(`thumb`));
 const BEFORE_THUMB = colLetterOf(ITEM_COLS.indexOf(`thumb`) - 1);
 const AFTER_THUMB = [ITEM_COLS.indexOf(`thumb`) + 1, ITEM_COLS.length - 1].map(colLetterOf);
@@ -50,7 +51,7 @@ class DemoBackend {
   async fetchThumbs() { return null; }
   async writeOps() { /* nothing remote */ }
   async uploadPhoto(blob, itemId) {
-    const photoId = `local-${itemId}-${Date.now()}`;
+    const photoId = `local-${itemId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     await blobs.put(`photo:${photoId}`, blob);
     return { photoId, photoUrl: `` };
   }
@@ -252,8 +253,8 @@ class GoogleBackend {
     }
   }
 
-  async uploadPhoto(blob, itemId) {
-    const f = await drive.upload(blob, `${itemId}.jpg`, this.photoFolderId);
+  async uploadPhoto(blob, itemId, name = `${itemId}.jpg`) {
+    const f = await drive.upload(blob, name, this.photoFolderId);
     return { photoId: f.id, photoUrl: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view` };
   }
 
@@ -364,6 +365,7 @@ export class Repo extends EventTarget {
         for (const [id, d] of pending) if (!this.items.find((i) => i.id === id) && `purpose` in d) this.items.push(d);
         this.locations = data.locations.map((l) => pending.get(l.id) || l);
         for (const [id, d] of pending) if (!this.locations.find((l) => l.id === id) && `kind` in d) this.locations.push(d);
+        this.items.forEach((i) => this.absorbPhotoThumbs(i));
         this.members = data.members;
         const pendingLog = this.outbox.filter((o) => o.kind === `log`).map((o) => o.data);
         this.log = [...(data.log || []), ...pendingLog];
@@ -393,8 +395,9 @@ export class Repo extends EventTarget {
       while (this.outbox.length) {
         const op = this.outbox[0];
         if (op.kind === `photo`) await this.flushPhoto(op);
+        else if (op.kind === `xphoto`) await this.flushExtraPhoto(op);
         else {
-          const data = op.kind === `item` ? { ...op.data, thumb: this.thumbs[op.data.id] || `` } : op.data;
+          const data = op.kind === `item` ? { ...op.data, thumb: this.thumbs[op.data.id] || ``, photos: this.photosForSheet(op.data.photos) } : op.data;
           await this.backend.writeOps([{ ...op, data }]);
         }
         this.outbox.shift(); this.saveCache();
@@ -417,6 +420,60 @@ export class Repo extends EventTarget {
       await blobs.del(`pending:${op.itemId}`);
       this.emit();
     }
+  }
+
+  async flushExtraPhoto(op) {
+    const blob = await blobs.get(`pending:x:${op.pid}`);
+    const item = this.items.find((i) => i.id === op.itemId);
+    const list = item ? this.photosOf(item) : [];
+    const entry = list.find((p) => p.pid === op.pid);
+    if (blob && entry) {
+      const { photoId, photoUrl } = await this.backend.uploadPhoto(blob, op.itemId, `${op.itemId}-${entry.kind}-${op.pid}.jpg`);
+      entry.id = photoId; entry.url = photoUrl;
+      item.photos = JSON.stringify(list);
+      this.outbox.splice(1, 0, { kind: `item`, data: { ...item } });
+    }
+    if (blob) await blobs.del(`pending:x:${op.pid}`);
+    this.emit();
+  }
+
+  // ---------------- extra photos (close-up, scale)
+  static parsePhotos(v) {
+    try { const a = typeof v === `string` ? JSON.parse(v || `[]`) : (v || []); return Array.isArray(a) ? a : []; } catch { return []; }
+  }
+  photosOf(item) { return Repo.parsePhotos(item?.photos); }
+  /** Sheet value: the list plus each photo's small preview, so every family member sees them. */
+  photosForSheet(v) {
+    const list = Repo.parsePhotos(v);
+    return list.length ? JSON.stringify(list.map((p) => ({ ...p, thumb: this.thumbs[`x:${p.pid}`] || `` }))) : ``;
+  }
+  /** Coming from the sheet: move previews into the thumbs store so the cache stays small. */
+  absorbPhotoThumbs(item) {
+    const list = Repo.parsePhotos(item.photos);
+    for (const p of list) if (p.thumb) { this.thumbs[`x:${p.pid}`] = p.thumb; delete p.thumb; }
+    item.photos = list.length ? JSON.stringify(list) : ``;
+  }
+  async addExtraPhoto(itemId, kind, { photo, thumb }, { log = true } = {}) {
+    const item = this.items.find((i) => i.id === itemId); if (!item) return null;
+    const pid = uid();
+    const list = this.photosOf(item).filter((p) => kind === `other` || p.kind !== kind); // one close-up, one scale
+    list.push({ pid, kind, id: ``, url: `` });
+    this.thumbs[`x:${pid}`] = thumb;
+    await blobs.put(`pending:x:${pid}`, photo);
+    const label = { close: `Close-up photo`, scale: `Scale photo` }[kind] || `Photo`;
+    await this.saveItem({ id: itemId, photos: JSON.stringify(list) }, { logAction: log ? `edited` : null, info: `${label} added`, noLog: !log });
+    this.outbox.push({ kind: `xphoto`, itemId, pid });
+    this.saveCache(); this.flush();
+    return pid;
+  }
+  async removeExtraPhoto(itemId, pid) {
+    const item = this.items.find((i) => i.id === itemId); if (!item) return;
+    const gone = this.photosOf(item).find((p) => p.pid === pid);
+    const list = this.photosOf(item).filter((p) => p.pid !== pid);
+    await this.saveItem({ id: itemId, photos: list.length ? JSON.stringify(list) : `` }, { logAction: `edited`, info: `${{ close: `Close-up`, scale: `Scale` }[gone?.kind] || ``} photo removed`.trim() });
+  }
+  extraPhotoUrl(entry) {
+    return blobs.get(`pending:x:${entry.pid}`).then((b) => (b ? URL.createObjectURL(b) : entry.id ? this.backend.photoObjectUrl({ photoId: entry.id }) : null));
   }
 
   // ---------------- queries
@@ -443,11 +500,11 @@ export class Repo extends EventTarget {
   categories() { return [...new Set(this.activeItems().map((i) => i.category).filter(Boolean))].sort(); }
 
   // ---------------- mutations
-  async saveItem(fields, { photo, thumb, logAction, detail, info } = {}) {
+  async saveItem(fields, { photo, thumb, logAction, detail, info, noLog = false } = {}) {
     const existing = fields.id && this.items.find((i) => i.id === fields.id);
     const before = existing ? { ...existing } : null;
     const item = existing ? { ...existing, ...fields } : {
-      id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``, dueAt: ``,
+      id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``, dueAt: ``, size: ``, photos: ``,
       photoId: ``, photoUrl: ``, warranty: ``, expiry: ``, notes: ``, addedBy: this.user.email, addedAt: now(),
       deleted: ``, ...fields,
     };
@@ -458,10 +515,12 @@ export class Repo extends EventTarget {
     this.outbox.push({ kind: `item`, data: { ...item } });
     if (photo) this.outbox.push({ kind: `photo`, itemId: item.id });
     const action = logAction || (existing ? `edited` : `added`);
-    const entry = { ts: now(), itemId: item.id, action, detail: detail ?? this.logDetail(action, item), by: this.user.email,
-      info: info ?? this.logInfo(action, before, item, Boolean(photo)) };
-    this.log.push(entry);
-    this.outbox.push({ kind: `log`, data: entry });
+    if (!noLog) {
+      const entry = { ts: now(), itemId: item.id, action, detail: detail ?? this.logDetail(action, item), by: this.user.email,
+        info: info ?? this.logInfo(action, before, item, Boolean(photo)) };
+      this.log.push(entry);
+      this.outbox.push({ kind: `log`, data: entry });
+    }
     this.saveCache(); this.emit(); this.flush();
     return item;
   }
@@ -472,7 +531,7 @@ export class Repo extends EventTarget {
     if (action === `reserved` && item.dueAt) return `due ${item.dueAt}`;
     if (action !== `edited` || !before) return ``;
     const short = (v) => { const t = String(v ?? ``).replace(/\s+/g, ` `).trim(); return t ? (t.length > 40 ? `${t.slice(0, 39)}…` : t) : `empty`; };
-    const labels = { name: `Name`, purpose: `What it’s for`, category: `Category`, tags: `Tags`, qty: `Qty`, warranty: `Warranty`, expiry: `Expires`, notes: `Notes` };
+    const labels = { name: `Name`, purpose: `What it’s for`, category: `Category`, size: `Size`, tags: `Search words`, qty: `Qty`, warranty: `Warranty`, expiry: `Expires`, notes: `Notes` };
     const changes = Object.entries(labels)
       .filter(([k]) => String(before[k] ?? ``) !== String(item[k] ?? ``))
       .map(([k, label]) => `${label}: ${short(before[k])} → ${short(item[k])}`);
@@ -529,7 +588,7 @@ export class Repo extends EventTarget {
   }
 
   exportCsv() {
-    const cols = [`name`, `purpose`, `category`, `tags`, `location`, `qty`, `status`, `lentTo`, `dueAt`, `warranty`, `expiry`, `notes`, `photoUrl`, `addedBy`, `addedAt`];
+    const cols = [`name`, `purpose`, `category`, `size`, `tags`, `location`, `qty`, `status`, `lentTo`, `dueAt`, `warranty`, `expiry`, `notes`, `photoUrl`, `addedBy`, `addedAt`];
     const esc = (v) => `"${String(v ?? ``).replace(/"/g, `""`)}"`;
     const lines = [cols.join(`,`)];
     for (const i of this.activeItems()) lines.push(cols.map((c) => esc(c === `location` ? this.pathText(i.locationId) : i[c])).join(`,`));

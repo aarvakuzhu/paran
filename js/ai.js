@@ -64,6 +64,7 @@ const SCHEMA = {
           tags: { type: `ARRAY`, items: { type: `STRING` } },
           qty: { type: `INTEGER` },
           notes: { type: `STRING` },
+          size: { type: `STRING` },
           box_2d: { type: `ARRAY`, items: { type: `INTEGER` } },
         },
         required: [`name`, `purpose`, `category`, `tags`, `qty`],
@@ -86,6 +87,7 @@ function prompt({ categories = [], location = `` }) {
     `- tags: 3 to 6 lowercase search words, including common synonyms someone might type.`,
     `- qty: how many identical units are visible (1 if unsure).`,
     `- notes: visible model numbers, sizes, capacities or expiry dates; otherwise empty.`,
+    `- size: how big the item is, one of: ${SIZES.join(`, `)}. Judge from surrounding objects; empty if you can't tell.`,
     `- box_2d: bounding box as [ymin, xmin, ymax, xmax] normalized to 0-1000.`,
     location ? `Context: the user says these items are stored in "${location}".` : ``,
     `Do not guess at things you cannot see. If you cannot identify anything, return an empty items list.`,
@@ -100,9 +102,33 @@ async function blobToBase64(blob) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const SIZES = [`Pocket`, `Hand-held`, `Shoebox`, `Carry-on`, `Large`, `Furniture`];
+
+const LABEL_SCHEMA = {
+  type: `OBJECT`,
+  properties: { model: { type: `STRING` }, details: { type: `STRING` }, name: { type: `STRING` } },
+  required: [`model`, `details`],
+};
+/** Close-up of a label or nameplate: read brand/model and key specs. Returns { model, details, name }. */
+export async function readLabel(image) {
+  const text = [
+    `This is a close-up photo of a product label, nameplate, tag or packaging for a home inventory app.`,
+    `Read what is printed. Do not guess anything you cannot read.`,
+    `- model: brand and model or part number exactly as printed (e.g. "DeWalt DCD771"); empty if none is legible.`,
+    `- details: up to 3 short useful specs as one line separated by " · " (e.g. "20V · 1/2 in chuck · 2 speeds"): size, capacity, voltage, wattage, battery type, filter size, expiry. Empty if none.`,
+    `- name: a short plain name for the product if it is clear from the label (e.g. "Cordless drill"); otherwise empty.`,
+  ].join(`\n`);
+  const out = await callGemini(image, text, LABEL_SCHEMA);
+  return { model: str(out.model, 80), details: str(out.details, 160), name: str(out.name, 60) };
+}
 
 /** Returns a cleaned list of suggested items. `image` is a JPEG Blob (~1024px). */
 export async function analyzePhoto(image, context = {}) {
+  const parsed = await callGemini(image, prompt(context), SCHEMA);
+  return clean(parsed.items || []);
+}
+
+async function callGemini(image, promptText, schema) {
   const s = aiSettings();
   if (!s.enabled || !s.key) throw new AiError(`key`, `AI suggestions are not set up.`);
   if (!navigator.onLine) throw new AiError(`network`, `You’re offline. Fill in the details yourself, or try again later.`);
@@ -112,8 +138,8 @@ export async function analyzePhoto(image, context = {}) {
   lastCallAt = Date.now();
 
   const body = {
-    contents: [{ parts: [{ text: prompt(context) }, { inline_data: { mime_type: `image/jpeg`, data: await blobToBase64(image) } }] }],
-    generationConfig: { response_mime_type: `application/json`, response_schema: SCHEMA, temperature: 0.2 },
+    contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: `image/jpeg`, data: await blobToBase64(image) } }] }],
+    generationConfig: { response_mime_type: `application/json`, response_schema: schema, temperature: 0.2 },
   };
 
   let res;
@@ -142,9 +168,7 @@ export async function analyzePhoto(image, context = {}) {
     throw new AiError(`blocked`, `Gemini declined to describe this photo.`);
   }
   const text = (cand.content?.parts || []).map((p) => p.text || ``).join(``);
-  let parsed;
-  try { parsed = JSON.parse(text); } catch { throw new AiError(`other`, `Gemini’s answer couldn’t be read. Try again.`); }
-  return clean(parsed.items || []);
+  try { return JSON.parse(text); } catch { throw new AiError(`other`, `Gemini’s answer couldn’t be read. Try again.`); }
 }
 
 const str = (v, max) => String(v ?? ``).replace(/\s+/g, ` `).trim().slice(0, max);
@@ -159,6 +183,7 @@ function clean(items) {
       tags: (Array.isArray(it.tags) ? it.tags : []).map((t) => str(t, 30).toLowerCase()).filter(Boolean).slice(0, 8).join(`, `),
       qty: Math.max(1, Math.min(999, parseInt(it.qty, 10) || 1)),
       notes: str(it.notes, 200),
+      size: SIZES.find((z) => z.toLowerCase() === String(it.size || ``).trim().toLowerCase()) || ``,
       box: box && box[2] > box[0] && box[3] > box[1] ? box : null,
     };
   }).filter((it) => it.name);

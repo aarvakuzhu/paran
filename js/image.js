@@ -21,12 +21,12 @@ function draw(src, max, sx = 0, sy = 0, sw = src.width, sh = src.height) {
 
 const toBlob = (canvas, q) => new Promise((r) => canvas.toBlob(r, `image/jpeg`, q));
 
-/** Thumbnail as a data URL small enough for one spreadsheet cell (< 40k chars). */
-function thumbOf(canvas) {
-  const small = draw(canvas, 280);
+/** Thumbnail as a data URL small enough for a spreadsheet cell (default < 40k chars). */
+function thumbOf(canvas, { max = 280, limit = 40000 } = {}) {
+  const small = draw(canvas, max);
   let q = 0.7, thumb = small.toDataURL(`image/jpeg`, q);
-  while (thumb.length > 40000 && q > 0.3) { q -= 0.1; thumb = small.toDataURL(`image/jpeg`, q); }
-  if (thumb.length > 40000) thumb = draw(canvas, 180).toDataURL(`image/jpeg`, 0.5);
+  while (thumb.length > limit && q > 0.3) { q -= 0.1; thumb = small.toDataURL(`image/jpeg`, q); }
+  if (thumb.length > limit) thumb = draw(canvas, Math.round(max * 0.65)).toDataURL(`image/jpeg`, 0.5);
   return thumb;
 }
 
@@ -39,6 +39,13 @@ export async function processPhoto(file) {
   const canvas = draw(bmp, 1600);
   const photo = await toBlob(canvas, 0.82);
   return { photo, thumb: thumbOf(canvas), canvas, aiImage: () => toBlob(draw(canvas, 1024), 0.8) };
+}
+
+/** Extra photos (close-up, scale): full photo + a smaller preview so several fit in one sheet cell. */
+export async function processExtraPhoto(file) {
+  const bmp = await loadBitmap(file);
+  const canvas = draw(bmp, 1600);
+  return { photo: await toBlob(canvas, 0.85), thumb: thumbOf(canvas, { max: 220, limit: 14000 }), aiImage: () => toBlob(draw(canvas, 1280), 0.85) };
 }
 
 /** Crop one item out of the photo using a Gemini box [ymin, xmin, ymax, xmax] on a 0–1000 scale. */

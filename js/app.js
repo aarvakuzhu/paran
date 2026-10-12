@@ -2,8 +2,8 @@ import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSpreadsheet, AuthError } from './google.js';
 import { Repo } from './store.js';
 import { search, findDuplicates } from './search.js';
-import { processPhoto, cropItem } from './image.js';
-import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, verifyKey, aiUsageToday, AiError } from './ai.js';
+import { processPhoto, processExtraPhoto, cropItem } from './image.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, readLabel, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 
 const MODE_KEY = `stash.mode`;
@@ -666,30 +666,105 @@ async function lendOrSave(item, opts) {
 }
 
 // ---------------- full-screen photo, inside the app (no Drive page, no second login)
-function photoViewer(item) {
+const PHOTO_KINDS = {
+  close: { label: `Close-up`, hint: `label, model, specs` },
+  scale: { label: `Scale`, hint: `next to a hand, shoe or ruler` },
+  other: { label: `Photo`, hint: `` },
+};
+const SIZE_HINT = { Pocket: `keys, cables`, 'Hand-held': `drill, book`, Shoebox: `fits in a shoebox`, 'Carry-on': `suitcase-sized`, Large: `needs two hands`, Furniture: `needs two people` };
+
+/** Main photo + close-up + scale tiles for an item (live: adding saves straight away). */
+function photoStripHtml(item) {
+  const xs = repo.photosOf(item);
+  const tile = (kind) => {
+    const p = xs.find((x) => x.kind === kind); const k = PHOTO_KINDS[kind];
+    if (p) {
+      const t = repo.thumbs[`x:${p.pid}`];
+      return `<button type="button" class="ptile" data-view="${esc(p.pid)}">${t ? `<img src="${t}" alt="${esc(k.label)}">` : `<span class="ph">${icon(`photo`)}</span>`}<span class="ptag">${esc(k.label)}</span></button>`;
+    }
+    return `<label class="ptile add"><input type="file" accept="image/*" capture="environment" hidden data-xadd="${kind}">${icon(`plus`)}<b>${esc(k.label)}</b><small>${esc(k.hint)}</small></label>`;
+  };
+  return `<div class="pstrip">${tile(`close`)}${tile(`scale`)}</div>`;
+}
+
+/** After a close-up: read model/specs into notes. After a scale photo: estimate the size. Both undoable. */
+async function aiFromExtraPhoto(item, kind, aiImage) {
+  if (!aiReady() || !aiSettings().auto) return;
+  try {
+    if (kind === `close`) {
+      const r = await readLabel(await aiImage());
+      const line = [r.model, r.details].filter(Boolean).join(` · `);
+      if (!line) return;
+      const cur = repo.items.find((i) => i.id === item.id); if (!cur || String(cur.notes || ``).includes(r.model || line)) return;
+      const before = cur.notes || ``;
+      await repo.saveItem({ id: item.id, notes: before ? `${before}\n${line}` : line }, { info: `AI read the label: ${line}` });
+      toast(`Read from the label: ${line}`, { action: `Undo`, ms: 7000, onAction: () => repo.saveItem({ id: item.id, notes: before }) });
+    } else if (kind === `scale`) {
+      const [first] = await analyzePhoto(await aiImage(), { categories: [], location: `` });
+      const cur = repo.items.find((i) => i.id === item.id);
+      if (!first?.size || !cur || cur.size) return;
+      await repo.saveItem({ id: item.id, size: first.size });
+      toast(`Looks ${first.size.toLowerCase()}-sized`, { action: `Undo`, ms: 7000, onAction: () => repo.saveItem({ id: item.id, size: `` }) });
+    }
+  } catch (err) { if (err instanceof AiError) toast(err.message, { ms: 5000 }); }
+}
+
+// ---------------- full-screen photos, inside the app (no Drive page, no second login); swipe between them
+function photoViewer(item, startKey = `main`) {
+  const slides = [];
+  if (repo.thumbs[item.id] || item.photoId) slides.push({ key: `main`, label: `Photo`, thumb: repo.thumbs[item.id], load: () => repo.photoObjectUrl(item), url: item.photoUrl });
+  for (const p of repo.photosOf(item)) {
+    slides.push({ key: p.pid, pid: p.pid, label: (PHOTO_KINDS[p.kind] || PHOTO_KINDS.other).label, thumb: repo.thumbs[`x:${p.pid}`], load: () => repo.extraPhotoUrl(p), url: p.url, removable: true });
+  }
+  if (!slides.length) return;
+  let idx = Math.max(0, slides.findIndex((x) => x.key === startKey));
   const wrap = document.createElement(`div`);
   wrap.className = `viewer`;
   wrap.innerHTML = `<button type="button" class="viewer-x" aria-label="Close">${icon(`x`)}</button>
-    <div class="viewer-stage">${repo.thumbs[item.id] ? `<img src="${repo.thumbs[item.id]}" alt="${esc(item.name)}">` : `<div class="spinner"></div>`}</div>
-    <div class="viewer-bar"><b>${esc(item.name)}</b><span class="viewer-note"></span></div>`;
+    <div class="viewer-stage"></div>
+    ${slides.length > 1 ? `<button type="button" class="viewer-nav prev" aria-label="Previous">${icon(`back`)}</button><button type="button" class="viewer-nav next" aria-label="Next">${icon(`chevron`)}</button>` : ``}
+    <div class="viewer-bar"><div class="viewer-cap"></div><span class="viewer-note"></span>
+      ${slides.length > 1 ? `<div class="viewer-dots">${slides.map((_, i) => `<i data-i="${i}"></i>`).join(``)}</div>` : ``}</div>`;
   document.body.appendChild(wrap);
   requestAnimationFrame(() => wrap.classList.add(`open`));
+  const stage = $(`.viewer-stage`, wrap); const note = $(`.viewer-note`, wrap); const cap = $(`.viewer-cap`, wrap);
   const close = () => { wrap.classList.remove(`open`); setTimeout(() => wrap.remove(), 200); document.removeEventListener(`keydown`, onKey); };
-  const onKey = (e) => { if (e.key === `Escape`) close(); };
+  const go = (d) => { idx = (idx + d + slides.length) % slides.length; show(); };
+  const onKey = (e) => { if (e.key === `Escape`) close(); if (e.key === `ArrowRight`) go(1); if (e.key === `ArrowLeft`) go(-1); };
   document.addEventListener(`keydown`, onKey);
-  wrap.addEventListener(`click`, (e) => { if (e.target === wrap || e.target.closest(`.viewer-x`) || e.target.classList.contains(`viewer-stage`)) close(); });
-  const note = $(`.viewer-note`, wrap); const stage = $(`.viewer-stage`, wrap);
-  const show = (url) => { stage.innerHTML = `<img src="${url}" alt="${esc(item.name)}">`; note.textContent = ``; };
-  const load = () => repo.photoObjectUrl(item).then((url) => {
-    if (url) return show(url);
-    if (!repo.thumbs[item.id]) stage.innerHTML = `<p class="muted">No photo yet.</p>`;
-    else if (item.photoUrl) note.innerHTML = `Preview only. The full photo is in ${esc((item.addedBy || `another member`).split(`@`)[0])}’s Drive. <a href="${esc(item.photoUrl)}" target="_blank" rel="noopener">Open in Drive</a>`;
-  }).catch((err) => {
-    if (!(err instanceof AuthError)) return;
-    note.innerHTML = `<button type="button" class="btn small primary" data-load>Load full photo</button>`;
-    $(`[data-load]`, note).onclick = async (ev) => { ev.stopPropagation(); note.textContent = `Loading…`; if (await renewNow()) load(); else note.textContent = `Couldn’t reach Google. Showing preview.`; };
+  let token = 0;
+  const show = () => {
+    const sl = slides[idx]; const my = ++token;
+    stage.innerHTML = sl.thumb ? `<img src="${sl.thumb}" alt="${esc(item.name)} – ${esc(sl.label)}">` : `<div class="spinner"></div>`;
+    cap.innerHTML = `<b>${esc(item.name)}</b> · ${esc(sl.label)}${sl.removable ? ` <button type="button" class="link-light" data-remove>Remove</button>` : ``}`;
+    note.textContent = ``;
+    $$(`.viewer-dots i`, wrap).forEach((d, i) => d.classList.toggle(`on`, i === idx));
+    sl.load().then((url) => {
+      if (my !== token) return;
+      if (url) { stage.innerHTML = `<img src="${url}" alt="${esc(item.name)} – ${esc(sl.label)}">`; return; }
+      if (!sl.thumb) stage.innerHTML = `<p class="muted">Not uploaded yet.</p>`;
+      else if (sl.url) note.innerHTML = `Preview only. The full photo is in ${esc((item.addedBy || `another member`).split(`@`)[0])}’s Drive. <a href="${esc(sl.url)}" target="_blank" rel="noopener">Open in Drive</a>`;
+    }).catch((err) => {
+      if (my !== token || !(err instanceof AuthError)) return;
+      note.innerHTML = `<button type="button" class="btn small primary" data-load>Load full photo</button>`;
+      $(`[data-load]`, note).onclick = async (ev) => { ev.stopPropagation(); note.textContent = `Loading…`; if (await renewNow()) show(); else note.textContent = `Couldn’t reach Google. Showing preview.`; };
+    });
+  };
+  wrap.addEventListener(`click`, async (e) => {
+    if (e.target.closest(`.viewer-nav.prev`)) return go(-1);
+    if (e.target.closest(`.viewer-nav.next`)) return go(1);
+    const dot = e.target.closest(`.viewer-dots i`); if (dot) { idx = Number(dot.dataset.i); return show(); }
+    if (e.target.closest(`[data-remove]`)) {
+      const sl = slides[idx];
+      if (await confirmSheet(`Remove this ${sl.label.toLowerCase()} photo?`, `The item keeps its other photos.`, `Remove`, true)) { close(); await repo.removeExtraPhoto(item.id, sl.pid); toast(`Photo removed`); }
+      return;
+    }
+    if (e.target === wrap || e.target.closest(`.viewer-x`) || e.target.classList.contains(`viewer-stage`)) close();
   });
-  load();
+  let sx = null; // swipe left/right
+  stage.addEventListener(`touchstart`, (e) => { if (e.touches.length === 1) sx = e.touches[0].clientX; }, { passive: true });
+  stage.addEventListener(`touchend`, (e) => { if (sx === null) return; const dx = e.changedTouches[0].clientX - sx; sx = null; if (Math.abs(dx) > 50 && slides.length > 1) go(dx < 0 ? 1 : -1); });
+  show();
 }
 
 // ---------------- item history
@@ -1023,6 +1098,7 @@ function viewItem(view, r) {
       </div>
       ${hasPhoto ? `<div class="hero zoomable">${thumbHtml(item, `hero-img`)}</div>`
         : `<label class="add-photo"><input type="file" accept="image/*" capture="environment" hidden data-addphoto>${icon(`camera`)}<span>Add a photo</span></label>`}
+      ${photoStripHtml(item)}
       <h1>${esc(item.name)}${Number(item.qty) > 1 ? ` <span class="qty">×${esc(item.qty)}</span>` : ``}</h1>
       ${status}
       <div class="where"><div class="label-sm">Where</div><div class="crumbs">${crumbs(item.locationId)}</div></div>
@@ -1032,6 +1108,7 @@ function viewItem(view, r) {
       </div>
       ${item.purpose ? `<div class="block"><div class="label-sm">What it’s for</div><p>${esc(item.purpose)}</p></div>` : ``}
       <div class="facts">
+        ${item.size ? `<div><span>Size</span><b>${esc(item.size)}</b></div>` : ``}
         ${item.category ? `<div><span>Category</span><b>${esc(item.category)}</b></div>` : ``}
         ${item.warranty ? `<div><span>Warranty until</span><b>${esc(item.warranty)}</b></div>` : ``}
         ${item.expiry ? `<div><span>Expires</span><b>${esc(item.expiry)}</b></div>` : ``}
@@ -1049,6 +1126,17 @@ function viewItem(view, r) {
     if (img?.tagName === `IMG`) img.src = url; else $(`.hero`, view).innerHTML = `<img class="hero-img" src="${url}" alt="">`;
   }).catch(() => { /* not signed in right now: thumbnail stays */ });
 
+  $$(`[data-xadd]`, view).forEach((input) => input.addEventListener(`change`, async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const kind = e.target.dataset.xadd;
+    try {
+      const x = await processExtraPhoto(file);
+      await repo.addExtraPhoto(item.id, kind, x);
+      toast(`${PHOTO_KINDS[kind].label} photo added`);
+      aiFromExtraPhoto(item, kind, x.aiImage);
+    } catch { toast(`Couldn’t read that photo`); }
+  }));
+
   $(`[data-addphoto]`, view)?.addEventListener(`change`, async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
     try { const { photo, thumb } = await processPhoto(file); await repo.saveItem({ id: item.id }, { photo, thumb, logAction: `edited`, info: `New photo` }); toast(`Photo added`); }
@@ -1060,7 +1148,8 @@ function viewItem(view, r) {
     if (tag) { e.preventDefault(); findState = { q: tag.dataset.tag, filter: `` }; location.hash = `#/`; return; }
     const who = e.target.closest(`[data-person]`);
     if (who) { personSheet(who.dataset.person); return; }
-    if (e.target.closest(`.hero.zoomable`)) { photoViewer(item); return; }
+    if (e.target.closest(`.hero.zoomable`)) { photoViewer(item, `main`); return; }
+    const pv = e.target.closest(`[data-view]`); if (pv) { photoViewer(item, pv.dataset.view); return; }
     if (e.target.closest(`[data-hist-all]`)) { $(`.ih`, view).classList.add(`all`); e.target.closest(`[data-hist-all]`).remove(); return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
@@ -1128,11 +1217,15 @@ function viewEdit(view, r) {
         <div class="pp-view">${editing && repo.thumbs[editing.id] ? `<img src="${repo.thumbs[editing.id]}" alt="">` : `<div class="pp-empty">${icon(`camera`)}<span>Take a photo</span></div>`}</div>
         <div class="pp-busy" hidden><div class="spinner"></div><span>Identifying…</span></div>
       </label>
+      <div id="xstrip"></div>
       <div id="aiRow"></div>
       <label class="field"><span>What is it?</span><input name="name" required value="${esc(item.name)}" placeholder="e.g. Stud finder"></label>
       <label class="field"><span>What’s it for?</span><textarea name="purpose" rows="2" placeholder="e.g. Finding studs before hanging shelves or a TV">${esc(item.purpose)}</textarea></label>
       <div class="field"><span>Where is it?</span>
         <button type="button" class="loc-btn" id="loc">${icon(`place`)}<span id="locText"></span>${icon(`chevron`)}</button></div>
+      <div class="field"><span>How big is it? <small>(optional)</small></span>
+        <input type="hidden" name="size" value="${esc(item.size || ``)}">
+        <div class="chips size-chips" id="sizes">${SIZES.map((z) => `<button type="button" class="chip${item.size === z ? ` on` : ``}" data-size="${esc(z)}">${esc(z)}<small>${esc(SIZE_HINT[z])}</small></button>`).join(``)}</div></div>
       <details ${editing && (item.category || item.tags || Number(item.qty) > 1 || item.warranty || item.expiry || item.notes) ? `open` : ``}>
         <summary>More details <small>category, qty, notes</small></summary>
         <div class="two">
@@ -1159,6 +1252,52 @@ function viewEdit(view, r) {
   $(`#loc`).onclick = async () => { const id = await pickLocation(locationId); if (id) { locationId = id; setLocText(); } };
 
   let shot = null; // { canvas, aiImage } of the current photo, for AI + crops
+
+  // size chips (one tap, tap again to clear)
+  const sizeInput = () => $(`#f`).elements.size;
+  const drawSizes = () => $$(`#sizes [data-size]`, view).forEach((b) => b.classList.toggle(`on`, b.dataset.size === sizeInput().value));
+  $(`#sizes`).onclick = (e) => {
+    const b = e.target.closest(`[data-size]`); if (!b) return;
+    sizeInput().value = sizeInput().value === b.dataset.size ? `` : b.dataset.size;
+    $(`#sizes`).classList.remove(`suggested`); drawSizes();
+  };
+
+  // close-up and scale photos: added to the item straight away when editing, kept until Save when adding
+  const pendingExtras = {}; // kind -> { photo, thumb, aiImage }
+  const drawStrip = () => {
+    const box = $(`#xstrip`); if (!box) return;
+    if (editing) { box.innerHTML = photoStripHtml(repo.items.find((i) => i.id === editing.id) || editing); }
+    else {
+      box.innerHTML = `<div class="pstrip">${[`close`, `scale`].map((kind) => {
+        const k = PHOTO_KINDS[kind]; const p = pendingExtras[kind];
+        return p ? `<label class="ptile"><input type="file" accept="image/*" capture="environment" hidden data-xadd="${kind}"><img src="${p.thumb}" alt=""><span class="ptag">${esc(k.label)}</span></label>`
+          : `<label class="ptile add"><input type="file" accept="image/*" capture="environment" hidden data-xadd="${kind}">${icon(`plus`)}<b>${esc(k.label)}</b><small>${esc(k.hint)}</small></label>`;
+      }).join(``)}</div>`;
+    }
+    $$(`[data-xadd]`, box).forEach((input) => input.addEventListener(`change`, async (e) => {
+      const file = e.target.files?.[0]; if (!file) return;
+      const kind = e.target.dataset.xadd;
+      try {
+        const x = await processExtraPhoto(file);
+        if (editing) { await repo.addExtraPhoto(editing.id, kind, x); toast(`${PHOTO_KINDS[kind].label} photo added`); drawStrip(); aiFromExtraPhoto(editing, kind, x.aiImage); return; }
+        pendingExtras[kind] = x; drawStrip();
+        if (aiReady() && aiSettings().auto) suggestFromExtra(kind, x);
+      } catch { toast(`Couldn’t read that photo`); }
+    }));
+  };
+  // while adding: close-up → model/specs into notes (and a name if empty); scale → size
+  async function suggestFromExtra(kind, x) {
+    try {
+      if (kind === `close`) {
+        const r = await readLabel(await x.aiImage());
+        const line = [r.model, r.details].filter(Boolean).join(` · `);
+        applySuggestion({ name: r.name || ``, notes: line }, { quietIfNone: true });
+      } else {
+        const [first] = await analyzePhoto(await x.aiImage(), { categories: cats, location: `` });
+        if (first?.size) applySuggestion({ size: first.size }, { quietIfNone: true });
+      }
+    } catch (err) { if (err instanceof AiError) toast(err.message, { ms: 5000 }); }
+  }
   const drawAiRow = () => {
     const row = $(`#aiRow`); if (!row) return;
     if (!aiReady()) {
@@ -1200,8 +1339,9 @@ function viewEdit(view, r) {
     } finally { busy(false); }
   }
 
-  function applySuggestion(sug) {
+  function applySuggestion(sug, { quietIfNone = false } = {}) {
     const f = $(`#f`); let n = 0;
+    if (sug.size && !sizeInput().value) { sizeInput().value = sug.size; drawSizes(); $(`#sizes`).classList.add(`suggested`); n++; }
     const set = (name, value) => {
       const el = f.elements[name];
       if (!el || !value) return;
@@ -1215,7 +1355,7 @@ function viewEdit(view, r) {
     if (sug.notes) set(`notes`, sug.notes);
     if (f.querySelector(`details .suggested`)) f.querySelector(`details`).open = true; // never hide what AI filled
     if (n) toast(`AI filled ${n} field${n > 1 ? `s` : ``}. Check them before saving.`);
-    else toast(`AI had nothing to add to what you typed.`);
+    else if (!quietIfNone) toast(`AI had nothing to add to what you typed.`);
   }
 
   $(`#photo`).addEventListener(`change`, async (e) => {
@@ -1231,7 +1371,7 @@ function viewEdit(view, r) {
     if (aiReady() && aiSettings().auto) runAi();
     else if (!$(`input[name=name]`).value) $(`input[name=name]`).focus();
   });
-  drawAiRow();
+  drawAiRow(); drawStrip();
 
   let again = false;
   $$(`button[type=submit]`, view).forEach((b) => b.addEventListener(`click`, () => { again = b.hasAttribute(`data-again`); }));
@@ -1277,6 +1417,7 @@ function viewEdit(view, r) {
       }
 
       const saved = await repo.saveItem(fields, { photo, thumb });
+      for (const [kind, x] of Object.entries(pendingExtras)) await repo.addExtraPhoto(saved.id, kind, x, { log: false });
       rememberLoc(locationId);
       toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
       next(editing ? saved.id : null);

@@ -496,3 +496,32 @@ details > summary small { font-weight: 400; color: var(--ink-3); margin-left: 4p
 .setup .form-actions .btn { flex: 1; }
 button.back { background: none; border: 0; padding: 6px 0; font: inherit; color: var(--ink-2); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
 button.back .ic { width: 18px; height: 18px; }
+
+/* ---------- close-up / scale photos, size ---------- */
+.pstrip { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: -4px 0 14px; }
+.form .pstrip { margin: 0; }
+.ptile { position: relative; height: 92px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); padding: 0; cursor: pointer;
+  display: grid; place-items: center; text-align: center; }
+.ptile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ptile .ptag { position: absolute; left: 6px; bottom: 6px; background: rgb(0 0 0 / 60%); color: #fff; font-size: 0.74rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+.ptile .ph { color: var(--ink-3); }
+.ptile.add { border: 1.5px dashed var(--line); color: var(--accent); align-content: center; gap: 1px; padding: 6px; }
+.ptile.add .ic { width: 18px; height: 18px; }
+.ptile.add b { font-size: 0.9rem; }
+.ptile.add small { color: var(--ink-3); font-size: 0.74rem; line-height: 1.2; }
+.size-chips .chip { display: inline-grid; text-align: left; line-height: 1.2; padding: 6px 12px; }
+.size-chips .chip small { font-size: 0.7rem; color: var(--ink-3); }
+.size-chips .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.size-chips .chip.on small { color: var(--accent-ink); opacity: 0.85; }
+.size-chips.suggested .chip.on { box-shadow: 0 0 0 3px var(--accent-soft); }
+.field:has(.size-chips.suggested) > span::after { content: " · AI suggested"; font-weight: 500; color: var(--accent); font-size: 0.8rem; }
+.viewer-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; border: 0; background: rgb(255 255 255 / 15%); color: #fff; display: grid; place-items: center; cursor: pointer; z-index: 1; }
+.viewer-nav.prev { left: 8px; } .viewer-nav.next { right: 8px; }
+.viewer-cap { font-size: 0.95rem; }
+.viewer-dots { display: flex; gap: 6px; justify-content: center; }
+.viewer-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgb(255 255 255 / 35%); cursor: pointer; }
+.viewer-dots i.on { background: #fff; }
+.link-light { background: none; border: 0; color: #fff; text-decoration: underline; font: inherit; cursor: pointer; opacity: 0.85; margin-left: 6px; }
+/* sheets and messages must sit above the photo viewer */
+.sheet-wrap { z-index: 90; }
+#toasts { z-index: 95; }

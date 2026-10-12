@@ -19,6 +19,11 @@ const SYNONYMS = {
   document: [`papers`, `certificate`, `paper`],
   kid: [`kids`, `children`, `child`],
   camping: [`tent`, `outdoor`],
+  small: [`pocket`, `hand-held`, `tiny`],
+  tiny: [`pocket`],
+  big: [`large`, `furniture`, `carry-on`],
+  large: [`furniture`, `carry-on`],
+  model: [`notes`],
 };
 
 const norm = (s) => String(s || ``).toLowerCase().normalize(`NFKD`).replace(/[̀-ͯ]/g, ``).replace(/[’']/g, ``);
@@ -46,7 +51,7 @@ function termScore(term, fieldWords) {
   return best;
 }
 
-const FIELDS = [[`name`, 3], [`tags`, 2], [`purpose`, 2], [`category`, 1.5], [`location`, 1.2], [`notes`, 1], [`lentTo`, 1]];
+const FIELDS = [[`name`, 3], [`tags`, 2], [`purpose`, 2], [`category`, 1.5], [`location`, 1.2], [`notes`, 1], [`size`, 1], [`lentTo`, 1]];
 
 /** Returns items sorted by relevance. Every query word (or a synonym) must match somewhere. */
 export function search(items, query, pathText) {
