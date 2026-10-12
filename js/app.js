@@ -18,7 +18,8 @@ const STATUS_LABEL = { lent: `Lent out`, missing: `Missing`, home: `` };
 // ============================================================ boot
 async function boot() {
   if (`serviceWorker` in navigator && location.protocol !== `file:`) navigator.serviceWorker.register(`./sw.js`).catch(() => {});
-  window.addEventListener(`hashchange`, render);
+  window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
+  installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
   document.addEventListener(`visibilitychange`, () => { if (!document.hidden) repo?.refresh(); });
 
@@ -194,7 +195,9 @@ function thumbHtml(item, cls = `thumb`) {
 function itemCard(item) {
   const path = repo.pathText(item.locationId);
   const badge = STATUS_LABEL[item.status] ? `<span class="badge ${esc(item.status)}">${esc(STATUS_LABEL[item.status])}${item.status === `lent` && item.lentTo ? ` · ${esc(item.lentTo)}` : ``}</span>` : ``;
-  return `<a class="card" href="#/item/${esc(item.id)}">
+  const cls = `${sel.on ? ` selectable` : ``}${sel.ids.has(item.id) ? ` selected` : ``}`;
+  return `<a class="card${cls}" href="#/item/${esc(item.id)}" data-id="${esc(item.id)}">
+    <span class="sel-tick" aria-hidden="true">${icon(`check`)}</span>
     ${thumbHtml(item)}
     <div class="card-main">
       <div class="card-title">${esc(item.name)}${Number(item.qty) > 1 ? ` <span class="qty">×${esc(item.qty)}</span>` : ``}</div>
@@ -227,36 +230,59 @@ function kindFor(parentId) {
 }
 
 /** Location picker as a bottom sheet. Resolves with a location id or null. */
-function pickLocation(startId = ``, title = `Where does it live?`) {
+function pickLocation(startId = ``, title = `Where does it live?`, { exclude = null } = {}) {
   return new Promise((resolve) => {
     let current = startId ? (repo.locById(startId)?.parentId || ``) : ``;
+    if (exclude?.has(current)) current = ``;
     let done = false;
+    const ok = (l) => !exclude || !exclude.has(l.id);
     sheet(title, (el, close) => {
       const finish = (id) => { done = true; rememberLoc(id); resolve(id); close(); };
+      el.innerHTML = `<label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search places" autocomplete="off" enterkeyhint="search"></label><div class="pk-body"></div>`;
+      const qEl = $(`[data-q]`, el); const body = $(`.pk-body`, el);
       const draw = () => {
-        const kids = repo.childrenOf(current);
+        const q = qEl.value.trim().toLowerCase();
+        if (q) {
+          const terms = q.split(/\s+/);
+          const hits = repo.locations.filter((l) => !l.deleted && ok(l))
+            .map((l) => ({ l, path: repo.pathText(l.id) }))
+            .filter(({ path }) => terms.every((t) => path.toLowerCase().includes(t)))
+            .sort((a, b) => a.path.length - b.path.length).slice(0, 25);
+          const here = repo.locById(current);
+          body.innerHTML = `<div class="list">${hits.map(({ l, path }) => `<div class="list-row">
+              <button type="button" class="list-main" data-pick="${esc(l.id)}">${icon(KIND_ICON[l.kind] || `box`)}<span>${esc(path)}</span></button></div>`).join(``)
+              || `<p class="muted pad">No place matches “${esc(qEl.value.trim())}”.</p>`}</div>
+            <div class="row-actions"><button type="button" class="btn ghost" data-create="${esc(qEl.value.trim())}">${icon(`plus`)} New “${esc(qEl.value.trim())}”${here ? ` in ${esc(here.name)}` : ``}</button></div>`;
+          return;
+        }
+        const kids = repo.childrenOf(current).filter(ok);
         const here = repo.locById(current);
-        const recents = !current ? recentLocs() : [];
-        el.innerHTML = `
+        const recents = !current ? recentLocs().filter((id) => ok({ id })) : [];
+        body.innerHTML = `
           ${recents.length ? `<div class="label-sm">Recent</div><div class="chips">${recents.map((id) => `<button type="button" class="chip" data-pick="${esc(id)}">${esc(repo.pathText(id))}</button>`).join(``)}</div>` : ``}
           <div class="picker-crumbs"><button type="button" class="link" data-go="">All places</button>${repo.pathOf(current).map((l) => `<span class="sep">›</span><button type="button" class="link" data-go="${esc(l.id)}">${esc(l.name)}</button>`).join(``)}</div>
           <div class="list">
             ${kids.map((l) => `<div class="list-row">
                 <button type="button" class="list-main" data-pick="${esc(l.id)}">${icon(KIND_ICON[l.kind] || `box`)}<span>${esc(l.name)}</span></button>
-                ${repo.childrenOf(l.id).length ? `<button type="button" class="icon-btn" data-go="${esc(l.id)}" aria-label="Open ${esc(l.name)}">${icon(`chevron`)}</button>` : ``}
+                ${repo.childrenOf(l.id).filter(ok).length ? `<button type="button" class="icon-btn" data-go="${esc(l.id)}" aria-label="Open ${esc(l.name)}">${icon(`chevron`)}</button>` : ``}
               </div>`).join(``) || `<p class="muted pad">Nothing inside yet.</p>`}
           </div>
           <div class="row-actions">
             <button type="button" class="btn ghost" data-new>${icon(`plus`)} New ${current ? `spot in ${esc(here?.name || ``)}` : `place`}</button>
-            ${current ? `<button type="button" class="btn primary" data-pick="${esc(current)}">Put it in ${esc(here?.name || ``)}</button>` : ``}
+            ${current ? `<button type="button" class="btn primary" data-pick="${esc(current)}">Put in ${esc(here?.name || ``)}</button>` : ``}
           </div>`;
       };
-      el.addEventListener(`click`, async (e) => {
+      qEl.addEventListener(`input`, draw);
+      body.addEventListener(`click`, async (e) => {
         const b = e.target.closest(`button`); if (!b) return;
         if (b.dataset.pick !== undefined) return finish(b.dataset.pick);
         if (b.dataset.go !== undefined) { current = b.dataset.go; return draw(); }
+        if (b.dataset.create !== undefined) {
+          const loc = repo.saveLocation({ name: b.dataset.create, parentId: current, kind: kindFor(current) });
+          return finish(loc.id);
+        }
         if (b.dataset.new !== undefined) {
-          const name = await inlineName(el, current ? `e.g. Blue bin, Top shelf, Drawer 2` : `e.g. Home, Storage unit, Office`);
+          const name = await inlineName(body, current ? `e.g. Blue bin, Top shelf, Drawer 2` : `e.g. Home, Storage unit, Office`);
           if (name) { const loc = repo.saveLocation({ name, parentId: current, kind: kindFor(current) }); current = loc.id; }
           draw();
         }
@@ -264,6 +290,130 @@ function pickLocation(startId = ``, title = `Where does it live?`) {
       draw();
     }, { onClose: () => { if (!done) resolve(null); } });
   });
+}
+
+// ============================================================ Moving (single, bulk, undo)
+/** Move items and offer Undo. Moving a lent item means it's back home. */
+async function moveWithUndo(items, toId) {
+  const moving = items.filter((i) => i && (i.locationId !== toId || i.status === `lent`));
+  if (!moving.length) { toast(`Already there`); return; }
+  const prev = moving.map((i) => ({ id: i.id, locationId: i.locationId, status: i.status, lentTo: i.lentTo }));
+  for (const it of moving) await repo.moveItem(it, toId);
+  rememberLoc(toId);
+  const label = moving.length === 1 ? moving[0].name : `${moving.length} items`;
+  toast(`Moved ${label} to ${repo.pathText(toId)}`, {
+    action: `Undo`, ms: 7000,
+    onAction: async () => {
+      for (const p of prev) {
+        const it = repo.items.find((i) => i.id === p.id); if (!it) continue;
+        await repo.saveItem({ id: p.id, locationId: p.locationId, status: p.status === `lent` ? `home` : p.status }, { logAction: `moved` });
+        if (p.status === `lent`) await repo.lendItem(it, p.lentTo);
+      }
+      toast(`Move undone`);
+    },
+  });
+}
+
+async function moveSpot(loc) {
+  const id = await pickLocation(loc.parentId, `Move ${loc.name} into…`, { exclude: repo.descendantIds(loc.id) });
+  if (!id || id === loc.parentId) return;
+  const before = loc.parentId;
+  repo.saveLocation({ id: loc.id, parentId: id });
+  const n = repo.itemsIn(loc.id, true).length;
+  toast(`Moved ${loc.name}${n ? ` and its ${n} item${n > 1 ? `s` : ``}` : ``} to ${repo.pathText(id)}`, {
+    action: `Undo`, ms: 7000, onAction: () => { repo.saveLocation({ id: loc.id, parentId: before }); toast(`Move undone`); },
+  });
+}
+
+/** From a place: pick items elsewhere and bring them here. */
+function bringItemsSheet(loc) {
+  const chosen = new Set();
+  sheet(`Bring items to ${loc.name}`, (el, close) => {
+    el.innerHTML = `<label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search your items" autocomplete="off" enterkeyhint="search"></label>
+      <div class="bring-list"></div>
+      <div class="row-actions sticky-actions"><button type="button" class="btn primary full" data-go disabled>Select items</button></div>`;
+    const qEl = $(`[data-q]`, el); const listEl = $(`.bring-list`, el); const go = $(`[data-go]`, el);
+    const upd = () => { const n = chosen.size; go.disabled = !n; go.textContent = n ? `Move ${n} here` : `Select items`; };
+    const draw = () => {
+      const pool = repo.activeItems().filter((i) => i.locationId !== loc.id);
+      const q = qEl.value.trim();
+      const list = q ? search(pool, q, (id) => repo.pathText(id)) : [...pool].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      listEl.innerHTML = list.slice(0, 80).map((i) => `<label class="bring-row">
+          <input type="checkbox" data-id="${esc(i.id)}" ${chosen.has(i.id) ? `checked` : ``}>
+          ${thumbHtml(i, `thumb sm`)}
+          <div><b>${esc(i.name)}</b><small>${esc(repo.pathText(i.locationId) || `No location`)}${i.status === `lent` ? ` · lent to ${esc(i.lentTo)}` : ``}</small></div>
+        </label>`).join(``) || `<p class="muted pad">${q ? `No items match “${esc(q)}”.` : `Everything is already here.`}</p>`;
+      upd();
+    };
+    listEl.addEventListener(`change`, (e) => { const id = e.target.dataset.id; if (!id) return; if (e.target.checked) chosen.add(id); else chosen.delete(id); upd(); });
+    qEl.addEventListener(`input`, draw);
+    go.onclick = async () => {
+      const items = [...chosen].map((id) => repo.items.find((i) => i.id === id)).filter(Boolean);
+      close(); await moveWithUndo(items, loc.id);
+    };
+    draw();
+  });
+}
+
+// ---- selection mode (Find results and places): tap "Select" or long-press a card
+const sel = { on: false, ids: new Set() };
+let suppressClick = false;
+function selStart(id) { sel.on = true; if (id) sel.ids.add(id); refreshSel(); }
+function selStop() { sel.on = false; sel.ids.clear(); refreshSel(); }
+const visibleIds = () => $$(`#view .card[data-id]`).map((c) => c.dataset.id);
+function refreshSel() {
+  $$(`.card[data-id]`).forEach((c) => { c.classList.toggle(`selectable`, sel.on); c.classList.toggle(`selected`, sel.ids.has(c.dataset.id)); });
+  $$(`[data-select-toggle]`).forEach((b) => { b.textContent = sel.on ? `Done` : `Select`; });
+  let bar = $(`#selbar`);
+  if (!sel.on) { bar?.remove(); document.body.classList.remove(`selecting`); return; }
+  if (!bar) { bar = document.createElement(`div`); bar.id = `selbar`; bar.className = `selbar`; document.body.appendChild(bar); bar.onclick = onSelBar; }
+  document.body.classList.add(`selecting`);
+  const n = sel.ids.size; const vis = visibleIds(); const all = vis.length && vis.every((id) => sel.ids.has(id));
+  bar.innerHTML = `<button type="button" class="btn text" data-s="cancel">Cancel</button>
+    <span class="sel-count"><b>${n}</b> selected</span>
+    <button type="button" class="btn text" data-s="all">${all ? `None` : `All`}</button>
+    <button type="button" class="btn primary" data-s="move" ${n ? `` : `disabled`}>${icon(`move`)} Move</button>`;
+}
+async function onSelBar(e) {
+  const s = e.target.closest(`[data-s]`)?.dataset.s; if (!s) return;
+  if (s === `cancel`) return selStop();
+  if (s === `all`) {
+    const vis = visibleIds(); const all = vis.every((id) => sel.ids.has(id));
+    vis.forEach((id) => (all ? sel.ids.delete(id) : sel.ids.add(id))); return refreshSel();
+  }
+  if (s === `move`) {
+    const items = [...sel.ids].map((id) => repo.items.find((i) => i.id === id)).filter(Boolean);
+    const common = items.every((i) => i.locationId === items[0]?.locationId) ? items[0]?.locationId : ``;
+    const id = await pickLocation(common, `Move ${items.length} item${items.length > 1 ? `s` : ``} to…`);
+    if (!id) return;
+    selStop(); await moveWithUndo(items, id);
+  }
+}
+function installSelectionGestures() {
+  let timer = null, start = null;
+  document.addEventListener(`click`, (e) => {
+    const toggle = e.target.closest(`[data-select-toggle]`);
+    if (toggle) { e.preventDefault(); return sel.on ? selStop() : selStart(); }
+    const card = e.target.closest(`#view .card[data-id]`); if (!card) return;
+    if (suppressClick) { e.preventDefault(); e.stopPropagation(); suppressClick = false; return; }
+    if (sel.on) {
+      e.preventDefault(); e.stopPropagation();
+      const id = card.dataset.id; if (sel.ids.has(id)) sel.ids.delete(id); else sel.ids.add(id);
+      refreshSel();
+    }
+  }, true);
+  document.addEventListener(`pointerdown`, (e) => {
+    const card = e.target.closest(`#view .card[data-id]`); if (!card || sel.on) return;
+    start = { x: e.clientX, y: e.clientY };
+    timer = setTimeout(() => {
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 800);
+      navigator.vibrate?.(15); selStart(card.dataset.id);
+    }, 450);
+  });
+  const cancel = () => { clearTimeout(timer); start = null; };
+  document.addEventListener(`pointerup`, cancel); document.addEventListener(`pointercancel`, cancel);
+  document.addEventListener(`pointermove`, (e) => { if (start && (Math.abs(e.clientX - start.x) > 10 || Math.abs(e.clientY - start.y) > 10)) cancel(); });
+  document.addEventListener(`contextmenu`, (e) => { if (e.target.closest(`#view .card[data-id]`)) e.preventDefault(); });
 }
 
 function inlineName(container, placeholder) {
@@ -428,7 +578,7 @@ function renderResults() {
   box.innerHTML = (holders.length ? `<div class="label-sm">Who has your things</div>
       <div class="people-strip">${holders.map((p) => `<button type="button" class="person-chip" data-person="${esc(p.key)}">
         <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p.holding.length}</b></button>`).join(``)}</div>` : ``)
-    + `<div class="label-sm">${esc(heading)}</div><div class="cards">${list.slice(0, q || f ? 200 : 30).map(itemCard).join(``)}</div>`;
+    + `<div class="list-head"><div class="label-sm">${esc(heading)}</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div><div class="cards">${list.slice(0, q || f ? 200 : 30).map(itemCard).join(``)}</div>`;
 }
 
 // ============================================================ Item detail
@@ -476,7 +626,7 @@ function viewItem(view, r) {
     const a = b.dataset.a;
     if (a === `move`) {
       const id = await pickLocation(item.locationId, `Move to…`);
-      if (id && id !== item.locationId) { await repo.moveItem(item, id); toast(`Moved to ${repo.pathText(id)}`); }
+      if (id) await moveWithUndo([item], id);
     } else if (a === `lend`) {
       const to = await lendSheet(item);
       if (to) { await repo.lendItem(item, to); toast(`Marked as lent to ${to}`); }
@@ -792,7 +942,11 @@ function viewPlace(view, r) {
         <button class="btn ghost" data-a="new">${icon(`plus`)} ${loc ? `Add spot inside` : `Add a place`}</button>
         ${loc ? `<a class="btn primary" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>` : ``}
       </div>
-      ${loc ? `<div class="label-sm">Items here ${items.length ? `· ${items.length}` : ``}</div>
+      ${loc ? `<div class="row-actions left move-actions">
+          <button class="btn ghost small" data-a="bring">${icon(`ret`)} Bring items here</button>
+          <button class="btn ghost small" data-a="movespot">${icon(`move`)} Move this ${esc(loc.kind === `place` ? `place` : `spot`)}</button>
+        </div>` : ``}
+      ${loc ? `<div class="list-head"><div class="label-sm">Items here ${items.length ? `· ${items.length}` : ``}</div>${items.length ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
         ${items.length ? `<div class="cards">${items.map(itemCard).join(``)}</div>` : `<p class="muted">Nothing logged directly in ${esc(loc.name)}.</p>`}` : ``}
     </div>`;
 
@@ -804,6 +958,8 @@ function viewPlace(view, r) {
       if (name) { repo.saveLocation({ name, parentId: loc?.id || ``, kind: kindFor(loc?.id || ``) }); toast(`Added ${name}`); }
     }
     if (b.dataset.a === `menu`) placeMenu(loc);
+    if (b.dataset.a === `bring`) bringItemsSheet(loc);
+    if (b.dataset.a === `movespot`) moveSpot(loc);
   };
 }
 
@@ -821,9 +977,7 @@ function placeMenu(loc) {
         const name = await promptSheet(`Rename`, { label: `Name`, value: loc.name });
         if (name) repo.saveLocation({ id: loc.id, name });
       } else if (m === `move`) {
-        const id = await pickLocation(``, `Move ${loc.name} into…`);
-        if (id && repo.descendantIds(loc.id).has(id)) toast(`Can’t move a place inside itself`);
-        else if (id) repo.saveLocation({ id: loc.id, parentId: id });
+        moveSpot(loc);
       } else if (m === `qr`) printLabel(loc);
       else if (m === `delete`) {
         const n = repo.itemsIn(loc.id, true).length + repo.descendantIds(loc.id).size - 1;

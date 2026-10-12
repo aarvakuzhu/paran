@@ -16,6 +16,12 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **Quick capture:** photo (resized on the phone), name, what it's for, location, optional category/tags/qty/warranty/expiry/notes. "Save & add another" keeps the same location for bulk logging.
 - **Location hierarchy:** Place → Room → Container, with any depth. Recently used spots appear first.
 - **Search by purpose:** matches name, "what it's for", tags, category, location and notes, with prefix and typo tolerance and a few synonyms ("fix a leak" finds plumber's tape). Every word must match.
+- **Moving things around (every move has Undo):**
+  - *One item:* **Move** on the item screen.
+  - *Several items:* tap **Select** above any list (or long-press a card), tick items, then **Move**.
+  - *From the destination:* open a place and tap **Bring items here** to search and tick items from anywhere.
+  - *A whole bin or shelf:* open it and tap **Move this spot**; everything inside goes with it.
+  - The place picker has a search box ("box 3", "garage shelf") and can create a new spot on the spot.
 - **People you lend to:** "Lend" takes a free-text name and drops down matching people you've lent to before (typing "RAVI" reuses "Ravi", so one person stays one person). Tap a borrower's name (on an item, in the **Lent out** filter's "Who has your things" strip, or in **More → People you lend to**) to see what they have now with *Got it back* / *Got everything back*, and their full history of items borrowed and returned with dates. People are derived from the **Log** tab, so there's no separate list to maintain.
 - **Duplicate check (on the phone, no AI):** saving a new item whose name matches an existing one (plurals, punctuation, small typos and word order ignored) asks first: *Open it*, *Same one, it's here now* (moves it), *I have another (+qty)*, or *Save as a new item*. Matches in the same place are flagged more readily. In the AI multi-item review, items already in the chosen place are labelled "Already here" and start unticked. Save locks after the first tap.
 - **Status:** Move, Lend (who has it), Got it back, Can't find / Found it. Every change is appended to the **Log** tab.
