@@ -23,6 +23,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
   - *A whole bin or shelf:* open it and tap **Move this spot**; everything inside goes with it.
   - The place picker has a search box ("box 3", "garage shelf") and can create a new spot on the spot.
 - **Save for later:** **Lend / Save** on an item has two modes. *Lend now* is one tap on a name. *Save for later* reserves it for someone with an optional pick-up-by date (Today, Tomorrow, In 3 days, Next week, or any date). Saved items show "Saved for Ravi · pick up by Thu" (red once late), stay saved if moved, and appear under the **Saved for someone** filter and in the person's view. **Picked up** turns it into a lend; **Cancel** (with Undo) releases it. Lending something saved for someone else asks first. The date is stored in a new `dueAt` column, added automatically to older sheets after `thumb`.
+- **Item history:** each item's page ends with a **History** list, newest first (last 5, then *Show all*): added, moved (from → to), edited (what changed, e.g. "Name: Stud finder → Zircon stud finder · Qty: 1 → 2"), saved for (with pick-up-by date), picked up, lent, returned, missing/found, with date, time and who did it when it wasn't you.
 - **People you lend to:** "Lend" takes a free-text name and drops down matching people you've lent to before (typing "RAVI" reuses "Ravi", so one person stays one person). Tap a borrower's name (on an item, in the **Lent out** filter's "Who has your things" strip, or in **More → People you lend to**) to see what they have now with *Got it back* / *Got everything back*, and their full history of items borrowed and returned with dates. People are derived from the **Log** tab, so there's no separate list to maintain.
 - **Duplicate check (on the phone, no AI):** saving a new item whose name matches an existing one (plurals, punctuation, small typos and word order ignored) asks first: *Open it*, *Same one, it's here now* (moves it), *I have another (+qty)*, or *Save as a new item*. Matches in the same place are flagged more readily. In the AI multi-item review, items already in the chosen place are labelled "Already here" and start unticked. Save locks after the first tap.
 - **Status:** Move, Lend (who has it), Got it back, Can't find / Found it. Every change is appended to the **Log** tab.
@@ -87,7 +88,7 @@ After changing files, bump `VERSION` in `sw.js` so installed copies pick up the 
 | Items | id, name, purpose, category, tags, locationId, qty, status (home/lent/reserved/missing), lentTo (person), photoId, photoUrl, warranty, expiry, notes, addedBy, addedAt, updatedAt, updatedBy, deleted, thumb, dueAt (pick-up-by date) |
 | Locations | id, name, parentId, kind (place/room/container), notes, createdBy, createdAt, deleted |
 | Members | email, role, photoFolderId, invitedBy, joinedAt |
-| Log | ts, itemId, action, detail, by |
+| Log | ts, itemId, action, detail, by, info (what changed / moved from / pick-up date) |
 
 Rules for editing the sheet by hand: it's fine to edit cell values and to sort or filter **in a filter view**. Don't delete rows or rename the header row, because the app matches rows by `id` and columns by header name. Removing an item in the app sets `deleted`; it never deletes rows.
 

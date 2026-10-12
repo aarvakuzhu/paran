@@ -545,6 +545,54 @@ async function lendOrSave(item, opts) {
   }
 }
 
+// ---------------- item history
+const fmtWhen = (iso) => {
+  const d = new Date(iso); if (isNaN(d)) return ``;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString(undefined, { month: `short`, day: `numeric`, ...(sameYear ? {} : { year: `numeric` }), hour: `numeric`, minute: `2-digit` });
+};
+const whoName = (email) => (!email || email === repo.user.email ? `` : (repo.members.find((m) => m.email === email)?.email || email).split(`@`)[0]);
+const ACTION_ICON = { added: `plus`, moved: `move`, lent: `lend`, returned: `ret`, reserved: `clock`, unreserved: `x`, missing: `alert`, found: `check`, removed: `trash`, edited: `edit` };
+
+/** One log entry → { icon, title, note }. `prev` is the entry before it (older), to spot pickups. */
+function describeEntry(e, prev) {
+  const due = /due (\d{4}-\d{2}-\d{2})/.exec(e.info || ``)?.[1];
+  const person = (n) => `<button type="button" class="person-link" data-person="${esc(Repo.personKey(n))}">${esc(n)}</button>`;
+  switch (true) {
+    case e.action === `added`: return { title: `Added${e.detail ? ` to ${esc(e.detail)}` : ``}` };
+    case e.action === `moved`: return { title: `Moved to ${esc(e.detail || `no location`)}`, note: e.info ? esc(e.info.replace(/^from /, `From `)) : `` };
+    case e.action === `lent`: {
+      const picked = prev?.action === `reserved` && Repo.personKey(prev.detail) === Repo.personKey(e.detail);
+      return { title: `${picked ? `Picked up by` : `Lent to`} ${person(e.detail)}` };
+    }
+    case e.action === `returned`: return { title: e.detail ? `Returned by ${person(e.detail)}` : `Back home` };
+    case e.action === `reserved`: return { title: `Saved for ${person(e.detail)}`, note: due ? `Pick up by ${esc(new Date(`${due}T00:00`).toLocaleDateString(undefined, { weekday: `short`, month: `short`, day: `numeric` }))}` : `` };
+    case e.action === `unreserved`: return { title: `No longer saved for ${e.detail ? person(e.detail) : `them`}` };
+    case e.action === `missing`: return { title: `Marked missing` };
+    case e.action === `found`: return { title: `Found` };
+    case e.action === `removed`: return { title: `Removed from inventory` };
+    case e.action === `edited`: return { title: `Edited`, note: esc(e.info || ``) };
+    case /^qty\+\d+$/.test(e.action): return { title: `Added ${esc(e.action.slice(4))} more`, icon: `plus` };
+    default: return { title: esc(e.action) };
+  }
+}
+
+function itemHistoryHtml(item) {
+  const hist = repo.itemHistory(item.id);
+  if (!hist.length) return ``;
+  const SHOW = 5;
+  const rows = hist.map((e, i) => {
+    const d = describeEntry(e, hist[i + 1]);
+    const who = whoName(e.by);
+    return `<div class="ih-row${i >= SHOW ? ` extra` : ``}">
+      <span class="ih-ic">${icon(d.icon || ACTION_ICON[e.action] || `edit`)}</span>
+      <div><div class="ih-title">${d.title}</div>${d.note ? `<div class="ih-note">${d.note}</div>` : ``}
+        <small>${esc(fmtWhen(e.ts))}${who ? ` · by ${esc(who)}` : ``}</small></div></div>`;
+  }).join(``);
+  return `<div class="label-sm">History</div><div class="ih">${rows}</div>
+    ${hist.length > SHOW ? `<button type="button" class="btn ghost small" data-hist-all>Show all ${hist.length}</button>` : ``}`;
+}
+
 function historyState(h) {
   if (h.lentAt && !h.returnedAt) return `open`;
   if (h.savedAt && !h.lentAt && !h.cancelledAt) return `saved`;
@@ -553,8 +601,11 @@ function historyState(h) {
 }
 function historyText(h) {
   const parts = [];
-  if (h.savedAt) parts.push(`Saved ${fmtDate(h.savedAt)}`);
-  if (h.lentAt) parts.push(`${h.savedAt ? `picked up` : `lent`} ${fmtDate(h.lentAt)}`);
+  if (h.savedAt) parts.push(`Saved ${fmtDate(h.savedAt)}${h.dueAt ? ` (by ${fmtDate(`${h.dueAt}T12:00`)})` : ``}`);
+  if (h.lentAt) {
+    const lateBy = h.dueAt ? Math.round((new Date(String(h.lentAt).slice(0, 10) + `T00:00`) - new Date(`${h.dueAt}T00:00`)) / 86400000) : 0;
+    parts.push(`${h.savedAt ? `picked up` : `lent`} ${fmtDate(h.lentAt)}${lateBy > 0 ? ` (${dayText(lateBy)} late)` : ``}`);
+  }
   if (h.cancelledAt && !h.lentAt) parts.push(`cancelled ${fmtDate(h.cancelledAt)}`);
   else if (h.savedAt && !h.lentAt) {
     const d = dueText(h.item?.dueAt); parts.push(d.text ? `waiting, ${d.text}` : `waiting for pickup`);
@@ -736,6 +787,7 @@ function viewItem(view, r) {
         <a class="act" href="#/edit/${esc(item.id)}">${icon(`edit`)}Edit</a>
       </div>
       ${item.photoUrl ? `<a class="btn ghost full" href="${esc(item.photoUrl)}" target="_blank" rel="noopener">${icon(`ext`)} Full photo in Drive</a>` : ``}
+      ${itemHistoryHtml(item)}
       <button class="btn text danger full" data-a="delete">${icon(`trash`)} Remove from inventory</button>
     </div>`;
 
@@ -747,6 +799,7 @@ function viewItem(view, r) {
     if (tag) { e.preventDefault(); findState = { q: tag.dataset.tag, filter: `` }; location.hash = `#/`; return; }
     const who = e.target.closest(`[data-person]`);
     if (who) { personSheet(who.dataset.person); return; }
+    if (e.target.closest(`[data-hist-all]`)) { $(`.ih`, view).classList.add(`all`); e.target.closest(`[data-hist-all]`).remove(); return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
     if (a === `move`) {
@@ -757,9 +810,9 @@ function viewItem(view, r) {
     } else if (a === `pickup`) {
       await repo.pickUp(item); toast(`Lent to ${item.lentTo}`);
     } else if (a === `unsave`) {
-      const who = item.lentTo;
+      const who = item.lentTo; const was = item.dueAt;
       await repo.cancelReservation(item);
-      toast(`No longer saved for ${who}`, { action: `Undo`, ms: 6000, onAction: () => repo.reserveItem(item, who, item.dueAt) });
+      toast(`No longer saved for ${who}`, { action: `Undo`, ms: 6000, onAction: () => repo.reserveItem(item, who, was) });
     } else if (a === `return`) { await repo.returnItem(item); toast(`Back home`); }
     else if (a === `missing`) { await repo.markMissing(item); toast(`Marked missing`); }
     else if (a === `found`) { await repo.markFound(item); toast(`Found`); }

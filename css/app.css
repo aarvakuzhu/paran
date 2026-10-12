@@ -397,3 +397,18 @@ body.selecting .view { padding-bottom: calc(var(--tabbar-h) + 100px + env(safe-a
 .tl-row.saved small { color: var(--accent); }
 .tl-row.cancelled > i { background: var(--ink-3); }
 .tl-row.cancelled .link-plain { color: var(--ink-3); text-decoration: line-through; }
+
+/* ---------- item history ---------- */
+.ih { display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 4px 12px; }
+.ih-row { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.ih-row:last-child { border-bottom: 0; }
+.ih:not(.all) .ih-row.extra { display: none; }
+.ih:not(.all) .ih-row:nth-last-child(1 of :not(.extra)) { border-bottom: 0; }
+.ih-ic { width: 30px; height: 30px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; flex: none; }
+.ih-ic .ic { width: 16px; height: 16px; }
+.ih-row > div { display: grid; gap: 2px; min-width: 0; }
+.ih-title { font-weight: 600; }
+.ih-title .person-link { text-decoration-thickness: 1px; }
+.ih-note { font-size: 0.86rem; color: var(--ink-2); overflow-wrap: anywhere; }
+.ih-row small { color: var(--ink-3); font-size: 0.78rem; }
+[data-hist-all] { margin-top: 8px; }

@@ -14,7 +14,7 @@ const AFTER_THUMB = [ITEM_COLS.indexOf(`thumb`) + 1, ITEM_COLS.length - 1].map(c
 function colLetterOf(n) { let s = ``; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 export const LOC_COLS = [`id`, `name`, `parentId`, `kind`, `notes`, `createdBy`, `createdAt`, `deleted`];
 export const MEMBER_COLS = [`email`, `role`, `photoFolderId`, `invitedBy`, `joinedAt`];
-export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`];
+export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`, `info`]; // info: what changed / pick-up date / moved from
 
 const TABS = [
   { name: `Items`, cols: ITEM_COLS },
@@ -117,12 +117,17 @@ class GoogleBackend {
   /** Older sheets: add header cells for columns introduced since (they're always appended at the end). */
   async ensureHeaders() {
     const key = `stash.hdr.${this.sheetId}`;
-    if (localStorage.getItem(key) === String(ITEM_COLS.length)) return;
-    const r = await sheets.get(this.sheetId, `Items!1:1`);
-    const header = (r.values?.[0] || []).map(String);
-    const isPrefix = header.every((h, i) => h === ITEM_COLS[i]);
-    if (header.length < ITEM_COLS.length && isPrefix) await sheets.update(this.sheetId, `Items!A1`, [ITEM_COLS]);
-    localStorage.setItem(key, String(ITEM_COLS.length));
+    const ver = `${ITEM_COLS.length}.${LOG_COLS.length}`;
+    if (localStorage.getItem(key) === ver) return;
+    const r = await sheets.batchGet(this.sheetId, [`Items!1:1`, `Log!1:1`]);
+    const updates = [];
+    [[`Items`, ITEM_COLS], [`Log`, LOG_COLS]].forEach(([tab, cols], i) => {
+      const header = (r.valueRanges[i]?.values?.[0] || []).map(String);
+      const isPrefix = header.every((h, j) => h === cols[j]);
+      if (header.length < cols.length && isPrefix) updates.push({ range: `${tab}!A1`, values: [cols] });
+    });
+    if (updates.length) await sheets.batchUpdateValues(this.sheetId, updates);
+    localStorage.setItem(key, ver);
   }
 
   async ensurePhotoFolder() {
@@ -356,8 +361,9 @@ export class Repo extends EventTarget {
   categories() { return [...new Set(this.activeItems().map((i) => i.category).filter(Boolean))].sort(); }
 
   // ---------------- mutations
-  async saveItem(fields, { photo, thumb, logAction, detail } = {}) {
+  async saveItem(fields, { photo, thumb, logAction, detail, info } = {}) {
     const existing = fields.id && this.items.find((i) => i.id === fields.id);
+    const before = existing ? { ...existing } : null;
     const item = existing ? { ...existing, ...fields } : {
       id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``, dueAt: ``,
       photoId: ``, photoUrl: ``, warranty: ``, expiry: ``, notes: ``, addedBy: this.user.email, addedAt: now(),
@@ -370,11 +376,32 @@ export class Repo extends EventTarget {
     this.outbox.push({ kind: `item`, data: { ...item } });
     if (photo) this.outbox.push({ kind: `photo`, itemId: item.id });
     const action = logAction || (existing ? `edited` : `added`);
-    const entry = { ts: now(), itemId: item.id, action, detail: detail ?? this.logDetail(action, item), by: this.user.email };
+    const entry = { ts: now(), itemId: item.id, action, detail: detail ?? this.logDetail(action, item), by: this.user.email,
+      info: info ?? this.logInfo(action, before, item, Boolean(photo)) };
     this.log.push(entry);
     this.outbox.push({ kind: `log`, data: entry });
     this.saveCache(); this.emit(); this.flush();
     return item;
+  }
+
+  /** Extra context for the history: what an edit changed, where a move came from, a pick-up date. */
+  logInfo(action, before, item, newPhoto) {
+    if (action === `moved` && before && before.locationId !== item.locationId) return `from ${this.pathText(before.locationId) || `no location`}`;
+    if (action === `reserved` && item.dueAt) return `due ${item.dueAt}`;
+    if (action !== `edited` || !before) return ``;
+    const short = (v) => { const t = String(v ?? ``).replace(/\s+/g, ` `).trim(); return t ? (t.length > 40 ? `${t.slice(0, 39)}…` : t) : `empty`; };
+    const labels = { name: `Name`, purpose: `What it’s for`, category: `Category`, tags: `Tags`, qty: `Qty`, warranty: `Warranty`, expiry: `Expires`, notes: `Notes` };
+    const changes = Object.entries(labels)
+      .filter(([k]) => String(before[k] ?? ``) !== String(item[k] ?? ``))
+      .map(([k, label]) => `${label}: ${short(before[k])} → ${short(item[k])}`);
+    if (before.locationId !== item.locationId) changes.push(`Place: ${short(this.pathText(before.locationId))} → ${short(this.pathText(item.locationId))}`);
+    if (newPhoto) changes.push(`New photo`);
+    return changes.join(` · `);
+  }
+
+  /** Everything that happened to one item, newest first. */
+  itemHistory(itemId) {
+    return this.log.filter((e) => e.itemId === itemId).sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
   }
 
   logDetail(action, item) {
@@ -442,7 +469,8 @@ export class Repo extends EventTarget {
       const id = e.itemId; const k = Repo.personKey(e.detail);
       if (e.action === `reserved` && e.detail) {
         const r = openRes.get(id); if (r) r.cancelledAt = e.ts;
-        const p = mk(e, { savedAt: e.ts }); out.push(p); openRes.set(id, p);
+        const due = /due (\d{4}-\d{2}-\d{2})/.exec(e.info || ``)?.[1] || ``;
+        const p = mk(e, { savedAt: e.ts, dueAt: due }); out.push(p); openRes.set(id, p);
       } else if (e.action === `unreserved`) {
         const r = openRes.get(id); if (r) { r.cancelledAt = e.ts; openRes.delete(id); }
       } else if (e.action === `lent` && e.detail) {
