@@ -5,6 +5,7 @@ export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export function toast(msg, { action, onAction, ms = 3200 } = {}) {
   const host = $(`#toasts`);
+  host.querySelectorAll(`.toast`).forEach((t) => t.remove()); // one message at a time: the newest wins
   const el = document.createElement(`div`);
   el.className = `toast`;
   el.innerHTML = `<span>${esc(msg)}</span>${action ? `<button type="button">${esc(action)}</button>` : ``}`;
@@ -25,6 +26,7 @@ export function sheet(title, render, { onClose } = {}) {
       <div class="sheet-body"></div>
     </section>`;
   document.body.appendChild(wrap);
+  document.querySelectorAll(`#toasts .toast`).forEach((t) => t.remove()); // don't cover the sheet with an old message
   requestAnimationFrame(() => wrap.classList.add(`open`));
   const close = () => {
     wrap.classList.remove(`open`);

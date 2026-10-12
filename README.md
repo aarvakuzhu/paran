@@ -11,6 +11,16 @@ My Drive/
 
 The app only asks for the `drive.file` scope, so it can see **only the files it created** (or the one sheet a family member picks to join). It cannot read anything else in the user's Drive.
 
+## Screens
+
+- **Find** (landing page): search bar, category chips, then **Needs attention** (late pick-ups, pick-ups due today/tomorrow, items lent 30+ days, missing), **Out now** (who has your things), **Browse** (rooms with item counts) and **Recently added**. Typing replaces the dashboard with results.
+- **Places**: your places and what's in them. Opening a place shows **everything inside it**, grouped by the places below it. **Add item here** is the main action; Bring items here, Move, Rename, QR label and Delete are in the ⋯ menu (containers also show a **Label** button).
+- **+**: add an item. Photo, name, what it's for, where; category, quantity, extra search words, dates and notes are under *More details*. The tab bar is hidden while you fill it in.
+- **Out**: everything lent or reserved, grouped by person, overdue pick-ups first. A red badge on the tab counts late pick-ups.
+- **More**: account, household sharing, AI suggestions, export.
+- **Item page**: where it is, then **Move** and **Lend or reserve** (or *Got it back* / *Picked up* / *Found it*). Edit is the pencil; *I can't find it* and *Remove* are in ⋯. **Back** returns to wherever you came from.
+- **First run**: a new inventory opens **Where do you keep things?** Tap Home, Storage unit, Car… and rooms like Garage or Kitchen to create them in one go. It's also under Places → *Quick-add rooms and places*.
+
 ## What's in v1
 
 - **Quick capture:** photo (resized on the phone), name, what it's for, location, optional category/tags/qty/warranty/expiry/notes. "Save & add another" keeps the same location for bulk logging.
@@ -22,7 +32,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
   - *From the destination:* open a place and tap **Bring items here** to search and tick items from anywhere.
   - *A whole bin or shelf:* open it and tap **Move this spot**; everything inside goes with it.
   - The place picker has a search box ("box 3", "garage shelf") and can create a new spot on the spot.
-- **Save for later:** **Lend / Save** on an item has two modes. *Lend now* is one tap on a name. *Save for later* reserves it for someone with an optional pick-up-by date (Today, Tomorrow, In 3 days, Next week, or any date). Saved items show "Saved for Ravi · pick up by Thu" (red once late), stay saved if moved, and appear under the **Saved for someone** filter and in the person's view. **Picked up** turns it into a lend; **Cancel** (with Undo) releases it. Lending something saved for someone else asks first. The date is stored in a new `dueAt` column, added automatically to older sheets after `thumb`.
+- **Reserve:** **Lend or reserve** on an item has two modes. *Lend now* is one tap on a name. *Reserve* holds it for someone with an optional pick-up-by date (Today, Tomorrow, In 3 days, Next week, or any date). Reserved items show "Reserved · Ravi · pick up by Thu" (red once late), stay reserved if moved, and appear in the **Out** tab and the person's view. **Picked up** turns it into a lend; **Cancel** (with Undo) releases it. Lending something reserved for someone else asks first. The date is stored in a new `dueAt` column, added automatically to older sheets after `thumb`.
 - **Photos open inside the app:** tap an item's photo for full screen. Full-size photos are cached on the phone (most recent 150), so they open instantly and offline. Photos another family member added show the preview, with a link to their Drive for the original.
 - **Item history:** each item's page ends with a **History** list, newest first (last 5, then *Show all*): added, moved (from → to), edited (what changed, e.g. "Name: Stud finder → Zircon stud finder · Qty: 1 → 2"), saved for (with pick-up-by date), picked up, lent, returned, missing/found, with date, time and who did it when it wasn't you.
 - **People you lend to:** "Lend" takes a free-text name and drops down matching people you've lent to before (typing "RAVI" reuses "Ravi", so one person stays one person). Tap a borrower's name (on an item, in the **Lent out** filter's "Who has your things" strip, or in **More → People you lend to**) to see what they have now with *Got it back* / *Got everything back*, and their full history of items borrowed and returned with dates. People are derived from the **Log** tab, so there's no separate list to maintain.

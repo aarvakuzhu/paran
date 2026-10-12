@@ -13,7 +13,7 @@ let findState = { q: ``, filter: `` };
 
 const app = $(`#app`);
 const KIND_ICON = { place: `home`, room: `room`, container: `box` };
-const STATUS_LABEL = { lent: `Lent out`, missing: `Missing`, reserved: `Saved for`, home: `` };
+const STATUS_LABEL = { lent: `Lent`, missing: `Missing`, reserved: `Reserved`, home: `` };
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, `0`)}-${String(d.getDate()).padStart(2, `0`)}`; };
 const isoDay = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, `0`)}-${String(d.getDate()).padStart(2, `0`)}`; };
 /** "by Fri, Oct 16", "today", "2 days late" for a YYYY-MM-DD pick-up date. */
@@ -74,6 +74,7 @@ async function start(kind, { interactive = false, choice } = {}) {
     repo.addEventListener(`change`, onRepoChange);
     repo.addEventListener(`status`, renderStatus);
     renderShell();
+    if (choice === `create`) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
     if (kind === `google`) installQuietRenew();
   } catch (e) {
@@ -145,7 +146,7 @@ function renderWelcome(error) {
     <h1>${esc(CONFIG.APP_NAME)}</h1>
     <p class="lead">Know what you have, where it is, and what it’s for.</p>
     <ul class="points">
-      <li>${icon(`camera`)}<span>Snap, name, pick a spot. Done in seconds.</span></li>
+      <li>${icon(`camera`)}<span>Snap, name, pick a place. Done in seconds.</span></li>
       <li>${icon(`search`)}<span>Search by what you need it for, not just its name.</span></li>
       <li>${icon(`cloud`)}<span>Your data lives in <b>your own Google Drive</b>. Nothing is stored anywhere else.</span></li>
     </ul>
@@ -212,6 +213,7 @@ function renderShell() {
       <a href="#/" data-tab="find">${icon(`search`)}<span>Find</span></a>
       <a href="#/places" data-tab="places">${icon(`place`)}<span>Places</span></a>
       <a href="#/add" class="fab" data-tab="add" aria-label="Add item">${icon(`plus`)}</a>
+      <a href="#/out" data-tab="out">${icon(`lend`)}<span>Out</span><b class="tab-badge" hidden></b></a>
       <a href="#/more" data-tab="more">${icon(`more`)}<span>More</span></a>
     </nav>`;
   $(`#status`).onclick = onStatusClick;
@@ -248,16 +250,40 @@ function route() {
   return { name: parts[0], id: parts[1], params };
 }
 
+// In-app navigation history, so Back returns to where you came from (a place, Out, a search…).
+const navStack = [];
+let lastHash = null;
+function goBack(fallback = `#/`) {
+  navStack.pop(); // current screen
+  const prev = navStack.pop();
+  location.hash = prev ?? fallback;
+}
+
 function render() {
   if (!repo || !$(`#view`)) return;
   const r = route();
-  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, more: `more` }[r.name] || `find`;
+  const routeChanged = location.hash !== lastHash;
+  if (routeChanged) {
+    lastHash = location.hash;
+    if (navStack[navStack.length - 1] !== location.hash) navStack.push(location.hash);
+    if (navStack.length > 30) navStack.shift();
+  }
+  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places` }[r.name] || `find`;
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
+  document.body.classList.toggle(`focus-mode`, r.name === `add` || r.name === `edit` || r.name === `setup`); // no tab bar while filling a form
+  updateOutBadge();
   const view = $(`#view`);
+  const y = window.scrollY;
   view.onclick = null;
-  window.scrollTo(0, 0);
-  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, more: viewMore };
+  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup };
   (screens[r.name] || viewFind)(view, r);
+  window.scrollTo(0, routeChanged ? 0 : y); // a background sync must not jump the page to the top
+}
+
+function updateOutBadge() {
+  const b = $(`.tab-badge`); if (!b || !repo) return;
+  const late = repo.activeItems().filter((i) => attentionReason(i)?.urgent).length;
+  b.hidden = !late; b.textContent = late;
 }
 
 // ============================================================ shared bits
@@ -266,11 +292,14 @@ function thumbHtml(item, cls = `thumb`) {
   return t ? `<img class="${cls}" src="${t}" alt="" loading="lazy">` : `<div class="${cls} ph">${icon(`photo`)}</div>`;
 }
 
-function itemCard(item) {
-  const path = repo.pathText(item.locationId);
+/** Card for an item. The location is the answer people came for, so it's the most visible line. */
+function itemCard(item, { reason } = {}) {
+  const parts = repo.pathOf(item.locationId);
+  const near = parts.slice(-2).map((l) => l.name).join(` › `);           // "Garage › Blue bin"
+  const far = parts.length > 2 ? parts.slice(0, -2).map((l) => l.name).join(` › `) : ``; // "Home"
   const due = item.status === `reserved` ? dueText(item.dueAt) : { text: `` };
   const badge = item.status === `reserved`
-    ? `<span class="badge reserved${due.late ? ` late` : ``}">Saved for ${esc(item.lentTo || `someone`)}${due.text ? ` · ${esc(due.text)}` : ``}</span>`
+    ? `<span class="badge reserved${due.late ? ` late` : ``}">Reserved · ${esc(item.lentTo || `someone`)}${due.text ? ` · ${esc(due.text)}` : ``}</span>`
     : STATUS_LABEL[item.status] ? `<span class="badge ${esc(item.status)}">${esc(STATUS_LABEL[item.status])}${item.status === `lent` && item.lentTo ? ` · ${esc(item.lentTo)}` : ``}</span>` : ``;
   const cls = `${sel.on ? ` selectable` : ``}${sel.ids.has(item.id) ? ` selected` : ``}`;
   return `<a class="card${cls}" href="#/item/${esc(item.id)}" data-id="${esc(item.id)}">
@@ -278,10 +307,38 @@ function itemCard(item) {
     ${thumbHtml(item)}
     <div class="card-main">
       <div class="card-title">${esc(item.name)}${Number(item.qty) > 1 ? ` <span class="qty">×${esc(item.qty)}</span>` : ``}</div>
-      <div class="card-path">${icon(`place`)}${path ? esc(path) : `<i>No location yet</i>`}</div>
-      ${item.purpose ? `<div class="card-purpose">${esc(item.purpose)}</div>` : ``}
-      ${badge}
+      <div class="card-path">${icon(`place`)}<span>${near ? esc(near) : `<i>No location yet</i>`}${far ? `<small> · ${esc(far)}</small>` : ``}</span></div>
+      ${reason ? `<div class="card-reason ${reason.urgent ? `urgent` : ``}">${esc(reason.text)}</div>`
+        : item.purpose ? `<div class="card-purpose">${esc(item.purpose)}</div>` : ``}
+      ${reason ? `` : badge}
     </div></a>`;
+}
+
+// ---- what deserves attention on the dashboard and the Out tab
+const LONG_LENT_DAYS = 30;
+let lentMemo = { key: ``, map: new Map() };
+function lentSinceMap() {
+  const key = `${repo.log.length}:${repo.items.length}:${repo.outbox.length}`;
+  if (lentMemo.key !== key) {
+    const map = new Map();
+    for (const p of repo.lendPeriods()) if (p.lentAt && !p.returnedAt) map.set(p.itemId, p.lentAt);
+    lentMemo = { key, map };
+  }
+  return lentMemo.map;
+}
+/** { text, urgent, rank } or null. Lower rank = show first. */
+function attentionReason(item) {
+  if (item.status === `reserved` && item.dueAt) {
+    const d = dueText(item.dueAt);
+    if (d.late) return { text: `Pick-up ${d.text} · ${item.lentTo}`, urgent: true, rank: 0 };
+    if (/today|tomorrow/.test(d.text)) return { text: `${d.text.replace(/^pick up/, `Pick-up`)} · ${item.lentTo}`, urgent: false, rank: 1 };
+  }
+  if (item.status === `lent`) {
+    const since = lentSinceMap().get(item.id); const n = since ? daysBetween(since) : null;
+    if (n !== null && n >= LONG_LENT_DAYS) return { text: `With ${item.lentTo} for ${n} days`, urgent: false, rank: 2 };
+  }
+  if (item.status === `missing`) return { text: `Marked missing`, urgent: false, rank: 3 };
+  return null;
 }
 
 function crumbs(locId, { link = true } = {}) {
@@ -345,7 +402,7 @@ function pickLocation(startId = ``, title = `Where does it live?`, { exclude = n
               </div>`).join(``) || `<p class="muted pad">Nothing inside yet.</p>`}
           </div>
           <div class="row-actions">
-            <button type="button" class="btn ghost" data-new>${icon(`plus`)} New ${current ? `spot in ${esc(here?.name || ``)}` : `place`}</button>
+            <button type="button" class="btn ghost" data-new>${icon(`plus`)} New place${current ? ` in ${esc(here?.name || ``)}` : ``}</button>
             ${current ? `<button type="button" class="btn primary" data-pick="${esc(current)}">Put in ${esc(here?.name || ``)}</button>` : ``}
           </div>`;
       };
@@ -532,7 +589,7 @@ function lendSheet(item, { mode: startMode = `now` } = {}) {
       el.innerHTML = `<form class="stack lend-form" autocomplete="off">
           <div class="seg" role="tablist">
             <button type="button" data-mode="now" role="tab">${icon(`lend`)} Lend now</button>
-            <button type="button" data-mode="later" role="tab">${icon(`clock`)} Save for later</button>
+            <button type="button" data-mode="later" role="tab">${icon(`clock`)} Reserve</button>
           </div>
           <label class="field"><span data-wholabel></span>
             <input name="who" placeholder="Type a name" required autocomplete="off" autocapitalize="words" enterkeyhint="done"></label>
@@ -553,7 +610,7 @@ function lendSheet(item, { mode: startMode = `now` } = {}) {
         $$(`[data-mode]`, el).forEach((b) => b.classList.toggle(`on`, b.dataset.mode === mode));
         $(`[data-wholabel]`, el).textContent = mode === `now` ? `Who has it?` : `Who is it for?`;
         $(`[data-duebox]`, el).hidden = mode !== `later`;
-        $(`[data-ok]`, el).textContent = mode === `now` ? `Lend` : `Save for them`;
+        $(`[data-ok]`, el).textContent = mode === `now` ? `Lend` : `Reserve`;
       };
       const drawQuick = () => $$(`[data-due]`, el).forEach((c) => c.classList.toggle(`on`, c.dataset.due === due.value));
       const draw = () => {
@@ -562,7 +619,7 @@ function lendSheet(item, { mode: startMode = `now` } = {}) {
           .filter((p) => p.key !== q || !picked); // hide the exact match once chosen
         box.innerHTML = list.slice(0, 6).map((p) => `<button type="button" class="suggest-row" data-name="${esc(p.name)}" role="option">
             <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span>
-            <small>${[p.holding.length ? `has ${p.holding.length}` : ``, p.saved.length ? `${p.saved.length} saved` : ``].filter(Boolean).join(` · `) || `lent ${p.total}×`}</small></button>`).join(``);
+            <small>${[p.holding.length ? `has ${p.holding.length}` : ``, p.saved.length ? `${p.saved.length} reserved` : ``].filter(Boolean).join(` · `) || `lent ${p.total}×`}</small></button>`).join(``);
         box.hidden = !list.length;
         if (!q && list.length) box.insertAdjacentHTML(`afterbegin`, `<div class="label-sm">People you’ve lent to</div>`);
       };
@@ -595,7 +652,7 @@ async function lendOrSave(item, opts) {
   const res = await lendSheet(item, opts); if (!res) return;
   const savedFor = item.status === `reserved` ? item.lentTo : ``;
   if (savedFor && Repo.personKey(savedFor) !== Repo.personKey(res.name)) {
-    const ok = await confirmSheet(`Saved for ${savedFor}`, `${item.name} is saved for ${savedFor}. ${res.mode === `now` ? `Lend it to ${res.name}` : `Save it for ${res.name}`} instead?`, `Yes, ${res.mode === `now` ? `lend` : `save`} to ${res.name}`);
+    const ok = await confirmSheet(`Reserved for ${savedFor}`, `${item.name} is reserved for ${savedFor}. ${res.mode === `now` ? `Lend it to ${res.name}` : `Reserve it for ${res.name}`} instead?`, `Yes, ${res.mode === `now` ? `lend to` : `reserve for`} ${res.name}`);
     if (!ok) return;
   }
   if (res.mode === `now`) {
@@ -604,7 +661,7 @@ async function lendOrSave(item, opts) {
     toast(`Lent to ${res.name}`);
   } else {
     await repo.reserveItem(item, res.name, res.dueAt);
-    toast(`Saved for ${res.name}${res.dueAt ? ` · ${dueText(res.dueAt).text}` : ``}`);
+    toast(`Reserved for ${res.name}${res.dueAt ? ` · ${dueText(res.dueAt).text}` : ``}`);
   }
 }
 
@@ -656,8 +713,8 @@ function describeEntry(e, prev) {
       return { title: `${picked ? `Picked up by` : `Lent to`} ${person(e.detail)}` };
     }
     case e.action === `returned`: return { title: e.detail ? `Returned by ${person(e.detail)}` : `Back home` };
-    case e.action === `reserved`: return { title: `Saved for ${person(e.detail)}`, note: due ? `Pick up by ${esc(new Date(`${due}T00:00`).toLocaleDateString(undefined, { weekday: `short`, month: `short`, day: `numeric` }))}` : `` };
-    case e.action === `unreserved`: return { title: `No longer saved for ${e.detail ? person(e.detail) : `them`}` };
+    case e.action === `reserved`: return { title: `Reserved for ${person(e.detail)}`, note: due ? `Pick up by ${esc(new Date(`${due}T00:00`).toLocaleDateString(undefined, { weekday: `short`, month: `short`, day: `numeric` }))}` : `` };
+    case e.action === `unreserved`: return { title: `No longer reserved for ${e.detail ? person(e.detail) : `them`}` };
     case e.action === `missing`: return { title: `Marked missing` };
     case e.action === `found`: return { title: `Found` };
     case e.action === `removed`: return { title: `Removed from inventory` };
@@ -691,7 +748,7 @@ function historyState(h) {
 }
 function historyText(h) {
   const parts = [];
-  if (h.savedAt) parts.push(`Saved ${fmtDate(h.savedAt)}${h.dueAt ? ` (by ${fmtDate(`${h.dueAt}T12:00`)})` : ``}`);
+  if (h.savedAt) parts.push(`Reserved ${fmtDate(h.savedAt)}${h.dueAt ? ` (by ${fmtDate(`${h.dueAt}T12:00`)})` : ``}`);
   if (h.lentAt) {
     const lateBy = h.dueAt ? Math.round((new Date(String(h.lentAt).slice(0, 10) + `T00:00`) - new Date(`${h.dueAt}T00:00`)) / 86400000) : 0;
     parts.push(`${h.savedAt ? `picked up` : `lent`} ${fmtDate(h.lentAt)}${lateBy > 0 ? ` (${dayText(lateBy)} late)` : ``}`);
@@ -718,11 +775,11 @@ function personSheet(key) {
       const sinceOf = (id) => hist.find((h) => h.itemId === id && h.lentAt && !h.returnedAt)?.lentAt;
       const borrowed = hist.filter((h) => h.lentAt).length;
       const summary = [p.holding.length ? `Has ${p.holding.length} item${p.holding.length > 1 ? `s` : ``} now` : `Has nothing of yours now`,
-        p.saved.length ? `${p.saved.length} saved` : ``, borrowed ? `borrowed ${borrowed} time${borrowed === 1 ? `` : `s`}` : ``].filter(Boolean).join(` · `);
+        p.saved.length ? `${p.saved.length} reserved` : ``, borrowed ? `borrowed ${borrowed} time${borrowed === 1 ? `` : `s`}` : ``].filter(Boolean).join(` · `);
       el.innerHTML = `
         <div class="person-head"><span class="avatar">${esc(initials(p.name))}</span>
           <div><b>${esc(p.name)}</b><small>${esc(summary)}</small></div></div>
-        ${p.saved.length ? `<div class="label-sm">Saved for ${esc(p.name)}</div>
+        ${p.saved.length ? `<div class="label-sm">Reserved for ${esc(p.name)}</div>
           <div class="list">${p.saved.map((it) => { const d = dueText(it.dueAt); return `<div class="list-row hold-row">
               ${thumbHtml(it, `thumb sm`)}
               <button type="button" class="hold-main" data-open="${esc(it.id)}"><b>${esc(it.name)}</b><small class="${d.late ? `late` : ``}">${esc(d.text || `no pick-up date`)} · ${esc(repo.pathText(it.locationId) || `no location`)}</small></button>
@@ -759,7 +816,7 @@ function personSheet(key) {
       }
       if (b.dataset.unsave) {
         const it = repo.items.find((i) => i.id === b.dataset.unsave);
-        if (it) { await repo.cancelReservation(it); toast(`No longer saved for ${person.name}`); draw(); }
+        if (it) { await repo.cancelReservation(it); toast(`No longer reserved for ${person.name}`); draw(); }
         return;
       }
       if (b.hasAttribute(`data-pickall`)) {
@@ -777,31 +834,23 @@ function personSheet(key) {
   }, { onClose: () => render() });
 }
 
-// ============================================================ Find
+// ============================================================ Find (landing dashboard + search)
 function viewFind(view) {
   const cats = repo.categories();
-  const lent = repo.activeItems().filter((i) => i.status === `lent`).length;
-  const saved = repo.activeItems().filter((i) => i.status === `reserved`).length;
-  { // drop a filter whose chip no longer exists (e.g. the last saved item was picked up)
+  { // drop a filter whose chip no longer exists
     const f = findState.filter;
-    const counts = { lent, missing: repo.activeItems().filter((i) => i.status === `missing`).length, reserved: saved };
-    if ((f in counts && !counts[f]) || (f.startsWith(`cat:`) && !cats.includes(f.slice(4)))) findState.filter = ``;
+    if ([`lent`, `reserved`, `missing`].includes(f) && !repo.activeItems().some((i) => i.status === f)) findState.filter = ``;
+    if (f.startsWith(`cat:`) && !cats.includes(f.slice(4))) findState.filter = ``;
   }
-  const missing = repo.activeItems().filter((i) => i.status === `missing`).length;
   view.innerHTML = `
     <div class="search-wrap">
       <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="What do you need? e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search"></label>
     </div>
-    <div class="chips scroll" id="filters">
-      ${lent ? `<button class="chip" data-f="lent">Lent out · ${lent}</button>` : ``}
-      ${saved ? `<button class="chip" data-f="reserved">Saved for someone · ${saved}</button>` : ``}
-      ${missing ? `<button class="chip" data-f="missing">Missing · ${missing}</button>` : ``}
-      ${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}
-    </div>
+    ${cats.length ? `<div class="chips scroll" id="filters">${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}</div>` : `<div id="filters"></div>`}
     <div id="results"></div>`;
   const q = $(`#q`);
   q.addEventListener(`input`, () => { findState.q = q.value; renderResults(); });
-  $(`#results`).addEventListener(`click`, (e) => { const b = e.target.closest(`[data-person]`); if (b) personSheet(b.dataset.person); });
+  $(`#results`).addEventListener(`click`, (e) => { const b = e.target.closest(`[data-person]`); if (b) { e.preventDefault(); personSheet(b.dataset.person); } });
   $(`#filters`).addEventListener(`click`, (e) => {
     const b = e.target.closest(`[data-f]`); if (!b) return;
     findState.filter = findState.filter === b.dataset.f ? `` : b.dataset.f;
@@ -812,33 +861,138 @@ function viewFind(view) {
 
 function renderResults() {
   const box = $(`#results`); if (!box) return;
-  const sig = [`lent`, `missing`, `reserved`].map((st) => repo.activeItems().some((i) => i.status === st)).join() + repo.categories().join();
+  const sig = repo.categories().join();
   if (box.dataset.sig && box.dataset.sig !== sig) { box.dataset.sig = ``; return viewFind($(`#view`)); } // chips changed
   box.dataset.sig = sig;
   $$(`#filters [data-f]`).forEach((b) => b.classList.toggle(`on`, b.dataset.f === findState.filter));
-  let list = repo.activeItems();
-  const f = findState.filter;
-  if (f === `lent` || f === `missing` || f === `reserved`) list = list.filter((i) => i.status === f);
-  else if (f.startsWith(`cat:`)) list = list.filter((i) => i.category === f.slice(4));
-  const q = findState.q.trim();
-  if (q) list = search(list, q, (id) => repo.pathText(id));
-  else list = [...list].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const all = repo.activeItems();
+  const f = findState.filter; const q = findState.q.trim();
 
-  if (!repo.activeItems().length) {
-    box.innerHTML = `<div class="empty">${icon(`box`, `big`)}<h3>Nothing here yet</h3><p>Add the first thing you always end up hunting for.</p><a class="btn primary" href="#/add">${icon(`plus`)} Add an item</a></div>`;
+  if (!all.length) {
+    const noPlaces = !repo.locations.some((l) => !l.deleted);
+    box.innerHTML = `<div class="empty">${icon(`box`, `big`)}<h3>Nothing here yet</h3>
+      ${noPlaces ? `<p>Start by telling Stash where you keep things. It takes 30 seconds.</p><a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a>`
+        : `<p>Add the first thing you always end up hunting for.</p><a class="btn primary" href="#/add">${icon(`plus`)} Add an item</a>`}</div>`;
     return;
   }
-  if (q && !list.length) {
-    box.innerHTML = `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Looks like you don’t have it logged. Maybe you don’t have one, or it hasn’t been added yet.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>`;
+
+  if (q || f) { // search / filter results
+    let list = all;
+    if ([`lent`, `missing`, `reserved`].includes(f)) list = list.filter((i) => i.status === f);
+    else if (f.startsWith(`cat:`)) list = list.filter((i) => i.category === f.slice(4));
+    list = q ? search(list, q, (id) => repo.pathText(id)) : [...list].sort((a, b) => a.name.localeCompare(b.name));
+    if (q && !list.length) {
+      box.innerHTML = `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Looks like you don’t have it logged. Maybe you don’t have one, or it hasn’t been added yet.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>`;
+      return;
+    }
+    box.innerHTML = `<div class="list-head"><div class="label-sm">${list.length} found</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div>
+      <div class="cards">${list.slice(0, 200).map((i) => itemCard(i)).join(``)}</div>`;
     return;
   }
-  const heading = q || f ? `${list.length} found` : `Recently updated`;
-  const field = f === `lent` ? `holding` : f === `reserved` ? `saved` : ``;
-  const holders = field ? repo.people().filter((p) => p[field].length) : [];
-  box.innerHTML = (holders.length ? `<div class="label-sm">${field === `holding` ? `Who has your things` : `Waiting to pick up`}</div>
-      <div class="people-strip">${holders.map((p) => `<button type="button" class="person-chip" data-person="${esc(p.key)}">
-        <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p[field].length}</b></button>`).join(``)}</div>` : ``)
-    + `<div class="list-head"><div class="label-sm">${esc(heading)}</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div><div class="cards">${list.slice(0, q || f ? 200 : 30).map(itemCard).join(``)}</div>`;
+
+  // ---- dashboard
+  const attention = all.map((i) => ({ i, r: attentionReason(i) })).filter((x) => x.r).sort((a, b) => a.r.rank - b.r.rank);
+  const out = repo.people().filter((p) => p.holding.length || p.saved.length);
+  const recent = [...all].sort((a, b) => String(b.addedAt).localeCompare(String(a.addedAt))).slice(0, 6);
+  const rooms = repo.locations.filter((l) => !l.deleted && l.parentId && !repo.locById(l.parentId)?.parentId) // second level: Garage, Kitchen…
+    .map((l) => ({ l, n: repo.itemsIn(l.id, true).length })).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 8);
+  box.innerHTML = `
+    ${attention.length ? `<section class="dash"><div class="label-sm">Needs attention</div>
+      <div class="cards">${attention.slice(0, 5).map(({ i, r }) => itemCard(i, { reason: r })).join(``)}</div>
+      ${attention.length > 5 ? `<a class="link small" href="#/out">See all ${attention.length}</a>` : ``}</section>` : ``}
+    ${out.length ? `<section class="dash"><div class="list-head"><div class="label-sm">Out now</div><a class="link small" href="#/out">See all</a></div>
+      <div class="people-strip">${out.map((p) => `<button type="button" class="person-chip" data-person="${esc(p.key)}">
+        <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p.holding.length + p.saved.length}</b></button>`).join(``)}</div></section>` : ``}
+    ${rooms.length ? `<section class="dash"><div class="label-sm">Browse</div>
+      <div class="chips">${rooms.map(({ l, n }) => `<a class="chip room-chip" href="#/place/${esc(l.id)}">${icon(KIND_ICON[l.kind] || `room`)}${esc(l.name)} <small>${n}</small></a>`).join(``)}</div></section>` : ``}
+    <section class="dash"><div class="list-head"><div class="label-sm">Recently added</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div>
+      <div class="cards">${recent.map((i) => itemCard(i)).join(``)}</div></section>`;
+}
+
+// ============================================================ First-run setup: places in 30 seconds
+const SETUP_TOP = [`Home`, `Storage unit`, `Office`, `Car`, `Cabin`];
+const SETUP_ROOMS = {
+  Home: [`Garage`, `Kitchen`, `Basement`, `Attic`, `Living room`, `Bedroom`, `Kids’ room`, `Office`, `Closet`, `Laundry`, `Bathroom`, `Shed`],
+  'Storage unit': [`Shelf 1`, `Shelf 2`, `Boxes`],
+  Office: [`Desk`, `Cabinet`, `Supply closet`],
+  Car: [`Trunk`, `Glovebox`],
+  Cabin: [`Kitchen`, `Bedroom`, `Shed`],
+};
+function viewSetup(view) {
+  const existingTop = repo.childrenOf(``);
+  const picked = new Map(); // top name -> Set(rooms)
+  if (!existingTop.length) picked.set(`Home`, new Set([`Garage`, `Kitchen`]));
+  else existingTop.forEach((l) => picked.set(l.name, new Set()));
+  const extraTop = existingTop.map((l) => l.name).filter((n) => !SETUP_TOP.includes(n));
+  const has = (top, room) => { const t = existingTop.find((l) => l.name.toLowerCase() === top.toLowerCase()); return Boolean(t && repo.childrenOf(t.id).some((c) => c.name.toLowerCase() === room.toLowerCase())); };
+  const draw = () => {
+    const tops = [...SETUP_TOP, ...extraTop, ...[...picked.keys()].filter((k) => !SETUP_TOP.includes(k) && !extraTop.includes(k))];
+    const n = [...picked.entries()].reduce((sum, [top, rooms]) => sum + (existingTop.some((l) => l.name === top) ? 0 : 1) + [...rooms].filter((r) => !has(top, r)).length, 0);
+    view.innerHTML = `<div class="setup">
+      <div class="form-head"><button type="button" class="back" data-a="cancel">${icon(`x`)} ${existingTop.length ? `Close` : `Skip for now`}</button></div>
+      <h1>Where do you keep things?</h1>
+      <p class="muted">Tap what applies. You can rename, move or add more any time.</p>
+      <div class="chips big">${tops.map((t) => `<button type="button" class="chip ${picked.has(t) ? `on` : ``}" data-top="${esc(t)}">${picked.has(t) ? icon(`check`) : ``}${esc(t)}</button>`).join(``)}
+        <button type="button" class="chip add" data-addtop>${icon(`plus`)} Other</button></div>
+      ${[...picked.keys()].map((top) => { const rooms = [...new Set([...(SETUP_ROOMS[top] || []), ...picked.get(top)])]; return `
+        <div class="label-sm">Inside ${esc(top)}</div>
+        <div class="chips">${rooms.map((r) => { const done = has(top, r); const on = done || picked.get(top).has(r); return `<button type="button" class="chip ${on ? `on` : ``}" data-top-of="${esc(top)}" data-room="${esc(r)}" ${done ? `disabled title="Already added"` : ``}>${on ? icon(`check`) : ``}${esc(r)}</button>`; }).join(``)}
+          <button type="button" class="chip add" data-addroom="${esc(top)}">${icon(`plus`)} Other</button></div>`; }).join(``)}
+      <div class="form-actions"><button type="button" class="btn primary big" data-a="create" ${n ? `` : `disabled`}>${n ? `Add ${n} place${n > 1 ? `s` : ``}` : `Pick at least one`}</button></div>
+    </div>`;
+  };
+  view.onclick = async (e) => {
+    const b = e.target.closest(`button`); if (!b) return;
+    if (b.dataset.a === `cancel`) return goBack(`#/places`);
+    if (b.dataset.top) { const t = b.dataset.top; if (picked.has(t)) { if (!existingTop.some((l) => l.name === t)) picked.delete(t); } else picked.set(t, new Set()); return draw(); }
+    if (b.dataset.room) { const set = picked.get(b.dataset.topOf); if (set.has(b.dataset.room)) set.delete(b.dataset.room); else set.add(b.dataset.room); return draw(); }
+    if (b.hasAttribute(`data-addtop`)) { const name = await promptSheet(`Another place`, { label: `Name`, placeholder: `e.g. Parents’ house, Boat`, okLabel: `Add` }); if (name) picked.set(name, new Set()); return draw(); }
+    if (b.dataset.addroom) { const name = await promptSheet(`Inside ${b.dataset.addroom}`, { label: `Name`, placeholder: `e.g. Pantry, Workbench`, okLabel: `Add` }); if (name) picked.get(b.dataset.addroom).add(name); return draw(); }
+    if (b.dataset.a === `create`) {
+      let made = 0; let firstRoom = null;
+      for (const [top, rooms] of picked) {
+        let t = existingTop.find((l) => l.name.toLowerCase() === top.toLowerCase());
+        if (!t) { t = repo.saveLocation({ name: top, parentId: ``, kind: `place` }); made++; }
+        for (const r of rooms) {
+          if (repo.childrenOf(t.id).some((c) => c.name.toLowerCase() === r.toLowerCase())) continue;
+          const room = repo.saveLocation({ name: r, parentId: t.id, kind: `room` }); made++; firstRoom ||= room;
+        }
+      }
+      if (firstRoom) rememberLoc(firstRoom.id);
+      toast(`Added ${made} place${made === 1 ? `` : `s`}. Now add something you always hunt for.`);
+      location.hash = `#/places`;
+    }
+  };
+  draw();
+}
+
+// ============================================================ Out (lent + reserved, by person)
+function viewOut(view) {
+  const people = repo.people();
+  const active = people.filter((p) => p.holding.length || p.saved.length);
+  const past = people.filter((p) => !p.holding.length && !p.saved.length);
+  const late = repo.activeItems().filter((i) => attentionReason(i)?.urgent);
+  const nOut = active.reduce((n, p) => n + p.holding.length + p.saved.length, 0);
+  const since = lentSinceMap();
+  view.innerHTML = `
+    <div class="out">
+      <h1>Out</h1>
+      <p class="muted">${nOut ? `${nOut} item${nOut > 1 ? `s` : ``} with ${active.length} ${active.length > 1 ? `people` : `person`}` : `Nothing is lent or reserved right now.`}</p>
+      ${late.length ? `<div class="label-sm">Overdue pick-ups</div><div class="cards">${late.map((i) => itemCard(i, { reason: attentionReason(i) })).join(``)}</div>` : ``}
+      ${active.length ? `<div class="label-sm">By person</div><div class="person-cards">${active.map((p) => {
+        const items = [...p.holding, ...p.saved];
+        const oldest = p.holding.map((i) => since.get(i.id)).filter(Boolean).sort()[0];
+        const lateN = p.saved.filter((i) => dueText(i.dueAt).late).length;
+        return `<button type="button" class="person-card" data-person="${esc(p.key)}">
+          <span class="avatar">${esc(initials(p.name))}</span>
+          <div class="pc-main"><b>${esc(p.name)}</b>
+            <small>${[p.holding.length ? `has ${p.holding.length}` : ``, p.saved.length ? `${p.saved.length} reserved` : ``].filter(Boolean).join(` · `)}${oldest ? ` · oldest ${dayText(daysBetween(oldest))}` : ``}${lateN ? ` · <em>${lateN} pick-up late</em>` : ``}</small>
+            <span class="pc-items">${items.slice(0, 4).map((i) => esc(i.name)).join(`, `)}${items.length > 4 ? ` +${items.length - 4}` : ``}</span></div>
+          ${icon(`chevron`)}</button>`; }).join(``)}</div>`
+        : `<div class="empty">${icon(`lend`, `big`)}<p>Use <b>Lend or reserve</b> on any item to keep track of who has it.</p></div>`}
+      ${past.length ? `<div class="label-sm">Lent before</div><div class="chips">${past.map((p) => `<button type="button" class="chip" data-person="${esc(p.key)}">${esc(p.name)}</button>`).join(``)}</div>` : ``}
+    </div>`;
+  view.onclick = (e) => { const b = e.target.closest(`[data-person]`); if (b) { e.preventDefault(); personSheet(b.dataset.person); } };
 }
 
 // ============================================================ Item detail
@@ -847,18 +1001,35 @@ function viewItem(view, r) {
   if (!item) { view.innerHTML = `<div class="empty"><h3>Item not found</h3><a class="btn ghost" href="#/">Back</a></div>`; return; }
   const personBtn = `<button type="button" class="person-link" data-person="${esc(Repo.personKey(item.lentTo))}">${esc(item.lentTo || `someone`)}</button>`;
   const due = dueText(item.dueAt);
-  const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)} Lent to ${personBtn}</div>`
-    : item.status === `reserved` ? `<div class="banner reserved${due.late ? ` late` : ``}">${icon(`clock`)}<div class="grow"><span>Saved for ${personBtn}</span>${due.text ? `<small>${esc(due.text)}</small>` : ``}</div>
+  const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)}<div class="grow"><span>Lent to ${personBtn}</span>${lentSinceText(item)}</div></div>`
+    : item.status === `reserved` ? `<div class="banner reserved${due.late ? ` late` : ``}">${icon(`clock`)}<div class="grow"><span>Reserved for ${personBtn}</span>${due.text ? `<small>${esc(due.text)}</small>` : ``}</div>
         <button type="button" class="btn text small" data-a="unsave">Cancel</button></div>`
     : item.status === `missing` ? `<div class="banner missing">${icon(`alert`)} Marked missing</div>` : ``;
   const tags = String(item.tags || ``).split(`,`).map((t) => t.trim()).filter(Boolean);
+  const hasPhoto = Boolean(repo.thumbs[item.id] || item.photoId);
+  // the two things people do most, front and centre
+  const second = item.status === `lent` ? `<button class="btn primary big" data-a="return">${icon(`ret`)} Got it back</button>`
+    : item.status === `reserved` ? `<button class="btn primary big" data-a="pickup">${icon(`check`)} Picked up</button>`
+    : item.status === `missing` ? `<button class="btn primary big" data-a="found">${icon(`check`)} Found it</button>`
+    : `<button class="btn ghost big" data-a="lend">${icon(`lend`)} Lend or reserve</button>`;
   view.innerHTML = `
     <div class="detail">
-      <a class="back" href="#/">${icon(`back`)} Find</a>
-      <div class="hero">${thumbHtml(item, `hero-img`)}</div>
+      <div class="detail-top">
+        <button type="button" class="back" data-a="back">${icon(`back`)} Back</button>
+        <div class="detail-tools">
+          <a class="icon-btn" href="#/edit/${esc(item.id)}" aria-label="Edit">${icon(`edit`)}</a>
+          <button type="button" class="icon-btn" data-a="menu" aria-label="More actions">${icon(`more`)}</button>
+        </div>
+      </div>
+      ${hasPhoto ? `<div class="hero zoomable">${thumbHtml(item, `hero-img`)}</div>`
+        : `<label class="add-photo"><input type="file" accept="image/*" capture="environment" hidden data-addphoto>${icon(`camera`)}<span>Add a photo</span></label>`}
       <h1>${esc(item.name)}${Number(item.qty) > 1 ? ` <span class="qty">×${esc(item.qty)}</span>` : ``}</h1>
       ${status}
       <div class="where"><div class="label-sm">Where</div><div class="crumbs">${crumbs(item.locationId)}</div></div>
+      <div class="main-actions">
+        <button class="btn ghost big" data-a="move">${icon(`move`)} Move</button>
+        ${second}
+      </div>
       ${item.purpose ? `<div class="block"><div class="label-sm">What it’s for</div><p>${esc(item.purpose)}</p></div>` : ``}
       <div class="facts">
         ${item.category ? `<div><span>Category</span><b>${esc(item.category)}</b></div>` : ``}
@@ -868,26 +1039,21 @@ function viewItem(view, r) {
       </div>
       ${tags.length ? `<div class="chips">${tags.map((t) => `<a class="chip" href="#/?q" data-tag="${esc(t)}">${esc(t)}</a>`).join(``)}</div>` : ``}
       ${item.notes ? `<div class="block"><div class="label-sm">Notes</div><p class="pre">${esc(item.notes)}</p></div>` : ``}
-      <div class="actions-grid">
-        <button class="act" data-a="move">${icon(`move`)}Move</button>
-        ${item.status === `lent` ? `<button class="act" data-a="return">${icon(`ret`)}Got it back</button>`
-          : item.status === `reserved` ? `<button class="act hi" data-a="pickup">${icon(`check`)}Picked up</button>`
-          : `<button class="act" data-a="lend">${icon(`lend`)}Lend / Save</button>`}
-        ${item.status === `missing` ? `<button class="act" data-a="found">${icon(`check`)}Found it</button>` : `<button class="act" data-a="missing">${icon(`alert`)}Can’t find</button>`}
-        <a class="act" href="#/edit/${esc(item.id)}">${icon(`edit`)}Edit</a>
-      </div>
       ${itemHistoryHtml(item)}
-      <button class="btn text danger full" data-a="delete">${icon(`trash`)} Remove from inventory</button>
     </div>`;
 
-  // Show the full-size photo when this device can read it (own photos / demo).
   // Full-size photo from the phone's cache or Drive; tap to view it full screen.
-  repo.photoObjectUrl(item).then((url) => {
+  if (hasPhoto) repo.photoObjectUrl(item).then((url) => {
     if (!url) return;
     const img = $(`.hero-img`, view);
     if (img?.tagName === `IMG`) img.src = url; else $(`.hero`, view).innerHTML = `<img class="hero-img" src="${url}" alt="">`;
   }).catch(() => { /* not signed in right now: thumbnail stays */ });
-  if (repo.thumbs[item.id] || item.photoId) $(`.hero`, view).classList.add(`zoomable`);
+
+  $(`[data-addphoto]`, view)?.addEventListener(`change`, async (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    try { const { photo, thumb } = await processPhoto(file); await repo.saveItem({ id: item.id }, { photo, thumb, logAction: `edited`, info: `New photo` }); toast(`Photo added`); }
+    catch { toast(`Couldn’t read that photo`); }
+  });
 
   view.onclick = async (e) => {
     const tag = e.target.closest(`[data-tag]`);
@@ -898,7 +1064,9 @@ function viewItem(view, r) {
     if (e.target.closest(`[data-hist-all]`)) { $(`.ih`, view).classList.add(`all`); e.target.closest(`[data-hist-all]`).remove(); return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
-    if (a === `move`) {
+    if (a === `back`) goBack(`#/`);
+    else if (a === `menu`) itemMenu(item);
+    else if (a === `move`) {
       const id = await pickLocation(item.locationId, `Move to…`);
       if (id) await moveWithUndo([item], id);
     } else if (a === `lend`) {
@@ -908,16 +1076,36 @@ function viewItem(view, r) {
     } else if (a === `unsave`) {
       const who = item.lentTo; const was = item.dueAt;
       await repo.cancelReservation(item);
-      toast(`No longer saved for ${who}`, { action: `Undo`, ms: 6000, onAction: () => repo.reserveItem(item, who, was) });
+      toast(`No longer reserved for ${who}`, { action: `Undo`, ms: 6000, onAction: () => repo.reserveItem(item, who, was) });
     } else if (a === `return`) { await repo.returnItem(item); toast(`Back home`); }
-    else if (a === `missing`) { await repo.markMissing(item); toast(`Marked missing`); }
     else if (a === `found`) { await repo.markFound(item); toast(`Found`); }
-    else if (a === `delete`) {
-      if (await confirmSheet(`Remove “${item.name}”?`, `It will be hidden from the app. The row stays in your sheet, marked as removed.`, `Remove`, true)) {
-        await repo.deleteItem(item); toast(`Removed`); location.hash = `#/`;
-      }
-    }
   };
+}
+
+function lentSinceText(item) {
+  const since = repo.lendPeriods().filter((p) => p.itemId === item.id && p.lentAt && !p.returnedAt).pop()?.lentAt;
+  return since ? `<small>since ${esc(fmtDate(since))} · ${dayText(daysBetween(since))}</small>` : ``;
+}
+
+/** Less frequent item actions. */
+function itemMenu(item) {
+  sheet(item.name, (el, close) => {
+    el.innerHTML = `<div class="menu">
+      <a href="#/edit/${esc(item.id)}" data-m="edit">${icon(`edit`)} Edit details</a>
+      ${item.status === `lent` || item.status === `reserved` ? `` : `<button data-m="lend">${icon(`lend`)} Lend or reserve</button>`}
+      ${item.status === `missing` ? `<button data-m="found">${icon(`check`)} Found it</button>` : `<button data-m="missing">${icon(`alert`)} I can’t find it</button>`}
+      <button data-m="delete" class="danger">${icon(`trash`)} Remove from inventory</button></div>`;
+    el.onclick = async (e) => {
+      const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
+      close();
+      if (m === `lend`) await lendOrSave(item);
+      if (m === `missing`) { await repo.markMissing(item); toast(`Marked missing`); }
+      if (m === `found`) { await repo.markFound(item); toast(`Found`); }
+      if (m === `delete` && await confirmSheet(`Remove “${item.name}”?`, `It will be hidden from the app. The row stays in your sheet, marked as removed.`, `Remove`, true)) {
+        await repo.deleteItem(item); toast(`Removed`); goBack(`#/`);
+      }
+    };
+  });
 }
 
 // ============================================================ Add / Edit
@@ -933,6 +1121,7 @@ function viewEdit(view, r) {
 
   view.innerHTML = `
     <form class="form" id="f" autocomplete="off">
+      <div class="form-head"><button type="button" class="back" data-cancel>${icon(`x`)} Cancel</button></div>
       <h1>${editing ? `Edit item` : `Add an item`}</h1>
       <label class="photo-pick" id="pp">
         <input type="file" accept="image/*" capture="environment" id="photo" hidden>
@@ -944,14 +1133,14 @@ function viewEdit(view, r) {
       <label class="field"><span>What’s it for?</span><textarea name="purpose" rows="2" placeholder="e.g. Finding studs before hanging shelves or a TV">${esc(item.purpose)}</textarea></label>
       <div class="field"><span>Where is it?</span>
         <button type="button" class="loc-btn" id="loc">${icon(`place`)}<span id="locText"></span>${icon(`chevron`)}</button></div>
-      <div class="two">
-        <label class="field"><span>Category</span><input name="category" list="cats" value="${esc(item.category)}" placeholder="Tools"></label>
-        <label class="field"><span>How many</span><input name="qty" type="number" min="0" inputmode="numeric" value="${esc(item.qty || 1)}"></label>
-      </div>
-      <datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join(``)}</datalist>
-      <label class="field"><span>Tags <small>(comma separated, helps search)</small></span><input name="tags" value="${esc(item.tags)}" placeholder="plumbing, leak"></label>
-      <details ${item.warranty || item.expiry || item.notes ? `open` : ``}>
-        <summary>More details</summary>
+      <details ${editing && (item.category || item.tags || Number(item.qty) > 1 || item.warranty || item.expiry || item.notes) ? `open` : ``}>
+        <summary>More details <small>category, qty, notes</small></summary>
+        <div class="two">
+          <label class="field"><span>Category</span><input name="category" list="cats" value="${esc(item.category)}" placeholder="Tools"></label>
+          <label class="field"><span>How many</span><input name="qty" type="number" min="0" inputmode="numeric" value="${esc(item.qty || 1)}"></label>
+        </div>
+        <datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join(``)}</datalist>
+        <label class="field"><span>Other search words <small>(optional)</small></span><input name="tags" value="${esc(item.tags)}" placeholder="e.g. plumbing, teflon"></label>
         <div class="two">
           <label class="field"><span>Warranty until</span><input name="warranty" type="date" value="${esc(item.warranty)}"></label>
           <label class="field"><span>Expires</span><input name="expiry" type="date" value="${esc(item.expiry)}"></label>
@@ -964,6 +1153,7 @@ function viewEdit(view, r) {
       </div>
     </form>`;
 
+  $(`[data-cancel]`, view).onclick = () => goBack(editing ? `#/item/${editing.id}` : `#/`);
   const setLocText = () => { $(`#locText`).innerHTML = locationId ? crumbs(locationId, { link: false }) : `<span class="muted">Choose a place</span>`; };
   setLocText();
   $(`#loc`).onclick = async () => { const id = await pickLocation(locationId); if (id) { locationId = id; setLocText(); } };
@@ -972,7 +1162,11 @@ function viewEdit(view, r) {
   const drawAiRow = () => {
     const row = $(`#aiRow`); if (!row) return;
     if (!aiReady()) {
-      row.innerHTML = editing ? `` : `<a class="ai-setup" href="#/more?ai=1">${icon(`spark`)}<span>Let AI fill in the details from your photo</span><b>Set up</b></a>`;
+      let hidden = false; try { hidden = localStorage.getItem(`stash.aiPromoHidden`) === `1`; } catch { /* ignore */ }
+      row.innerHTML = editing || hidden ? `` : `<div class="ai-setup"><a href="#/more?ai=1">${icon(`spark`)}<span>Let AI fill in the details from your photo</span><b>Set up</b></a>
+        <button type="button" class="icon-btn" data-hidepromo aria-label="Don’t show again">${icon(`x`)}</button></div>`;
+      const x = row.querySelector(`[data-hidepromo]`);
+      if (x) x.onclick = () => { try { localStorage.setItem(`stash.aiPromoHidden`, `1`); } catch { /* ignore */ } row.innerHTML = ``; toast(`You can turn AI on any time in More`); };
       return;
     }
     const s = aiSettings();
@@ -1018,7 +1212,8 @@ function viewEdit(view, r) {
     };
     set(`name`, sug.name); set(`purpose`, sug.purpose); set(`category`, sug.category);
     set(`tags`, sug.tags); if (sug.qty > 1) set(`qty`, sug.qty);
-    if (sug.notes) { set(`notes`, sug.notes); f.querySelector(`details`).open = true; }
+    if (sug.notes) set(`notes`, sug.notes);
+    if (f.querySelector(`details .suggested`)) f.querySelector(`details`).open = true; // never hide what AI filled
     if (n) toast(`AI filled ${n} field${n > 1 ? `s` : ``}. Check them before saving.`);
     else toast(`AI had nothing to add to what you typed.`);
   }
@@ -1043,8 +1238,10 @@ function viewEdit(view, r) {
   let saving = false;
   const lock = (on) => { saving = on; $$(`button[type=submit]`, view).forEach((b) => { b.disabled = on; }); };
   const next = (id) => {
-    if (again) location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`;
-    else location.hash = id ? `#/item/${id}` : `#/`;
+    if (again) { navStack.pop(); location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`; return; } // replace this form
+    if (editing) return goBack(`#/item/${editing.id}`);
+    if (id) { navStack.pop(); location.hash = `#/item/${id}`; return; }
+    goBack(`#/`); // back to where Add was started (a place, Find…)
   };
 
   $(`#f`).addEventListener(`submit`, async (e) => {
@@ -1205,54 +1402,65 @@ function viewPlace(view, r) {
   const loc = r.id ? repo.locById(r.id) : null;
   if (r.id && !loc) { view.innerHTML = `<div class="empty"><h3>Place not found</h3><a class="btn ghost" href="#/places">All places</a></div>`; return; }
   const kids = repo.childrenOf(loc?.id || ``);
-  const items = loc ? repo.itemsIn(loc.id) : [];
   const count = (id) => repo.itemsIn(id, true).length;
+  const total = loc ? count(loc.id) : 0;
+  const direct = loc ? repo.itemsIn(loc.id) : [];
+  // everything inside, grouped by the place directly below this one
+  const groups = loc ? kids.map((k) => ({ k, items: repo.itemsIn(k.id, true) })).filter((g) => g.items.length) : [];
+  const sortByName = (list) => [...list].sort((a, b) => a.name.localeCompare(b.name));
+  const addInsideRow = `<button type="button" class="list-row link-row add-row" data-a="new">${icon(`plus`)}<span>${loc ? `Add a place inside ${esc(loc.name)}` : `Add a place`}</span></button>`;
+
   view.innerHTML = `
     <div class="place">
       ${loc ? `<div class="crumbs top"><a href="#/places">All places</a><span class="sep">›</span>${crumbs(loc.id)}</div>` : ``}
       <div class="place-head">
         <h1>${loc ? `${icon(KIND_ICON[loc.kind] || `box`)} ${esc(loc.name)}` : `Places`}</h1>
-        ${loc ? `<button class="icon-btn" data-a="menu" aria-label="Place options">${icon(`more`)}</button>` : ``}
+        ${loc ? `<div class="detail-tools">
+            ${loc.kind === `container` ? `<button class="btn ghost small" data-a="qr">${icon(`qr`)} Label</button>` : ``}
+            <button class="icon-btn" data-a="menu" aria-label="Place options">${icon(`more`)}</button></div>` : ``}
       </div>
-      ${kids.length ? `<div class="label-sm">${loc ? `Inside` : `Your places`}</div>
-        <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id)}</small>${icon(`chevron`)}</a>`).join(``)}</div>`
-        : loc ? `` : `<div class="empty"><h3>No places yet</h3><p>Start with a place like Home or Storage unit, then add rooms and containers inside it.</p></div>`}
-      <div class="row-actions left">
-        <button class="btn ghost" data-a="new">${icon(`plus`)} ${loc ? `Add spot inside` : `Add a place`}</button>
-        ${loc ? `<a class="btn primary" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>` : ``}
-      </div>
-      ${loc ? `<div class="row-actions left move-actions">
-          <button class="btn ghost small" data-a="bring">${icon(`ret`)} Bring items here</button>
-          <button class="btn ghost small" data-a="movespot">${icon(`move`)} Move this ${esc(loc.kind === `place` ? `place` : `spot`)}</button>
-        </div>` : ``}
-      ${loc ? `<div class="list-head"><div class="label-sm">Items here ${items.length ? `· ${items.length}` : ``}</div>${items.length ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
-        ${items.length ? `<div class="cards">${items.map(itemCard).join(``)}</div>` : `<p class="muted">Nothing logged directly in ${esc(loc.name)}.</p>`}` : ``}
+      ${loc ? `<a class="btn primary full" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>` : ``}
+      ${kids.length || loc ? `<div class="label-sm">${loc ? `Places inside` : `Your places`}</div>
+        <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>`
+        : `<div class="empty"><h3>No places yet</h3><p>Tell Stash where you keep things: your home and its rooms, a storage unit, the car…</p>
+            <a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a></div>`}
+      ${!loc && kids.length ? `<a class="link small setup-link" href="#/setup">${icon(`plus`)} Quick-add rooms and places</a>` : ``}
+      ${loc ? `<div class="list-head"><div class="label-sm">Everything in ${esc(loc.name)}${total ? ` · ${total}` : ``}</div>${total ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
+        ${!total ? `<p class="muted">Nothing here yet.</p>` : ``}
+        ${direct.length ? `${groups.length ? `<div class="group-head">Directly in ${esc(loc.name)}</div>` : ``}<div class="cards">${sortByName(direct).map((i) => itemCard(i)).join(``)}</div>` : ``}
+        ${groups.map((g) => `<a class="group-head link" href="#/place/${esc(g.k.id)}">${icon(KIND_ICON[g.k.kind] || `box`)} ${esc(g.k.name)} <small>${g.items.length}</small></a>
+          <div class="cards">${sortByName(g.items).map((i) => itemCard(i)).join(``)}</div>`).join(``)}` : ``}
     </div>`;
 
   view.onclick = async (e) => {
     const b = e.target.closest(`[data-a]`); if (!b) return;
     if (b.dataset.a === `new`) {
-      const name = await promptSheet(loc ? `New spot in ${loc.name}` : `New place`, {
+      const name = await promptSheet(loc ? `New place in ${loc.name}` : `New place`, {
         label: `Name`, placeholder: loc ? `e.g. Top shelf, Blue bin, Drawer 2` : `e.g. Home, Storage unit, Office`, okLabel: `Add` });
       if (name) { repo.saveLocation({ name, parentId: loc?.id || ``, kind: kindFor(loc?.id || ``) }); toast(`Added ${name}`); }
     }
     if (b.dataset.a === `menu`) placeMenu(loc);
-    if (b.dataset.a === `bring`) bringItemsSheet(loc);
-    if (b.dataset.a === `movespot`) moveSpot(loc);
+    if (b.dataset.a === `qr`) printLabel(loc);
   };
 }
 
 function placeMenu(loc) {
   sheet(loc.name, (el, close) => {
     el.innerHTML = `<div class="menu">
+      <button data-m="bring">${icon(`ret`)} Bring items here</button>
+      <button data-m="new">${icon(`plus`)} Add a place inside</button>
+      <button data-m="move">${icon(`move`)} Move ${esc(loc.name)} to another place</button>
       <button data-m="rename">${icon(`edit`)} Rename</button>
-      <button data-m="move">${icon(`move`)} Move inside another place</button>
       <button data-m="qr">${icon(`qr`)} Print QR label</button>
       <button data-m="delete" class="danger">${icon(`trash`)} Delete place</button></div>`;
     el.onclick = async (e) => {
       const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
       close();
-      if (m === `rename`) {
+      if (m === `bring`) bringItemsSheet(loc);
+      else if (m === `new`) {
+        const name = await promptSheet(`New place in ${loc.name}`, { label: `Name`, placeholder: `e.g. Top shelf, Blue bin, Drawer 2`, okLabel: `Add` });
+        if (name) { repo.saveLocation({ name, parentId: loc.id, kind: kindFor(loc.id) }); toast(`Added ${name}`); }
+      } else if (m === `rename`) {
         const name = await promptSheet(`Rename`, { label: `Name`, value: loc.name });
         if (name) repo.saveLocation({ id: loc.id, name });
       } else if (m === `move`) {
@@ -1356,10 +1564,6 @@ function viewMore(view, r) {
       </div>
       ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Family member’s Google email" required><button class="btn primary">Invite</button></form>
         <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, and choose “Join a shared inventory”.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
-
-      ${(() => { const ppl = repo.people(); return ppl.length ? `<div class="label-sm">People you lend to</div>
-        <div class="menu">${ppl.slice(0, 30).map((p) => `<button data-person="${esc(p.key)}"><span class="avatar sm">${esc(initials(p.name))}</span>
-          <span class="grow">${esc(p.name)}</span><small class="${p.holding.length + p.saved.length ? `warn` : ``}">${[p.holding.length ? `has ${p.holding.length}` : ``, p.saved.length ? `${p.saved.length} saved` : ``].filter(Boolean).join(` · `) || `all returned`}</small></button>`).join(``)}</div>` : ``; })()}
 
       <div class="label-sm" id="ai">AI suggestions</div>
       ${aiReady() ? `<div class="menu">
