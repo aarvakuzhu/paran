@@ -136,9 +136,11 @@ class GoogleBackend {
       `Items!A1:${colLetter(ITEM_COLS.length - 2)}`, // everything except the thumb column
       `Locations!A1:${lastCol(LOC_COLS)}`,
       `Members!A1:${lastCol(MEMBER_COLS)}`,
+      `Log!A1:${lastCol(LOG_COLS)}`,
     ]);
-    const [items, locs, members] = r.valueRanges.map((v) => v.values);
+    const [items, locs, members, log] = r.valueRanges.map((v) => v.values);
     return {
+      log: rowsToObjects(log, LOG_COLS).slice(-5000),
       items: rowsToObjects(items, ITEM_COLS.filter((c) => c !== `thumb`)),
       locations: rowsToObjects(locs, LOC_COLS),
       members: rowsToObjects(members, MEMBER_COLS),
@@ -204,7 +206,7 @@ class GoogleBackend {
 
 // ------------------------------------------------------------------ repository
 export class Repo extends EventTarget {
-  items = []; locations = []; members = []; thumbs = {};
+  items = []; locations = []; members = []; log = []; thumbs = {};
   outbox = []; syncing = false; status = `idle`; lastError = null;
 
   constructor(kind) {
@@ -230,7 +232,7 @@ export class Repo extends EventTarget {
   loadCache() {
     try {
       const c = JSON.parse(localStorage.getItem(this.key) || `null`);
-      if (c) Object.assign(this, { items: c.items || [], locations: c.locations || [], members: c.members || [], outbox: c.outbox || [] });
+      if (c) Object.assign(this, { items: c.items || [], locations: c.locations || [], members: c.members || [], log: c.log || [], outbox: c.outbox || [] });
     } catch { /* ignore */ }
     blobs.get(`thumbs:${this.backend.cacheKey}`).then((t) => { if (t) { this.thumbs = { ...t, ...this.thumbs }; this.emit(); } });
   }
@@ -238,7 +240,7 @@ export class Repo extends EventTarget {
   saveCache() {
     const strip = this.items.map(({ thumb, ...rest }) => rest);
     try {
-      localStorage.setItem(this.key, JSON.stringify({ items: strip, locations: this.locations, members: this.members, outbox: this.outbox }));
+      localStorage.setItem(this.key, JSON.stringify({ items: strip, locations: this.locations, members: this.members, log: this.log.slice(-3000), outbox: this.outbox }));
     } catch (e) { console.warn(`cache save failed`, e); }
     blobs.put(`thumbs:${this.backend.cacheKey}`, this.thumbs).catch(() => {});
   }
@@ -256,6 +258,8 @@ export class Repo extends EventTarget {
         this.locations = data.locations.map((l) => pending.get(l.id) || l);
         for (const [id, d] of pending) if (!this.locations.find((l) => l.id === id) && `kind` in d) this.locations.push(d);
         this.members = data.members;
+        const pendingLog = this.outbox.filter((o) => o.kind === `log`).map((o) => o.data);
+        this.log = [...(data.log || []), ...pendingLog];
         this.saveCache(); this.emit();
         const t = await this.backend.fetchThumbs();
         if (t) { this.thumbs = { ...this.thumbs, ...t }; this.saveCache(); this.emit(); }
@@ -332,7 +336,7 @@ export class Repo extends EventTarget {
   categories() { return [...new Set(this.activeItems().map((i) => i.category).filter(Boolean))].sort(); }
 
   // ---------------- mutations
-  async saveItem(fields, { photo, thumb, logAction } = {}) {
+  async saveItem(fields, { photo, thumb, logAction, detail } = {}) {
     const existing = fields.id && this.items.find((i) => i.id === fields.id);
     const item = existing ? { ...existing, ...fields } : {
       id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``,
@@ -346,7 +350,9 @@ export class Repo extends EventTarget {
     this.outbox.push({ kind: `item`, data: { ...item } });
     if (photo) this.outbox.push({ kind: `photo`, itemId: item.id });
     const action = logAction || (existing ? `edited` : `added`);
-    this.outbox.push({ kind: `log`, data: { ts: now(), itemId: item.id, action, detail: this.logDetail(action, item), by: this.user.email } });
+    const entry = { ts: now(), itemId: item.id, action, detail: detail ?? this.logDetail(action, item), by: this.user.email };
+    this.log.push(entry);
+    this.outbox.push({ kind: `log`, data: entry });
     this.saveCache(); this.emit(); this.flush();
     return item;
   }
@@ -358,8 +364,8 @@ export class Repo extends EventTarget {
   }
 
   moveItem(item, locationId) { return this.saveItem({ id: item.id, locationId, status: `home`, lentTo: `` }, { logAction: `moved` }); }
-  lendItem(item, to) { return this.saveItem({ id: item.id, status: `lent`, lentTo: to }, { logAction: `lent` }); }
-  returnItem(item) { return this.saveItem({ id: item.id, status: `home`, lentTo: `` }, { logAction: `returned` }); }
+  lendItem(item, to) { return this.saveItem({ id: item.id, status: `lent`, lentTo: to.trim() }, { logAction: `lent`, detail: to.trim() }); }
+  returnItem(item) { return this.saveItem({ id: item.id, status: `home`, lentTo: `` }, { logAction: `returned`, detail: item.lentTo || `` }); }
   markMissing(item) { return this.saveItem({ id: item.id, status: `missing` }, { logAction: `missing` }); }
   markFound(item) { return this.saveItem({ id: item.id, status: `home` }, { logAction: `found` }); }
   deleteItem(item) { return this.saveItem({ id: item.id, deleted: now() }, { logAction: `removed` }); }
@@ -395,6 +401,54 @@ export class Repo extends EventTarget {
     return new Blob([lines.join(`\n`)], { type: `text/csv` });
   }
 
+  // ---------------- people you lend to (derived from lends; no separate list to maintain)
+  static personKey(name) { return String(name || ``).trim().toLowerCase().replace(/\s+/g, ` `); }
+
+  /** Lend periods: [{ itemId, name, key, lentAt, returnedAt|null }], oldest first. */
+  lendPeriods() {
+    const open = new Map(); const out = [];
+    const sorted = [...this.log].filter((e) => e.ts && e.itemId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    for (const e of sorted) {
+      const cur = open.get(e.itemId);
+      if (e.action === `lent` && e.detail) {
+        if (cur) { cur.returnedAt = e.ts; } // lent again without a return: close the previous one
+        const p = { itemId: e.itemId, name: String(e.detail), key: Repo.personKey(e.detail), lentAt: e.ts, returnedAt: null };
+        out.push(p); open.set(e.itemId, p);
+      } else if (cur && [`returned`, `moved`, `found`, `removed`].includes(e.action)) {
+        cur.returnedAt = e.ts; cur.how = e.action; open.delete(e.itemId);
+      }
+    }
+    // items marked lent without a matching log entry (e.g. older data): treat as open since unknown
+    for (const it of this.activeItems()) {
+      if (it.status === `lent` && it.lentTo && !out.some((p) => p.itemId === it.id && !p.returnedAt)) {
+        out.push({ itemId: it.id, name: it.lentTo, key: Repo.personKey(it.lentTo), lentAt: it.updatedAt || ``, returnedAt: null });
+      }
+    }
+    return out;
+  }
+
+  /** Everyone you've lent to: [{ key, name, holding: [items], lastAt, total }], most recent first. */
+  people() {
+    const map = new Map();
+    for (const p of this.lendPeriods()) {
+      const e = map.get(p.key) || { key: p.key, name: p.name, holding: [], lastAt: ``, total: 0 };
+      e.total++;
+      if (String(p.lentAt) >= String(e.lastAt)) { e.lastAt = p.lentAt; e.name = p.name; } // latest spelling wins
+      map.set(p.key, e);
+    }
+    for (const it of this.activeItems()) {
+      if (it.status === `lent` && it.lentTo) map.get(Repo.personKey(it.lentTo))?.holding.push(it);
+    }
+    return [...map.values()].sort((a, b) => (b.holding.length > 0) - (a.holding.length > 0) || String(b.lastAt).localeCompare(String(a.lastAt)));
+  }
+
+  personHistory(key) {
+    const name = (id) => this.items.find((i) => i.id === id)?.name || `Removed item`;
+    return this.lendPeriods().filter((p) => p.key === key)
+      .map((p) => ({ ...p, itemName: name(p.itemId), item: this.items.find((i) => i.id === p.itemId && !i.deleted) }))
+      .sort((a, b) => String(b.lentAt).localeCompare(String(a.lentAt)));
+  }
+
   // ---------------- demo seed
   seedDemo() {
     const L = (name, parentId, kind) => this.saveLocation({ name, parentId, kind });
@@ -413,7 +467,7 @@ export class Repo extends EventTarget {
     S(`Car jump starter`, `Dead car battery`, `Car`, `battery, emergency`, shelf.id, { warranty: `2027-05-01` });
     S(`Spare house keys`, `Lockout backup, give to house sitter`, `Keys`, `keys, backup`, drawer.id);
     S(`Christmas lights (warm white)`, `Front porch and tree`, `Holiday`, `christmas, decor, lights`, bigBox.id, { qty: 4 });
-    S(`Pressure washer`, `Driveway and deck cleaning`, `Outdoor`, `cleaning, deck`, garage.id, { status: `lent`, lentTo: `Neighbor – Ravi` });
+    S(`Pressure washer`, `Driveway and deck cleaning`, `Outdoor`, `cleaning, deck`, garage.id).then((pw) => this.lendItem(pw, `Ravi`));
     this.setStatus(`synced`);
   }
 }

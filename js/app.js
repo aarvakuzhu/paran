@@ -278,6 +278,106 @@ function inlineName(container, placeholder) {
   });
 }
 
+// ============================================================ People you lend to
+const fmtDate = (iso) => {
+  if (!iso) return ``;
+  const d = new Date(iso); if (isNaN(d)) return ``;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, { month: `short`, day: `numeric`, ...(sameYear ? {} : { year: `numeric` }) });
+};
+const daysBetween = (a, b = new Date().toISOString()) => {
+  if (!a) return null;
+  return Math.max(0, Math.round((new Date(b) - new Date(a)) / 86400000));
+};
+const dayText = (n) => (n === null ? `` : n === 0 ? `today` : n === 1 ? `1 day` : `${n} days`);
+const initials = (name) => String(name || `?`).trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join(``).toUpperCase();
+
+/** Free-text "who has it?" with a dropdown of people you've lent to before. Resolves the name or null. */
+function lendSheet(item) {
+  return new Promise((resolve) => {
+    let done = false;
+    const people = repo.people();
+    sheet(`Lend ${item.name}`, (el, close) => {
+      const finish = (v) => { done = true; resolve(v); close(); };
+      el.innerHTML = `<form class="stack lend-form" autocomplete="off">
+          <label class="field"><span>Who has it?</span>
+            <input name="who" placeholder="Type a name" required autocomplete="off" autocapitalize="words" enterkeyhint="done"></label>
+          <div class="suggest" role="listbox"></div>
+          <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">Lend</button></div>
+        </form>`;
+      const input = $(`input`, el); const box = $(`.suggest`, el);
+      const draw = () => {
+        const q = Repo.personKey(input.value);
+        const list = q
+          ? people.filter((p) => p.key.includes(q)).sort((a, b) => (b.key.startsWith(q) - a.key.startsWith(q)))
+          : people;
+        box.innerHTML = list.slice(0, 6).map((p) => `<button type="button" class="suggest-row" data-name="${esc(p.name)}" role="option">
+            <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span>
+            <small>${p.holding.length ? `has ${p.holding.length} now` : `lent ${p.total}×`}</small></button>`).join(``);
+        box.hidden = !list.length;
+        if (!q && list.length) box.insertAdjacentHTML(`afterbegin`, `<div class="label-sm">People you’ve lent to</div>`);
+      };
+      input.addEventListener(`input`, draw);
+      box.onclick = (e) => { const b = e.target.closest(`[data-name]`); if (b) finish(b.dataset.name); };
+      $(`[data-no]`, el).onclick = () => finish(null);
+      $(`form`, el).onsubmit = (e) => {
+        e.preventDefault();
+        const typed = input.value.trim(); if (!typed) return;
+        const same = people.find((p) => p.key === Repo.personKey(typed));
+        finish(same ? same.name : typed); // reuse the existing spelling so one person stays one person
+      };
+      draw();
+      setTimeout(() => input.focus(), 250);
+    }, { onClose: () => { if (!done) resolve(null); } });
+  });
+}
+
+/** Person card: what they have now + lend/return history. */
+function personSheet(key) {
+  const person = repo.people().find((p) => p.key === key);
+  if (!person) return toast(`No lending history for that name yet`);
+  sheet(`Borrower`, (el, close) => {
+    const draw = () => {
+      const p = repo.people().find((x) => x.key === key) || { ...person, holding: [] };
+      const hist = repo.personHistory(key);
+      const sinceOf = (id) => hist.find((h) => h.itemId === id && !h.returnedAt)?.lentAt;
+      el.innerHTML = `
+        <div class="person-head"><span class="avatar">${esc(initials(p.name))}</span>
+          <div><b>${esc(p.name)}</b><small>${p.holding.length ? `Has ${p.holding.length} item${p.holding.length > 1 ? `s` : ``} now` : `Has nothing of yours now`} · borrowed ${hist.length} time${hist.length === 1 ? `` : `s`}</small></div></div>
+        ${p.holding.length ? `<div class="label-sm">Has now</div>
+          <div class="list">${p.holding.map((it) => `<div class="list-row hold-row">
+              ${thumbHtml(it, `thumb sm`)}
+              <button type="button" class="hold-main" data-open="${esc(it.id)}"><b>${esc(it.name)}</b><small>since ${esc(fmtDate(sinceOf(it.id)) || `unknown`)}${sinceOf(it.id) ? ` · ${dayText(daysBetween(sinceOf(it.id)))}` : ``}</small></button>
+              <button type="button" class="btn ghost small" data-back="${esc(it.id)}">Got it back</button>
+            </div>`).join(``)}</div>
+          ${p.holding.length > 1 ? `<div class="row-actions"><button type="button" class="btn primary" data-all>Got everything back</button></div>` : ``}` : ``}
+        <div class="label-sm">History</div>
+        ${hist.length ? `<div class="timeline">${hist.map((h) => `<div class="tl-row ${h.returnedAt ? `` : `open`}">
+            <i></i>
+            <div><button type="button" class="link-plain" ${h.item ? `data-open="${esc(h.itemId)}"` : `disabled`}>${esc(h.itemName)}</button>
+              <small>Lent ${esc(fmtDate(h.lentAt))}${h.returnedAt
+                ? ` · ${h.how && h.how !== `returned` ? `closed` : `returned`} ${esc(fmtDate(h.returnedAt))} (${daysBetween(h.lentAt, h.returnedAt) === 0 ? `same day` : dayText(daysBetween(h.lentAt, h.returnedAt))})`
+                : ` · still out${h.lentAt ? `, ${dayText(daysBetween(h.lentAt))}` : ``}`}</small></div>
+          </div>`).join(``)}</div>` : `<p class="muted">No history yet.</p>`}`;
+    };
+    el.onclick = async (e) => {
+      const b = e.target.closest(`button`); if (!b) return;
+      if (b.dataset.open) { close(); location.hash = `#/item/${b.dataset.open}`; return; }
+      if (b.dataset.back) {
+        const it = repo.items.find((i) => i.id === b.dataset.back);
+        if (it) { await repo.returnItem(it); toast(`${it.name} is back`); draw(); }
+        return;
+      }
+      if (b.hasAttribute(`data-all`)) {
+        const p = repo.people().find((x) => x.key === key);
+        for (const it of p?.holding || []) await repo.returnItem(it);
+        toast(`Everything is back from ${person.name}`); draw();
+      }
+    };
+    draw();
+  }, { onClose: () => render() });
+}
+
 // ============================================================ Find
 function viewFind(view) {
   const cats = repo.categories();
@@ -295,6 +395,7 @@ function viewFind(view) {
     <div id="results"></div>`;
   const q = $(`#q`);
   q.addEventListener(`input`, () => { findState.q = q.value; renderResults(); });
+  $(`#results`).addEventListener(`click`, (e) => { const b = e.target.closest(`[data-person]`); if (b) personSheet(b.dataset.person); });
   $(`#filters`).addEventListener(`click`, (e) => {
     const b = e.target.closest(`[data-f]`); if (!b) return;
     findState.filter = findState.filter === b.dataset.f ? `` : b.dataset.f;
@@ -323,14 +424,18 @@ function renderResults() {
     return;
   }
   const heading = q || f ? `${list.length} found` : `Recently updated`;
-  box.innerHTML = `<div class="label-sm">${esc(heading)}</div><div class="cards">${list.slice(0, q || f ? 200 : 30).map(itemCard).join(``)}</div>`;
+  const holders = f === `lent` ? repo.people().filter((p) => p.holding.length) : [];
+  box.innerHTML = (holders.length ? `<div class="label-sm">Who has your things</div>
+      <div class="people-strip">${holders.map((p) => `<button type="button" class="person-chip" data-person="${esc(p.key)}">
+        <span class="avatar sm">${esc(initials(p.name))}</span><span>${esc(p.name)}</span><b>${p.holding.length}</b></button>`).join(``)}</div>` : ``)
+    + `<div class="label-sm">${esc(heading)}</div><div class="cards">${list.slice(0, q || f ? 200 : 30).map(itemCard).join(``)}</div>`;
 }
 
 // ============================================================ Item detail
 function viewItem(view, r) {
   const item = repo.items.find((i) => i.id === r.id && !i.deleted);
   if (!item) { view.innerHTML = `<div class="empty"><h3>Item not found</h3><a class="btn ghost" href="#/">Back</a></div>`; return; }
-  const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)} Lent to <b>${esc(item.lentTo || `someone`)}</b></div>`
+  const status = item.status === `lent` ? `<div class="banner lent">${icon(`lend`)} Lent to <button type="button" class="person-link" data-person="${esc(Repo.personKey(item.lentTo))}">${esc(item.lentTo || `someone`)}</button></div>`
     : item.status === `missing` ? `<div class="banner missing">${icon(`alert`)} Marked missing</div>` : ``;
   const tags = String(item.tags || ``).split(`,`).map((t) => t.trim()).filter(Boolean);
   view.innerHTML = `
@@ -365,13 +470,15 @@ function viewItem(view, r) {
   view.onclick = async (e) => {
     const tag = e.target.closest(`[data-tag]`);
     if (tag) { e.preventDefault(); findState = { q: tag.dataset.tag, filter: `` }; location.hash = `#/`; return; }
+    const who = e.target.closest(`[data-person]`);
+    if (who) { personSheet(who.dataset.person); return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
     if (a === `move`) {
       const id = await pickLocation(item.locationId, `Move to…`);
       if (id && id !== item.locationId) { await repo.moveItem(item, id); toast(`Moved to ${repo.pathText(id)}`); }
     } else if (a === `lend`) {
-      const to = await promptSheet(`Lend it`, { label: `Who has it?`, placeholder: `e.g. Neighbor – Ravi`, okLabel: `Lend` });
+      const to = await lendSheet(item);
       if (to) { await repo.lendItem(item, to); toast(`Marked as lent to ${to}`); }
     } else if (a === `return`) { await repo.returnItem(item); toast(`Back home`); }
     else if (a === `missing`) { await repo.markMissing(item); toast(`Marked missing`); }
@@ -817,6 +924,10 @@ function viewMore(view, r) {
       ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Family member’s Google email" required><button class="btn primary">Invite</button></form>
         <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, and choose “Join a shared inventory”.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
 
+      ${(() => { const ppl = repo.people(); return ppl.length ? `<div class="label-sm">People you lend to</div>
+        <div class="menu">${ppl.slice(0, 30).map((p) => `<button data-person="${esc(p.key)}"><span class="avatar sm">${esc(initials(p.name))}</span>
+          <span class="grow">${esc(p.name)}</span><small class="${p.holding.length ? `warn` : ``}">${p.holding.length ? `has ${p.holding.length}` : `all returned`}</small></button>`).join(``)}</div>` : ``; })()}
+
       <div class="label-sm" id="ai">AI suggestions</div>
       ${aiReady() ? `<div class="menu">
           <div class="menu-info">${icon(`spark`)}<div><b>On</b><small>Model: ${esc(aiSettings().model)}</small><small>${aiUsageToday()} photo${aiUsageToday() === 1 ? `` : `s`} analyzed today on this device · resets 3 AM ET</small></div></div>
@@ -855,6 +966,8 @@ function viewMore(view, r) {
   if (r?.params?.get(`ai`) === `1` && !aiReady()) setTimeout(() => aiConsent().then((ok) => ok && render()), 50);
 
   view.onclick = async (e) => {
+    const who = e.target.closest(`[data-person]`);
+    if (who) { personSheet(who.dataset.person); return; }
     const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
     if (m === `aion` || m === `aikey`) { if (await aiConsent(m === `aikey`)) render(); return; }
     if (m === `aioff`) {
