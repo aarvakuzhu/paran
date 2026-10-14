@@ -1744,22 +1744,25 @@ function viewPlace(view, r) {
 const SHARE_SIGN = `Shared from Stash`;
 
 /** Phone share sheet → files if supported → text only → clipboard → a sheet to copy from. */
-async function shareOut({ title, text, file }) {
+async function shareOut({ title, text, file, files }) {
+  const list = files || (file ? [file] : []);
   const data = { title, text };
   try {
-    if (file && navigator.canShare?.({ files: [file] })) { await navigator.share({ ...data, files: [file] }); return true; }
-    if (navigator.share) {
-      if (file && !navigator.canShare) { /* old browsers: text only */ }
-      await navigator.share(data); return true;
+    if (list.length && navigator.canShare?.({ files: list })) { await navigator.share({ ...data, files: list }); return true; }
+    if (navigator.share && !list.length) { await navigator.share(data); return true; }
+    if (navigator.share && list.length > 1 && navigator.canShare?.({ files: [list[0]] })) {
+      toast(`This phone can’t share that many photos at once. Try fewer.`, { ms: 5000 }); return false;
     }
+    if (navigator.share) { await navigator.share(data); return true; }
   } catch (e) {
     if (e?.name === `AbortError`) return false; // they closed the share sheet
   }
-  if (file) { // desktop: save the picture, copy the text
-    const a = document.createElement(`a`); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+  for (const f of list) { // desktop: save the pictures, copy the text
+    const a = document.createElement(`a`); a.href = URL.createObjectURL(f); a.download = f.name; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
-  try { await navigator.clipboard.writeText(text); toast(file ? `Picture saved and text copied` : `Copied. Paste it into a message.`); return true; }
+  const saved = list.length ? `${list.length > 1 ? `${list.length} pictures` : `Picture`} saved and text copied` : `Copied. Paste it into a message.`;
+  try { await navigator.clipboard.writeText(text); toast(saved); return true; }
   catch {
     sheet(`Copy this`, (el) => { el.innerHTML = `<textarea class="share-copy" rows="10" readonly>${esc(text)}</textarea>`; const t = $(`textarea`, el); t.focus(); t.select(); });
     return true;
@@ -1920,7 +1923,10 @@ function shareSelection(items) {
 function shareList({ sheetTitle, head, groups: groupsFor, groupLabel, byPlace = true }) {
   const opts = { as: `text`, purpose: false, byPlace };
   const total = groupsFor(true).reduce((n, g) => n + g.items.length, 0);
+  const MAX_PHOTOS = 10;
+  const withPhoto = groupsFor(false).flatMap((g) => g.items).filter((i) => i.photoId || repo.thumbs[i.id]);
   let pic = null, picKey = ``;
+  let photos = null, photosLoading = false, photosDone = 0; // full photos, fetched before Share so the tap can share them
   return new Promise((resolve) => {
     let shared = false;
     sheet(sheetTitle, (el, close) => {
@@ -1932,30 +1938,50 @@ function shareList({ sheetTitle, head, groups: groupsFor, groupLabel, byPlace = 
         const f = await listPicture(head, groups(), opts);
         if (picKey === key) { pic = f; draw(); }
       };
+      const loadPhotos = async () => {
+        if (photos || photosLoading) return;
+        photosLoading = true; photosDone = 0; draw();
+        const out = [];
+        for (const i of withPhoto.slice(0, MAX_PHOTOS)) {
+          const f = await itemPhotoFile(i); if (f) out.push(f);
+          photosDone++; if (opts.as === `photos`) draw();
+        }
+        photos = out; photosLoading = false; draw();
+      };
+      const photosBody = () => {
+        if (!withPhoto.length) return `<p class="muted pad">None of these have a photo yet.</p>`;
+        const n = Math.min(withPhoto.length, MAX_PHOTOS);
+        return `<div class="share-photos">${withPhoto.slice(0, MAX_PHOTOS).map((i) => thumbHtml(i, `sp-img`)).join(``)}</div>
+          <p class="fine">${photos ? `${photos.length} full photo${photos.length === 1 ? `` : `s`} ready` : `Getting full photos… ${photosDone} of ${n}`}${withPhoto.length > MAX_PHOTOS ? ` · first ${MAX_PHOTOS} only` : ``}${withPhoto.length < total ? ` · ${total - withPhoto.length} without a photo` : ``}. The list is sent as the message.</p>`;
+      };
       const draw = () => {
         const text = listText(head, groups(), opts);
+        const ready = opts.as === `pic` ? Boolean(pic) : opts.as === `photos` ? Boolean(photos?.length) : true;
         el.innerHTML = `
-          <div class="seg" role="tablist">
+          <div class="seg three" role="tablist">
             <button type="button" data-as="text" class="${opts.as === `text` ? `on` : ``}" role="tab">List</button>
-            <button type="button" data-as="pic" class="${opts.as === `pic` ? `on` : ``}" role="tab">${icon(`photo`)} Picture</button>
+            <button type="button" data-as="pic" class="${opts.as === `pic` ? `on` : ``}" role="tab">Picture</button>
+            <button type="button" data-as="photos" class="${opts.as === `photos` ? `on` : ``}" role="tab">Photos</button>
           </div>
           ${opts.as === `text` ? `<pre class="share-preview list">${esc(text)}</pre>`
+            : opts.as === `photos` ? photosBody()
             : pic ? `<img class="share-pic" src="${URL.createObjectURL(pic)}" alt="Preview">` : `<div class="share-pic wait"><div class="spinner"></div></div>`}
           <label class="check"><input type="checkbox" data-o="purpose" ${opts.purpose ? `checked` : ``}><span>Include what each is for</span></label>
           <label class="check"><input type="checkbox" data-o="byPlace" ${opts.byPlace ? `checked` : ``}><span>${esc(groupLabel)}</span></label>
           <p class="fine">${itemsWord(total)}. They get a copy to read. Nothing in your inventory is shared.</p>
           <div class="row-actions">${opts.as === `text` ? `<button type="button" class="btn ghost" data-copy>Copy text</button>` : ``}
-            <button type="button" class="btn primary" data-go ${opts.as === `pic` && !pic ? `disabled` : ``}>${icon(`share`)} Share</button></div>`;
+            <button type="button" class="btn primary" data-go ${ready ? `` : `disabled`}>${icon(`share`)} Share</button></div>`;
       };
       el.addEventListener(`change`, (e) => { const o = e.target.dataset.o; if (o) { opts[o] = e.target.checked; draw(); if (opts.as === `pic`) makePic(); } });
       el.addEventListener(`click`, async (e) => {
         const as = e.target.closest(`[data-as]`);
-        if (as) { opts.as = as.dataset.as; draw(); if (opts.as === `pic`) makePic(); return; }
+        if (as) { opts.as = as.dataset.as; draw(); if (opts.as === `pic`) makePic(); if (opts.as === `photos`) loadPhotos(); return; }
         const text = listText(head, groups(), opts);
         if (e.target.closest(`[data-copy]`)) { try { await navigator.clipboard.writeText(text); toast(`Copied`); } catch { await shareOut({ title: head.title, text }); } return; }
         if (e.target.closest(`[data-go]`)) {
           const ok = opts.as === `pic`
             ? await shareOut({ title: head.title, text: head.text ? `${head.text} · ${itemsWord(total)}` : head.title, file: pic })
+            : opts.as === `photos` ? await shareOut({ title: head.title, text, files: photos })
             : await shareOut({ title: head.title, text });
           if (ok) { shared = true; resolve(true); close(); }
         }

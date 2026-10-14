@@ -644,3 +644,7 @@ body.scanning { overflow: hidden; }
 .selbar .btn.ghost { min-height: 40px; padding: 0 12px; color: var(--bg); background: transparent; border: 1px solid color-mix(in srgb, currentColor 32%, transparent); gap: 6px; }
 .selbar .btn:disabled { opacity: 0.45; }
 @media (max-width: 420px) { .selbar .btn.ghost span { display: none; } .selbar .btn.ghost { padding: 0 10px; } }
+.seg.three { grid-template-columns: repeat(3, 1fr); }
+.share-photos { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0 0; }
+.share-photos .sp-img { width: 100%; aspect-ratio: 1; border-radius: 10px; object-fit: cover; }
+.share-photos .sp-img.ph { display: grid; place-items: center; background: var(--surface-2); color: var(--ink-3); }
