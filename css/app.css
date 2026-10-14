@@ -600,3 +600,35 @@ button.back .ic { width: 18px; height: 18px; }
 .it-name b { display: block; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .it-name span { display: block; font-size: 0.75rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list-head .label-sm .link { margin-right: 8px; padding: 0; display: inline-flex; align-items: center; vertical-align: middle; }
+
+/* ---------- Scan many ---------- */
+.place-add { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.review-tools { display: flex; justify-content: flex-end; margin: -4px 0 4px; }
+.spot-btn { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 999px; background: none; color: var(--ink-2); font-size: 0.78rem; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spot-btn svg { width: 14px; height: 14px; flex: none; }
+.spot-btn.set { border-style: solid; border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+body.scanning { overflow: hidden; }
+.scan { position: fixed; inset: 0; z-index: 80; background: #000; color: #fff; display: flex; flex-direction: column; }
+.scan video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scan-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+.scan-flash.on { animation: scanflash 0.35s ease-out; }
+@keyframes scanflash { from { opacity: 0.55; } to { opacity: 0; } }
+.scan-top, .scan-bottom { position: relative; display: flex; align-items: center; justify-content: space-between; padding: calc(12px + env(safe-area-inset-top)) 16px 12px; }
+.scan-bottom { margin-top: auto; padding: 16px 20px calc(20px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgb(0 0 0 / 55%)); }
+.scan-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 84px; justify-content: center; padding: 9px 14px; border-radius: 999px; border: 0; background: rgb(0 0 0 / 50%); color: #fff; font-weight: 600; cursor: pointer; backdrop-filter: blur(6px); }
+.scan-pill[aria-pressed="true"] { background: rgb(255 255 255 / 92%); color: #111; }
+.scan-pill.primary { background: var(--accent); color: var(--accent-ink); }
+.scan-pill:disabled { opacity: 0.5; }
+.scan-pill svg { width: 16px; height: 16px; }
+.scan-count { padding: 6px 12px; border-radius: 999px; background: rgb(0 0 0 / 50%); font-weight: 600; font-variant-numeric: tabular-nums; }
+.scan-hint { position: relative; margin: 8px auto 0; max-width: 300px; text-align: center; font-size: 0.9rem; padding: 8px 14px; border-radius: 12px; background: rgb(0 0 0 / 45%); }
+.scan-strip { position: absolute; left: 0; right: 0; bottom: calc(104px + env(safe-area-inset-bottom)); display: flex; gap: 6px; padding: 0 16px; overflow-x: auto; scrollbar-width: none; }
+.scan-strip button { flex: none; padding: 0; border: 2px solid #fff; border-radius: 8px; overflow: hidden; background: none; width: 52px; height: 52px; cursor: pointer; }
+.scan-strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-shutter { width: 72px; height: 72px; border-radius: 50%; border: 4px solid #fff; background: none; padding: 4px; cursor: pointer; }
+.scan-shutter i { display: block; width: 100%; height: 100%; border-radius: 50%; background: #fff; }
+.scan-shutter:active i { transform: scale(0.9); }
+.scan-wait { position: fixed; inset: 0; z-index: 85; display: grid; place-items: center; background: rgb(0 0 0 / 45%); }
+.scan-wait > div { background: var(--surface); color: var(--ink); border-radius: 18px; padding: 24px 28px; text-align: center; box-shadow: var(--shadow); }
+.scan-wait b, .scan-wait small { display: block; }
+.scan-wait small { color: var(--ink-2); margin-top: 4px; }

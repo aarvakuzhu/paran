@@ -3,8 +3,9 @@ import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tok
 import { Repo } from './store.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
-import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
+import { captureScan } from './scan.js';
 
 const MODE_KEY = `stash.mode`;
 const RECENT_LOC_KEY = `stash.recentLocs`;
@@ -370,9 +371,9 @@ function kindFor(parentId) {
 }
 
 /** Location picker as a bottom sheet. Resolves with a location id or null. */
-function pickLocation(startId = ``, title = `Where does it live?`, { exclude = null } = {}) {
+function pickLocation(startId = ``, title = `Where does it live?`, { exclude = null, inside = null } = {}) {
   return new Promise((resolve) => {
-    let current = startId ? (repo.locById(startId)?.parentId || ``) : ``;
+    let current = inside ?? (startId ? (repo.locById(startId)?.parentId || ``) : ``);
     if (exclude?.has(current)) current = ``;
     let done = false;
     const ok = (l) => !exclude || !exclude.has(l.id);
@@ -1594,18 +1595,24 @@ function duplicatePrompt(fields, dups) {
  * Several items found in one photo: let the user review, rename and untick, then add them all.
  * Resolves { added, locationId } | { single: suggestion } | null.
  */
-function reviewItems(items, canvas, startLoc) {
+function reviewItems(items, canvas, startLoc, { scan = false } = {}) {
+  const canvases = Array.isArray(canvas) ? canvas : [canvas];
   return new Promise((resolve) => {
     let done = false;
     let locationId = startLoc;
+    const spot = new Map(); // item index -> a different place than the one for everything
+    const locOf = (i) => spot.get(i) || locationId;
     const hereDup = (it) => locationId && findDuplicates(repo.activeItems(), it.name, { locationId }).find((d) => d.samePlace);
     const ticked = new Set(items.map((_, i) => i).filter((i) => !hereDup(items[i])));
     const finish = (v) => { done = true; resolve(v); };
-    sheet(`Found ${items.length} items`, async (el, close) => {
-      const crops = await Promise.all(items.map((it) => cropItem(canvas, it.box)));
+    sheet(`Found ${items.length} item${items.length === 1 ? `` : `s`}`, async (el, close) => {
+      el.innerHTML = `<p class="muted small">Cutting out photos…</p>`;
+      const crops = await Promise.all(items.map((it) => cropItem(canvases[it.photo || 0] || canvases[0], it.box)));
+      const hasInside = () => locationId && repo.childrenOf(locationId).length;
       const draw = () => {
         el.innerHTML = `
-          <p class="muted small">Suggested by AI. Untick anything you don’t want and fix names before adding.</p>
+          <p class="muted small">Suggested by AI. Untick anything you don’t want and fix names before adding.${scan ? ` Something missing? Add it yourself after, or scan again closer.` : ``}</p>
+          ${items.length > 4 ? `<div class="review-tools"><button type="button" class="link small" data-all>${ticked.size === items.length ? `Untick all` : `Tick all`}</button></div>` : ``}
           <div class="review-list">
             ${items.map((it, i) => `<div class="review-row">
               <label class="tick"><input type="checkbox" data-i="${i}" ${ticked.has(i) ? `checked` : ``}></label>
@@ -1615,8 +1622,9 @@ function reviewItems(items, canvas, startLoc) {
                 ${hereDup(it) ? `<small class="here-tag">Already here: ${esc(hereDup(it).item.name)}</small>` : ``}
                 <small>${esc(it.purpose)}</small>
                 ${it.qty > 1 ? `<small>×${it.qty}</small>` : ``}
+                ${spot.has(i) || hasInside() ? `<button type="button" class="spot-btn${spot.has(i) ? ` set` : ``}" data-spot="${i}">${icon(`place`)}${esc(spot.has(i) ? repo.pathOf(spot.get(i)).slice(-2).map((l) => l.name).join(` › `) : `Put somewhere inside`)}</button>` : ``}
               </div>
-              <button type="button" class="icon-btn" data-one="${i}" aria-label="Edit just this one">${icon(`edit`)}</button>
+              ${scan ? `` : `<button type="button" class="icon-btn" data-one="${i}" aria-label="Edit just this one">${icon(`edit`)}</button>`}
             </div>`).join(``)}
           </div>
           <div class="field"><span>Where are they?</span>
@@ -1638,6 +1646,13 @@ function reviewItems(items, canvas, startLoc) {
       el.addEventListener(`click`, async (e) => {
         const b = e.target.closest(`button`); if (!b) return;
         if (b.dataset.one !== undefined) { finish({ single: items[Number(b.dataset.one)] }); close(); return; }
+        if (b.hasAttribute(`data-all`)) { if (ticked.size === items.length) ticked.clear(); else items.forEach((_, i) => ticked.add(i)); draw(); return; }
+        if (b.dataset.spot !== undefined) {
+          const i = Number(b.dataset.spot);
+          const id = await pickLocation(locOf(i), `Where is “${items[i].name}”?`, { inside: locationId });
+          if (id) { if (id === locationId) spot.delete(i); else spot.set(i, id); draw(); }
+          return;
+        }
         if (b.hasAttribute(`data-loc`)) {
           // keep the review sheet; stack the picker on top
           const id = await pickLocation(locationId, `Where are they?`);
@@ -1648,14 +1663,16 @@ function reviewItems(items, canvas, startLoc) {
           if (!locationId) { const id = await pickLocation(``, `Where are they?`); if (!id) return; locationId = id; }
           const picks = selected();
           b.disabled = true; b.textContent = `Adding…`;
+          let n = 0;
           for (const i of picks) {
             const it = items[i];
             if (!it.name.trim()) continue;
-            await repo.saveItem({ name: it.name.trim(), purpose: it.purpose, category: it.category, tags: it.tags, qty: it.qty, notes: it.notes, locationId },
-              { photo: crops[i].photo, thumb: crops[i].thumb });
+            b.textContent = `Adding ${++n} of ${picks.length}…`;
+            await repo.saveItem({ name: it.name.trim(), purpose: it.purpose, category: it.category, tags: it.tags, qty: it.qty, notes: it.notes, size: it.size || ``, locationId: locOf(i) },
+              { photo: crops[i].photo, thumb: crops[i].thumb, info: scan ? `AI scan` : `AI from photo`, aiFields: [`name`, `purpose`, `category`, `tags`, `size`, `notes`].filter((k) => it[k]) });
           }
           rememberLoc(locationId);
-          toast(`Added ${picks.length} item${picks.length > 1 ? `s` : ``} to ${repo.pathText(locationId)}`);
+          toast(`Added ${n} item${n === 1 ? `` : `s`} to ${repo.pathText(locationId)}`);
           finish({ added: picks.length, locationId }); close();
         }
       });
@@ -1686,7 +1703,8 @@ function viewPlace(view, r) {
             ${loc.kind === `container` ? `<button class="btn ghost small" data-a="qr">${icon(`qr`)} QR label</button>` : ``}
             <button class="icon-btn" data-a="menu" aria-label="Place options">${icon(`more`)}</button></div>` : ``}
       </div>
-      ${loc ? `<a class="btn primary full" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>` : ``}
+      ${loc ? `<div class="place-add"><a class="btn primary" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>
+        <button type="button" class="btn ghost" data-a="scan">${icon(`spark`)} Scan many</button></div>` : ``}
       ${kids.length || loc ? `<div class="label-sm">${loc ? `Places inside` : `Your places`}</div>
         <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>`
         : `<div class="empty"><h3>No places yet</h3><p>Tell Stash where you keep things: your home and its rooms, a storage unit, the car…</p>
@@ -1708,7 +1726,47 @@ function viewPlace(view, r) {
     }
     if (b.dataset.a === `menu`) placeMenu(loc);
     if (b.dataset.a === `qr`) printLabel(loc);
+    if (b.dataset.a === `scan`) scanPlace(loc.id);
   };
+}
+
+// ============================================================ Scan many: pan across a shelf, AI lists everything
+const SCAN_MAX = 8;
+async function scanPlace(locId) {
+  if (!aiReady()) {
+    const ok = await confirmSheet(`Scan many items at once`, `Pan your camera across a shelf or room, and AI lists everything it sees for you to review. This uses AI suggestions with your own free Gemini key.`, `Set up AI`);
+    if (!ok || !(await aiConsent())) return;
+  }
+  let seen = false; try { seen = localStorage.getItem(`stash.scanNote`) === `1`; } catch { /* ignore */ }
+  if (!seen) {
+    const ok = await confirmSheet(`Before you scan`, `Wide photos of a room show more of your home than a single item. They go from this phone to Google Gemini, and on the free tier Google may use them to improve its products. Keep papers, screens and people out of the shot.`, `Start scanning`);
+    if (!ok) return;
+    try { localStorage.setItem(`stash.scanNote`, `1`); } catch { /* ignore */ }
+  }
+  const where = repo.pathText(locId);
+  const shots = await captureScan({ max: SCAN_MAX, title: repo.locById(locId)?.name || `` });
+  if (!shots?.length) return;
+  const wait = document.createElement(`div`);
+  wait.className = `scan-wait`;
+  wait.innerHTML = `<div><div class="spinner"></div><b>Reading ${shots.length} photo${shots.length > 1 ? `s` : ``}…</b><small>This can take up to a minute.</small></div>`;
+  document.body.appendChild(wait);
+  let items;
+  try {
+    const blobs = await Promise.all(shots.map((c) => new Promise((r) => {
+      const scale = Math.min(1, 1024 / Math.max(c.width, c.height));
+      const d = document.createElement(`canvas`); d.width = Math.round(c.width * scale); d.height = Math.round(c.height * scale);
+      d.getContext(`2d`).drawImage(c, 0, 0, d.width, d.height); d.toBlob(r, `image/jpeg`, 0.8);
+    })));
+    items = await scanPhotos(blobs, { categories: repo.categories(), location: where });
+  } catch (err) {
+    wait.remove();
+    toast(err instanceof AiError ? err.message : `Scan failed. Try again, or add items one by one.`, { ms: 6000 });
+    return;
+  }
+  wait.remove();
+  if (!items.length) { toast(`AI couldn’t recognize anything. Try again closer, with more light.`, { ms: 5000 }); return; }
+  const res = await reviewItems(items, shots, locId, { scan: true });
+  if (res?.added) render();
 }
 
 function placeMenu(loc) {

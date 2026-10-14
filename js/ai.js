@@ -148,6 +148,56 @@ export async function analyzePhoto(image, context = {}) {
   return clean(parsed.items || []);
 }
 
+const SCAN_SCHEMA = {
+  type: `OBJECT`,
+  properties: {
+    items: {
+      type: `ARRAY`,
+      items: {
+        type: `OBJECT`,
+        properties: {
+          name: { type: `STRING` }, purpose: { type: `STRING` }, category: { type: `STRING` },
+          tags: { type: `ARRAY`, items: { type: `STRING` } }, qty: { type: `INTEGER` }, notes: { type: `STRING` },
+          size: { type: `STRING` }, photo: { type: `INTEGER` },
+          box_2d: { type: `ARRAY`, items: { type: `INTEGER` } },
+        },
+        required: [`name`, `purpose`, `category`, `tags`, `qty`, `photo`],
+      },
+    },
+  },
+  required: [`items`],
+};
+
+/**
+ * Several overlapping photos taken while panning across a shelf or room. Returns one list of
+ * physical items (each listed once) with the photo that shows it best: item.photo is a 0-based index.
+ */
+export async function scanPhotos(images, { categories = [], location = `` } = {}) {
+  const n = images.length;
+  const text = [
+    `You help catalog belongings for a home inventory app. People use it later to find things and to remember what they are for.`,
+    `These ${n} photos were taken one after another while panning a camera across ${location ? `"${location}"` : `a shelf, closet or room`}. Neighbouring photos overlap, so the same physical item often appears in more than one photo.`,
+    `List every distinct physical item someone would want to find later, each physical item ONCE even if it appears in several photos.`,
+    `Two similar items in the same spot of overlapping photos are the same item; identical items side by side are one entry with qty.`,
+    `Ignore walls, floors, shelving, furniture, fixtures and the photographer. Include boxes or bins only as items themselves when their contents are not visible.`,
+    `Return at most 40 items, most useful first.`,
+    `For each item:`,
+    `- photo: the number (1 to ${n}) of the photo where it is most clearly and completely visible.`,
+    `- box_2d: its bounding box in THAT photo as [ymin, xmin, ymax, xmax] normalized to 0-1000.`,
+    `- name: short and specific, 2 to 6 words. Include brand or model only if clearly readable.`,
+    `- purpose: one short sentence on what a person would use it for. No marketing language.`,
+    `- category: one short word or two.${categories.length ? ` Prefer one of these existing categories if it fits: ${categories.slice(0, 40).join(`, `)}.` : ``}`,
+    `- tags: 3 to 6 lowercase search words, including common synonyms someone might type.`,
+    `- qty: how many identical units are visible (1 if unsure).`,
+    `- notes: visible model numbers, sizes or capacities; otherwise empty.`,
+    `- size: one of: ${SIZES.join(`, `)}, judged from surrounding objects; empty if you can't tell.`,
+    `Do not guess at things you cannot see. If you cannot identify anything, return an empty items list.`,
+  ].join(`\n`);
+  const parsed = await callGemini(images, text, SCAN_SCHEMA);
+  const raw = parsed.items || [];
+  return clean(raw, 40).map((it, i) => ({ ...it, photo: Math.max(0, Math.min(n - 1, (parseInt(it._photo, 10) || 1) - 1)) }));
+}
+
 async function callGemini(images, promptText, schema) {
   const s = aiSettings();
   if (!s.enabled || !s.key) throw new AiError(`key`, `AI suggestions are not set up.`);
@@ -192,8 +242,8 @@ async function callGemini(images, promptText, schema) {
 }
 
 const str = (v, max) => String(v ?? ``).replace(/\s+/g, ` `).trim().slice(0, max);
-function clean(items) {
-  return items.slice(0, 15).map((it) => {
+function clean(items, max = 15) {
+  return items.slice(0, max).map((it) => {
     const box = Array.isArray(it.box_2d) && it.box_2d.length === 4 && it.box_2d.every((n) => Number.isFinite(n))
       ? it.box_2d.map((n) => Math.max(0, Math.min(1000, n))) : null;
     return {
@@ -205,6 +255,7 @@ function clean(items) {
       notes: str(it.notes, 200),
       size: SIZES.find((z) => z.toLowerCase() === String(it.size || ``).trim().toLowerCase()) || ``,
       box: box && box[2] > box[0] && box[3] > box[1] ? box : null,
+      _photo: it.photo,
     };
   }).filter((it) => it.name);
 }
