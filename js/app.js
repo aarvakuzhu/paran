@@ -513,6 +513,7 @@ function refreshSel() {
   bar.innerHTML = `<button type="button" class="btn text" data-s="cancel">Cancel</button>
     <span class="sel-count"><b>${n}</b> selected</span>
     <button type="button" class="btn text" data-s="all">${all ? `None` : `All`}</button>
+    <button type="button" class="btn ghost" data-s="share" ${n ? `` : `disabled`} aria-label="Share">${icon(`share`)}<span>Share</span></button>
     <button type="button" class="btn primary" data-s="move" ${n ? `` : `disabled`}>${icon(`move`)} Move</button>`;
 }
 async function onSelBar(e) {
@@ -521,6 +522,11 @@ async function onSelBar(e) {
   if (s === `all`) {
     const vis = visibleIds(); const all = vis.every((id) => sel.ids.has(id));
     vis.forEach((id) => (all ? sel.ids.delete(id) : sel.ids.add(id))); return refreshSel();
+  }
+  if (s === `share`) {
+    const items = [...sel.ids].map((id) => repo.items.find((i) => i.id === id)).filter(Boolean);
+    if (await shareSelection(items)) selStop();
+    return;
   }
   if (s === `move`) {
     const items = [...sel.ids].map((id) => repo.items.find((i) => i.id === id)).filter(Boolean);
@@ -1819,10 +1825,11 @@ function placeGroups(loc) {
   return groups;
 }
 
-function placeText(loc, groups, { purpose }) {
+const itemsWord = (n) => `${n} item${n === 1 ? `` : `s`}`;
+function listText(head, groups, { purpose }) {
   const total = groups.reduce((n, g) => n + g.items.length, 0);
   const line = (i) => `• ${i.name}${Number(i.qty) > 1 ? ` ×${i.qty}` : ``}${purpose && i.purpose ? ` – ${i.purpose}` : ``}`;
-  const parts = [`${repo.pathText(loc.id)} · ${total} item${total === 1 ? `` : `s`}`];
+  const parts = [head.text ? `${head.text} · ${itemsWord(total)}` : itemsWord(total)];
   for (const g of groups) {
     parts.push(``);
     if (g.name) parts.push(`${g.name}:`);
@@ -1833,7 +1840,7 @@ function placeText(loc, groups, { purpose }) {
 }
 
 /** A picture of the list with photos, for messaging apps. */
-async function placePicture(loc, groups, { purpose }) {
+async function listPicture(head, groups, { purpose }) {
   const MAX = 80;
   const W = 1080, PAD = 48, ROW = purpose ? 132 : 112, IMG = 88, HEAD = 64;
   let shown = 0; const rows = [];
@@ -1849,9 +1856,9 @@ async function placePicture(loc, groups, { purpose }) {
   const font = (w, s) => `${w} ${s}px -apple-system, "Segoe UI", Roboto, Arial, sans-serif`;
   const fit = (t, max) => { if (x.measureText(t).width <= max) return t; while (t && x.measureText(`${t}…`).width > max) t = t.slice(0, -1); return `${t}…`; };
   x.fillStyle = `#fffdf9`; x.fillRect(0, 0, W, H);
-  x.fillStyle = `#1d1b18`; x.font = font(700, 48); x.fillText(fit(loc.name, W - PAD * 2), PAD, PAD + 44);
+  x.fillStyle = `#1d1b18`; x.font = font(700, 48); x.fillText(fit(head.title, W - PAD * 2), PAD, PAD + 44);
   x.fillStyle = `#5d5850`; x.font = font(400, 28);
-  x.fillText(fit(`${repo.pathOf(loc.id).slice(0, -1).map((l) => l.name).concat([`${total} item${total === 1 ? `` : `s`}`]).join(` · `)}`, W - PAD * 2), PAD, PAD + 90);
+  x.fillText(fit([...(head.sub ? [head.sub] : []), itemsWord(total)].join(` · `), W - PAD * 2), PAD, PAD + 90);
   const load = (src) => new Promise((r) => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(null); im.src = src; });
   let y = PAD + 120;
   for (const r of rows) {
@@ -1878,51 +1885,83 @@ async function placePicture(loc, groups, { purpose }) {
   if (total > shown) { x.fillText(`+ ${total - shown} more`, PAD, y + 40); y += 60; }
   x.fillText(SHARE_SIGN, PAD, H - PAD);
   const blob = await new Promise((r) => c.toBlob(r, `image/jpeg`, 0.86));
-  return new File([blob], `${loc.name.replace(/[^\w\- ]+/g, ``).trim() || `list`}.jpg`, { type: `image/jpeg` });
+  return new File([blob], `${head.title.replace(/[^\w\- ]+/g, ``).trim() || `list`}.jpg`, { type: `image/jpeg` });
 }
 
 function sharePlace(loc) {
   const groups = placeGroups(loc);
-  const total = groups.reduce((n, g) => n + g.items.length, 0);
-  if (!total) { toast(`Nothing in ${loc.name} yet`); return; }
-  const opts = { as: `text`, purpose: false };
+  if (!groups.length) { toast(`Nothing in ${loc.name} yet`); return; }
+  shareList({
+    sheetTitle: `Share what’s in ${loc.name}`,
+    head: { title: loc.name, sub: repo.pathOf(loc.id).slice(0, -1).map((l) => l.name).join(` › `), text: repo.pathText(loc.id) },
+    groups: (byPlace) => (byPlace ? groups : [{ name: ``, items: groups.flatMap((g) => g.items).sort((a, b) => a.name.localeCompare(b.name)) }]),
+    groupLabel: `Group by spot`,
+  });
+}
+
+/** Selected items (Select mode): grouped by where each one is kept, or one plain list. */
+function shareSelection(items) {
+  const byLoc = new Map();
+  for (const i of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
+    const key = i.locationId ? repo.pathOf(i.locationId).slice(-2).map((l) => l.name).join(` › `) : `No location yet`;
+    if (!byLoc.has(key)) byLoc.set(key, []);
+    byLoc.get(key).push(i);
+  }
+  const grouped = [...byLoc.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, list]) => ({ name, items: list }));
+  return shareList({
+    sheetTitle: `Share ${itemsWord(items.length)}`,
+    head: { title: items.length === 1 ? items[0].name : `${itemsWord(items.length)}`, sub: ``, text: `` },
+    groups: (byPlace) => (byPlace ? grouped : [{ name: ``, items: grouped.flatMap((g) => g.items).sort((a, b) => a.name.localeCompare(b.name)) }]),
+    groupLabel: `Include where they’re kept`,
+    byPlace: false,
+  });
+}
+
+function shareList({ sheetTitle, head, groups: groupsFor, groupLabel, byPlace = true }) {
+  const opts = { as: `text`, purpose: false, byPlace };
+  const total = groupsFor(true).reduce((n, g) => n + g.items.length, 0);
   let pic = null, picKey = ``;
-  sheet(`Share what’s in ${loc.name}`, (el, close) => {
-    const makePic = async () => {
-      const key = `${opts.purpose}`;
-      if (pic && picKey === key) return;
-      picKey = key; pic = null; draw();
-      const f = await placePicture(loc, groups, opts);
-      if (picKey === key) { pic = f; draw(); }
-    };
-    const draw = () => {
-      const text = placeText(loc, groups, opts);
-      el.innerHTML = `
-        <div class="seg" role="tablist">
-          <button type="button" data-as="text" class="${opts.as === `text` ? `on` : ``}" role="tab">List</button>
-          <button type="button" data-as="pic" class="${opts.as === `pic` ? `on` : ``}" role="tab">${icon(`photo`)} Picture</button>
-        </div>
-        ${opts.as === `text` ? `<pre class="share-preview list">${esc(text)}</pre>`
-          : pic ? `<img class="share-pic" src="${URL.createObjectURL(pic)}" alt="Preview">` : `<div class="share-pic wait"><div class="spinner"></div></div>`}
-        <label class="check"><input type="checkbox" data-o="purpose" ${opts.purpose ? `checked` : ``}><span>Include what each is for</span></label>
-        <p class="fine">${total} item${total === 1 ? `` : `s`}. They get a copy to read. Nothing in your inventory is shared.</p>
-        <div class="row-actions">${opts.as === `text` ? `<button type="button" class="btn ghost" data-copy>Copy text</button>` : ``}
-          <button type="button" class="btn primary" data-go ${opts.as === `pic` && !pic ? `disabled` : ``}>${icon(`share`)} Share</button></div>`;
-    };
-    el.addEventListener(`change`, (e) => { if (e.target.dataset.o) { opts.purpose = e.target.checked; draw(); if (opts.as === `pic`) makePic(); } });
-    el.addEventListener(`click`, async (e) => {
-      const as = e.target.closest(`[data-as]`);
-      if (as) { opts.as = as.dataset.as; draw(); if (opts.as === `pic`) makePic(); return; }
-      const text = placeText(loc, groups, opts);
-      if (e.target.closest(`[data-copy]`)) { try { await navigator.clipboard.writeText(text); toast(`Copied`); } catch { await shareOut({ title: loc.name, text }); } return; }
-      if (e.target.closest(`[data-go]`)) {
-        const ok = opts.as === `pic`
-          ? await shareOut({ title: loc.name, text: `${repo.pathText(loc.id)} · ${total} item${total === 1 ? `` : `s`}`, file: pic })
-          : await shareOut({ title: loc.name, text });
-        if (ok) close();
-      }
-    });
-    draw();
+  return new Promise((resolve) => {
+    let shared = false;
+    sheet(sheetTitle, (el, close) => {
+      const groups = () => groupsFor(opts.byPlace);
+      const makePic = async () => {
+        const key = `${opts.purpose}|${opts.byPlace}`;
+        if (pic && picKey === key) return;
+        picKey = key; pic = null; draw();
+        const f = await listPicture(head, groups(), opts);
+        if (picKey === key) { pic = f; draw(); }
+      };
+      const draw = () => {
+        const text = listText(head, groups(), opts);
+        el.innerHTML = `
+          <div class="seg" role="tablist">
+            <button type="button" data-as="text" class="${opts.as === `text` ? `on` : ``}" role="tab">List</button>
+            <button type="button" data-as="pic" class="${opts.as === `pic` ? `on` : ``}" role="tab">${icon(`photo`)} Picture</button>
+          </div>
+          ${opts.as === `text` ? `<pre class="share-preview list">${esc(text)}</pre>`
+            : pic ? `<img class="share-pic" src="${URL.createObjectURL(pic)}" alt="Preview">` : `<div class="share-pic wait"><div class="spinner"></div></div>`}
+          <label class="check"><input type="checkbox" data-o="purpose" ${opts.purpose ? `checked` : ``}><span>Include what each is for</span></label>
+          <label class="check"><input type="checkbox" data-o="byPlace" ${opts.byPlace ? `checked` : ``}><span>${esc(groupLabel)}</span></label>
+          <p class="fine">${itemsWord(total)}. They get a copy to read. Nothing in your inventory is shared.</p>
+          <div class="row-actions">${opts.as === `text` ? `<button type="button" class="btn ghost" data-copy>Copy text</button>` : ``}
+            <button type="button" class="btn primary" data-go ${opts.as === `pic` && !pic ? `disabled` : ``}>${icon(`share`)} Share</button></div>`;
+      };
+      el.addEventListener(`change`, (e) => { const o = e.target.dataset.o; if (o) { opts[o] = e.target.checked; draw(); if (opts.as === `pic`) makePic(); } });
+      el.addEventListener(`click`, async (e) => {
+        const as = e.target.closest(`[data-as]`);
+        if (as) { opts.as = as.dataset.as; draw(); if (opts.as === `pic`) makePic(); return; }
+        const text = listText(head, groups(), opts);
+        if (e.target.closest(`[data-copy]`)) { try { await navigator.clipboard.writeText(text); toast(`Copied`); } catch { await shareOut({ title: head.title, text }); } return; }
+        if (e.target.closest(`[data-go]`)) {
+          const ok = opts.as === `pic`
+            ? await shareOut({ title: head.title, text: head.text ? `${head.text} · ${itemsWord(total)}` : head.title, file: pic })
+            : await shareOut({ title: head.title, text });
+          if (ok) { shared = true; resolve(true); close(); }
+        }
+      });
+      draw();
+    }, { onClose: () => { if (!shared) resolve(false); } });
   });
 }
 
