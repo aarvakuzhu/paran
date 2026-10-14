@@ -1182,6 +1182,7 @@ function viewItem(view, r) {
       <div class="detail-top">
         <button type="button" class="back" data-a="back">${icon(`back`)} Back</button>
         <div class="detail-tools">
+          <button type="button" class="icon-btn" data-a="share" aria-label="Share">${icon(`share`)}</button>
           <a class="icon-btn" href="#/edit/${esc(item.id)}" aria-label="Edit">${icon(`edit`)}</a>
           <button type="button" class="icon-btn" data-a="menu" aria-label="More actions">${icon(`more`)}</button>
         </div>
@@ -1248,6 +1249,7 @@ function viewItem(view, r) {
     const a = b.dataset.a;
     if (a === `back`) goBack(`#/`);
     else if (a === `menu`) itemMenu(item);
+    else if (a === `share`) shareItem(item);
     else if (a === `move`) {
       const id = await pickLocation(item.locationId, `Move to…`);
       if (id) await moveWithUndo([item], id);
@@ -1701,6 +1703,7 @@ function viewPlace(view, r) {
         <h1>${loc ? `${icon(KIND_ICON[loc.kind] || `box`)} ${esc(loc.name)}` : `Places`}</h1>
         ${loc ? `<div class="detail-tools">
             ${loc.kind === `container` ? `<button class="btn ghost small" data-a="qr">${icon(`qr`)} QR label</button>` : ``}
+            <button class="icon-btn" data-a="share" aria-label="Share what’s here">${icon(`share`)}</button>
             <button class="icon-btn" data-a="menu" aria-label="Place options">${icon(`more`)}</button></div>` : ``}
       </div>
       ${loc ? `<div class="place-add"><a class="btn primary" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>
@@ -1727,7 +1730,200 @@ function viewPlace(view, r) {
     if (b.dataset.a === `menu`) placeMenu(loc);
     if (b.dataset.a === `qr`) printLabel(loc);
     if (b.dataset.a === `scan`) scanPlace(loc.id);
+    if (b.dataset.a === `share`) sharePlace(loc);
   };
+}
+
+// ============================================================ Share with anyone (a copy via the phone's share sheet)
+const SHARE_SIGN = `Shared from Stash`;
+
+/** Phone share sheet → files if supported → text only → clipboard → a sheet to copy from. */
+async function shareOut({ title, text, file }) {
+  const data = { title, text };
+  try {
+    if (file && navigator.canShare?.({ files: [file] })) { await navigator.share({ ...data, files: [file] }); return true; }
+    if (navigator.share) {
+      if (file && !navigator.canShare) { /* old browsers: text only */ }
+      await navigator.share(data); return true;
+    }
+  } catch (e) {
+    if (e?.name === `AbortError`) return false; // they closed the share sheet
+  }
+  if (file) { // desktop: save the picture, copy the text
+    const a = document.createElement(`a`); a.href = URL.createObjectURL(file); a.download = file.name; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  try { await navigator.clipboard.writeText(text); toast(file ? `Picture saved and text copied` : `Copied. Paste it into a message.`); return true; }
+  catch {
+    sheet(`Copy this`, (el) => { el.innerHTML = `<textarea class="share-copy" rows="10" readonly>${esc(text)}</textarea>`; const t = $(`textarea`, el); t.focus(); t.select(); });
+    return true;
+  }
+}
+
+const dataUrlToBlob = async (u) => (await fetch(u)).blob();
+async function itemPhotoFile(item) {
+  try {
+    const url = item.photoId || repo.thumbs[item.id] ? await repo.photoObjectUrl(item).catch(() => null) : null;
+    const blob = url ? await (await fetch(url)).blob() : repo.thumbs[item.id] ? await dataUrlToBlob(repo.thumbs[item.id]) : null;
+    if (!blob) return null;
+    return new File([blob], `${item.name.replace(/[^\w\- ]+/g, ``).trim() || `item`}.jpg`, { type: blob.type || `image/jpeg` });
+  } catch { return null; }
+}
+
+function shareItem(item) {
+  const hasPhoto = Boolean(item.photoId || repo.thumbs[item.id]);
+  const opts = { photo: hasPhoto, where: true };
+  let file = null; // fetched up front: phones only allow sharing straight from the tap
+  const textOf = () => [
+    `${item.name}${Number(item.qty) > 1 ? ` ×${item.qty}` : ``}`,
+    item.purpose ? `For: ${item.purpose}` : ``,
+    item.size ? `Size: ${item.size}` : ``,
+    item.notes ? item.notes.split(`\n`)[0] : ``,
+    opts.where && item.locationId ? `Where: ${repo.pathText(item.locationId)}` : ``,
+  ].filter(Boolean).join(`\n`) + `\n\n${SHARE_SIGN}`;
+  sheet(`Share ${item.name}`, (el, close) => {
+    const draw = () => {
+      el.innerHTML = `
+        <div class="share-card">${opts.photo && hasPhoto ? thumbHtml(item, `share-thumb`) : ``}<pre class="share-preview">${esc(textOf())}</pre></div>
+        ${hasPhoto ? `<label class="check"><input type="checkbox" data-o="photo" ${opts.photo ? `checked` : ``}><span>Include photo</span></label>` : ``}
+        <label class="check"><input type="checkbox" data-o="where" ${opts.where ? `checked` : ``}><span>Include where it’s kept</span></label>
+        <p class="fine">They get a copy to read. Nothing in your inventory is shared.</p>
+        <div class="row-actions"><button type="button" class="btn ghost" data-copy>Copy text</button><button type="button" class="btn primary" data-go>${icon(`share`)} Share</button></div>`;
+    };
+    el.addEventListener(`change`, (e) => { const o = e.target.dataset.o; if (o) { opts[o] = e.target.checked; draw(); } });
+    el.addEventListener(`click`, async (e) => {
+      if (e.target.closest(`[data-copy]`)) {
+        try { await navigator.clipboard.writeText(textOf()); toast(`Copied`); } catch { await shareOut({ title: item.name, text: textOf() }); }
+        return;
+      }
+      if (e.target.closest(`[data-go]`)) {
+        const ok = await shareOut({ title: item.name, text: textOf(), file: opts.photo ? file : null });
+        if (ok) close();
+      }
+    });
+    draw();
+    if (hasPhoto) itemPhotoFile(item).then((f) => { file = f; });
+  });
+}
+
+/** Everything inside a place, grouped by the spot directly below it. */
+function placeGroups(loc) {
+  const sortByName = (list) => [...list].sort((a, b) => a.name.localeCompare(b.name));
+  const groups = [];
+  const direct = repo.itemsIn(loc.id);
+  if (direct.length) groups.push({ name: ``, items: sortByName(direct) });
+  for (const k of repo.childrenOf(loc.id)) {
+    const items = repo.itemsIn(k.id, true);
+    if (items.length) groups.push({ name: k.name, items: sortByName(items) });
+  }
+  return groups;
+}
+
+function placeText(loc, groups, { purpose }) {
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const line = (i) => `• ${i.name}${Number(i.qty) > 1 ? ` ×${i.qty}` : ``}${purpose && i.purpose ? ` – ${i.purpose}` : ``}`;
+  const parts = [`${repo.pathText(loc.id)} · ${total} item${total === 1 ? `` : `s`}`];
+  for (const g of groups) {
+    parts.push(``);
+    if (g.name) parts.push(`${g.name}:`);
+    g.items.forEach((i) => parts.push(line(i)));
+  }
+  parts.push(``, SHARE_SIGN);
+  return parts.join(`\n`);
+}
+
+/** A picture of the list with photos, for messaging apps. */
+async function placePicture(loc, groups, { purpose }) {
+  const MAX = 80;
+  const W = 1080, PAD = 48, ROW = purpose ? 132 : 112, IMG = 88, HEAD = 64;
+  let shown = 0; const rows = [];
+  for (const g of groups) {
+    if (shown >= MAX) break;
+    if (g.name) rows.push({ head: g.name });
+    for (const i of g.items) { if (shown >= MAX) break; rows.push({ item: i }); shown++; }
+  }
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const H = PAD + 120 + rows.reduce((h, r) => h + (r.head ? HEAD : ROW), 0) + (total > shown ? 60 : 0) + 80;
+  const c = document.createElement(`canvas`); c.width = W; c.height = H;
+  const x = c.getContext(`2d`);
+  const font = (w, s) => `${w} ${s}px -apple-system, "Segoe UI", Roboto, Arial, sans-serif`;
+  const fit = (t, max) => { if (x.measureText(t).width <= max) return t; while (t && x.measureText(`${t}…`).width > max) t = t.slice(0, -1); return `${t}…`; };
+  x.fillStyle = `#fffdf9`; x.fillRect(0, 0, W, H);
+  x.fillStyle = `#1d1b18`; x.font = font(700, 48); x.fillText(fit(loc.name, W - PAD * 2), PAD, PAD + 44);
+  x.fillStyle = `#5d5850`; x.font = font(400, 28);
+  x.fillText(fit(`${repo.pathOf(loc.id).slice(0, -1).map((l) => l.name).concat([`${total} item${total === 1 ? `` : `s`}`]).join(` · `)}`, W - PAD * 2), PAD, PAD + 90);
+  const load = (src) => new Promise((r) => { const im = new Image(); im.onload = () => r(im); im.onerror = () => r(null); im.src = src; });
+  let y = PAD + 120;
+  for (const r of rows) {
+    if (r.head) {
+      x.fillStyle = `#2f5d50`; x.font = font(700, 30); x.fillText(fit(r.head, W - PAD * 2), PAD, y + 44); y += HEAD; continue;
+    }
+    const i = r.item; const t = repo.thumbs[i.id];
+    const iy = y + (ROW - IMG) / 2;
+    x.save(); x.beginPath(); x.roundRect(PAD, iy, IMG, IMG, 14); x.clip();
+    const im = t ? await load(t) : null;
+    if (im) {
+      const s = Math.max(IMG / im.width, IMG / im.height); const w = im.width * s, h = im.height * s;
+      x.drawImage(im, PAD + (IMG - w) / 2, iy + (IMG - h) / 2, w, h);
+    } else { x.fillStyle = `hsl(${tintOf(i.id || i.name)} 30% 84%)`; x.fillRect(PAD, iy, IMG, IMG); }
+    x.restore();
+    const tx = PAD + IMG + 28, tw = W - tx - PAD;
+    x.fillStyle = `#1d1b18`; x.font = font(600, 34);
+    x.fillText(fit(`${i.name}${Number(i.qty) > 1 ? `  ×${i.qty}` : ``}`, tw), tx, y + (purpose && i.purpose ? ROW / 2 - 6 : ROW / 2 + 12));
+    if (purpose && i.purpose) { x.fillStyle = `#5d5850`; x.font = font(400, 27); x.fillText(fit(i.purpose, tw), tx, y + ROW / 2 + 34); }
+    x.fillStyle = `#e2ddd4`; x.fillRect(tx, y + ROW - 1, W - tx - PAD, 1);
+    y += ROW;
+  }
+  x.fillStyle = `#8f897f`; x.font = font(400, 26);
+  if (total > shown) { x.fillText(`+ ${total - shown} more`, PAD, y + 40); y += 60; }
+  x.fillText(SHARE_SIGN, PAD, H - PAD);
+  const blob = await new Promise((r) => c.toBlob(r, `image/jpeg`, 0.86));
+  return new File([blob], `${loc.name.replace(/[^\w\- ]+/g, ``).trim() || `list`}.jpg`, { type: `image/jpeg` });
+}
+
+function sharePlace(loc) {
+  const groups = placeGroups(loc);
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  if (!total) { toast(`Nothing in ${loc.name} yet`); return; }
+  const opts = { as: `text`, purpose: false };
+  let pic = null, picKey = ``;
+  sheet(`Share what’s in ${loc.name}`, (el, close) => {
+    const makePic = async () => {
+      const key = `${opts.purpose}`;
+      if (pic && picKey === key) return;
+      picKey = key; pic = null; draw();
+      const f = await placePicture(loc, groups, opts);
+      if (picKey === key) { pic = f; draw(); }
+    };
+    const draw = () => {
+      const text = placeText(loc, groups, opts);
+      el.innerHTML = `
+        <div class="seg" role="tablist">
+          <button type="button" data-as="text" class="${opts.as === `text` ? `on` : ``}" role="tab">List</button>
+          <button type="button" data-as="pic" class="${opts.as === `pic` ? `on` : ``}" role="tab">${icon(`photo`)} Picture</button>
+        </div>
+        ${opts.as === `text` ? `<pre class="share-preview list">${esc(text)}</pre>`
+          : pic ? `<img class="share-pic" src="${URL.createObjectURL(pic)}" alt="Preview">` : `<div class="share-pic wait"><div class="spinner"></div></div>`}
+        <label class="check"><input type="checkbox" data-o="purpose" ${opts.purpose ? `checked` : ``}><span>Include what each is for</span></label>
+        <p class="fine">${total} item${total === 1 ? `` : `s`}. They get a copy to read. Nothing in your inventory is shared.</p>
+        <div class="row-actions">${opts.as === `text` ? `<button type="button" class="btn ghost" data-copy>Copy text</button>` : ``}
+          <button type="button" class="btn primary" data-go ${opts.as === `pic` && !pic ? `disabled` : ``}>${icon(`share`)} Share</button></div>`;
+    };
+    el.addEventListener(`change`, (e) => { if (e.target.dataset.o) { opts.purpose = e.target.checked; draw(); if (opts.as === `pic`) makePic(); } });
+    el.addEventListener(`click`, async (e) => {
+      const as = e.target.closest(`[data-as]`);
+      if (as) { opts.as = as.dataset.as; draw(); if (opts.as === `pic`) makePic(); return; }
+      const text = placeText(loc, groups, opts);
+      if (e.target.closest(`[data-copy]`)) { try { await navigator.clipboard.writeText(text); toast(`Copied`); } catch { await shareOut({ title: loc.name, text }); } return; }
+      if (e.target.closest(`[data-go]`)) {
+        const ok = opts.as === `pic`
+          ? await shareOut({ title: loc.name, text: `${repo.pathText(loc.id)} · ${total} item${total === 1 ? `` : `s`}`, file: pic })
+          : await shareOut({ title: loc.name, text });
+        if (ok) close();
+      }
+    });
+    draw();
+  });
 }
 
 // ============================================================ Scan many: pan across a shelf, AI lists everything
@@ -1773,6 +1969,7 @@ function placeMenu(loc) {
   sheet(loc.name, (el, close) => {
     el.innerHTML = `<div class="menu">
       <button data-m="bring">${icon(`ret`)} Bring items here</button>
+      <button data-m="share">${icon(`share`)} Share what’s here</button>
       <button data-m="new">${icon(`plus`)} Add a place inside</button>
       <button data-m="move">${icon(`move`)} Move ${esc(loc.name)} to another place</button>
       <button data-m="rename">${icon(`edit`)} Rename</button>
@@ -1782,6 +1979,7 @@ function placeMenu(loc) {
       const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
       close();
       if (m === `bring`) bringItemsSheet(loc);
+      else if (m === `share`) sharePlace(loc);
       else if (m === `new`) {
         const name = await promptSheet(`New place in ${loc.name}`, { label: `Name`, placeholder: `e.g. Top shelf, Blue bin, Drawer 2`, okLabel: `Add` });
         if (name) { repo.saveLocation({ name, parentId: loc.id, kind: kindFor(loc.id) }); toast(`Added ${name}`); }

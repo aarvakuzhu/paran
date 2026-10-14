@@ -632,3 +632,12 @@ body.scanning { overflow: hidden; }
 .scan-wait > div { background: var(--surface); color: var(--ink); border-radius: 18px; padding: 24px 28px; text-align: center; box-shadow: var(--shadow); }
 .scan-wait b, .scan-wait small { display: block; }
 .scan-wait small { color: var(--ink-2); margin-top: 4px; }
+
+/* ---------- Share ---------- */
+.share-card { display: flex; gap: 12px; align-items: flex-start; padding: 12px; background: var(--surface-2); border-radius: 14px; margin-bottom: 10px; }
+.share-thumb { width: 72px; height: 72px; border-radius: 10px; object-fit: cover; flex: none; }
+.share-preview { margin: 0; white-space: pre-wrap; word-break: break-word; font: 0.92rem/1.45 var(--font); color: var(--ink); }
+.share-preview.list { max-height: 42vh; overflow: auto; padding: 12px; background: var(--surface-2); border-radius: 14px; margin: 10px 0; }
+.share-pic { display: block; width: 100%; max-height: 46vh; object-fit: contain; object-position: top; border-radius: 14px; background: var(--surface-2); margin: 10px 0; border: 1px solid var(--line); }
+.share-pic.wait { height: 200px; display: grid; place-items: center; }
+.share-copy { width: 100%; font: 0.9rem/1.4 var(--font); padding: 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
