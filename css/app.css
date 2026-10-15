@@ -648,3 +648,11 @@ body.scanning { overflow: hidden; }
 .share-photos { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 10px 0 0; }
 .share-photos .sp-img { width: 100%; aspect-ratio: 1; border-radius: 10px; object-fit: cover; }
 .share-photos .sp-img.ph { display: grid; place-items: center; background: var(--surface-2); color: var(--ink-3); }
+
+/* About sheet */
+.about { padding: 4px 2px 12px; }
+.about-mark { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; margin: 4px auto 8px; background: var(--accent-soft); color: var(--accent); }
+.about-mark .ic { width: 28px; height: 28px; }
+.about h3 { font-size: 1rem; margin: 18px 0 6px; }
+.about p { margin: 0 0 10px; line-height: 1.5; color: var(--ink-2); }
+.about .about-by { margin-top: 18px; color: var(--ink-3); }

@@ -2180,6 +2180,9 @@ function viewMore(view, r) {
           : `${googleConfigured() ? `<button data-m="google">${googleG()} Sign in with Google</button>` : ``}
              <button data-m="reset" class="danger">${icon(`trash`)} Clear demo data</button>`}
       </div>
+      <div class="label-sm">About</div>
+      <div class="menu"><button data-m="about">${icon(`info`)} About ${esc(CONFIG.APP_NAME)}</button></div>
+
       <p class="fine center">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? driveWhere(repo.backend) : ``}</p>
     </div>`;
 
@@ -2203,6 +2206,7 @@ function viewMore(view, r) {
       if (await confirmSheet(`Turn off AI suggestions?`, `The API key is removed from this device. Items already added keep their details.`, `Turn off`, true)) { disableAi(); render(); toast(`AI suggestions off`); }
       return;
     }
+    if (m === `about`) { aboutSheet(); return; }
     if (m === `csv`) {
       const a = document.createElement(`a`);
       a.href = URL.createObjectURL(repo.exportCsv());
@@ -2218,6 +2222,21 @@ function viewMore(view, r) {
       localStorage.removeItem(`stash.cache.demo`); localStorage.removeItem(MODE_KEY); location.hash = ``; location.reload();
     }
   };
+}
+
+function aboutSheet() {
+  sheet(`About ${CONFIG.APP_NAME}`, (el) => {
+    el.innerHTML = `<div class="about">
+      <div class="about-mark">${icon(`box`)}</div>
+      <h3>Why “${esc(CONFIG.APP_NAME)}”</h3>
+      <p>In Tamil homes, the <b>paran</b> (<span lang="ta">பரண்</span>) is the storage loft above the kitchen or hallway.
+        Everything goes up there, and nobody remembers what’s in it.</p>
+      <p>${esc(CONFIG.APP_NAME)} is that loft, except you can find things.</p>
+      <h3>Your data stays yours</h3>
+      <p>${repo.backend.kind === `google` ? `Everything lives in your own Google Drive.` : `In demo mode, everything stays in this browser.`} ${esc(CONFIG.APP_NAME)} has no server and never sees your inventory or photos.</p>
+      <p class="fine center about-by">Made by AarvaKuzhu</p>
+    </div>`;
+  });
 }
 
 boot();

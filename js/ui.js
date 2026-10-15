@@ -75,6 +75,7 @@ const ICONS = {
   x: `<path d="M6 6l12 12M18 6 6 18"/>`,
   home: `<path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/>`,
   room: `<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h7V4"/>`,
+  info: `<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>`,
   box: `<path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/>`,
   place: `<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/>`,
   more: `<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>`,
