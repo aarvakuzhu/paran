@@ -73,7 +73,7 @@ const PHOTO_CACHE_MAX = 150;
 
 class GoogleBackend {
   kind = `google`;
-  user = null; sheetId = null; photoFolderId = null; rootFolderId = null; isOwner = true;
+  user = null; sheetId = null; sheetName = null; photoFolderId = null; rootFolderId = null; isOwner = true;
 
   get cacheKey() { return this.sheetId; }
   get canShare() { return this.isOwner; }
@@ -108,8 +108,8 @@ class GoogleBackend {
   // Remember enough to reopen straight into the cached inventory, even before Google has re-issued a token.
   saveSession() {
     if (this.legacy) return;
-    const { user, sheetId, isOwner, rootFolderId, photoFolderId, sheetUrl } = this;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, isOwner, rootFolderId, photoFolderId, sheetUrl }));
+    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl } = this;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl }));
   }
   static savedSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || `null`); } catch { return null; } }
   resume() {
@@ -138,11 +138,13 @@ class GoogleBackend {
       this.user = { email: u.email, name: u.name || u.email, picture: u.picture };
       await this.inspectSheet(); this.legacy = false;
     }
+    else if (!this.sheetName) await this.inspectSheet().catch(() => {}); // sessions saved before sheet names were kept
     await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession();
   }
 
   async inspectSheet() {
     const m = await drive.meta(this.sheetId);
+    this.sheetName = m.name || null;
     const owner = m.owners?.[0]?.emailAddress;
     this.isOwner = !owner || owner === this.user.email;
     this.rootFolderId = this.isOwner ? (m.parents?.[0] || null) : null;
@@ -157,7 +159,7 @@ class GoogleBackend {
     await sheets.batchUpdateValues(ss.spreadsheetId, TABS.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
     await sheets.append(ss.spreadsheetId, `Members!A1`, [objectToRow(
       { email: this.user.email, role: `owner`, invitedBy: ``, joinedAt: now() }, MEMBER_COLS)]);
-    this.sheetId = ss.spreadsheetId; this.rootFolderId = root.id; this.isOwner = true;
+    this.sheetId = ss.spreadsheetId; this.sheetName = CONFIG.SHEET_NAME; this.rootFolderId = root.id; this.isOwner = true;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
   }
 
@@ -186,7 +188,7 @@ class GoogleBackend {
     if (found.length) this.photoFolderId = found[0].id;
     else {
       const f = await drive.createFolder(
-        this.isOwner ? `Photos` : `Stash photos (shared inventory)`, this.isOwner ? this.rootFolderId : null, role);
+        this.isOwner ? `Photos` : `${CONFIG.APP_NAME} photos (shared inventory)`, this.isOwner ? this.rootFolderId : null, role);
       this.photoFolderId = f.id;
       if (!this.isOwner) {
         // let everyone in the household open the full-size photos this member adds

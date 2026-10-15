@@ -186,14 +186,14 @@ export async function pickSpreadsheet() {
   return new Promise((resolve) => {
     const view = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS)
       .setMode(google.picker.DocsViewMode.LIST)
-      .setQuery(CONFIG.SHEET_NAME)
+      .setQuery(`Inventory`) // matches both “Paran Inventory” and older “Stash Inventory”
       .setOwnedByMe(false);
     const picker = new google.picker.PickerBuilder()
       .addView(view)
       .setOAuthToken(token.access_token)
       .setDeveloperKey(CONFIG.API_KEY)
       .setAppId(CONFIG.APP_ID)
-      .setTitle(`Pick the shared “${CONFIG.SHEET_NAME}”`)
+      .setTitle(`Pick the shared inventory sheet`)
       .setCallback((data) => {
         if (data.action === google.picker.Action.PICKED) resolve(data.docs[0].id);
         else if (data.action === google.picker.Action.CANCEL) resolve(null);

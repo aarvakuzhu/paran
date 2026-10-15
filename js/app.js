@@ -187,7 +187,7 @@ function renderChoice(user) {
     <div class="choice-grid">
       <button class="choice" id="create">${icon(`plus`)}<b>Start a new inventory</b><span>Creates a “${esc(CONFIG.ROOT_FOLDER_NAME)}” folder and sheet in your Drive.</span></button>
       <button class="choice" id="join" ${pickerConfigured() ? `` : `disabled`}>${icon(`users`)}<b>Join a shared inventory</b>
-        <span>${pickerConfigured() ? `Pick the “${esc(CONFIG.SHEET_NAME)}” sheet someone shared with you.` : `Needs API_KEY and APP_ID in js/config.js.`}</span></button>
+        <span>${pickerConfigured() ? `Pick the “${esc(CONFIG.SHEET_NAME)}” (or older “${esc(CONFIG.LEGACY_SHEET_NAME)}”) sheet someone shared with you.` : `Needs API_KEY and APP_ID in js/config.js.`}</span></button>
     </div>
   </main>`;
   $(`#create`).onclick = () => start(`google`, { choice: `create` });
@@ -1742,6 +1742,10 @@ function viewPlace(view, r) {
 
 // ============================================================ Share with anyone (a copy via the phone's share sheet)
 const SHARE_SIGN = `Shared from Paran`;
+// Where this inventory lives, using the sheet's real name (older pilot inventories are still called "Stash").
+const driveWhere = (b) => b.isOwner
+  ? (b.sheetName ? `Everything is in your Google Drive, in the “${esc(b.sheetName)}” sheet and its folder.` : `Everything is in your Google Drive.`)
+  : `Everything is in the shared${b.sheetName ? ` “${esc(b.sheetName)}”` : ``} sheet.`;
 
 /** Phone share sheet → files if supported → text only → clipboard → a sheet to copy from. */
 async function shareOut({ title, text, file, files }) {
@@ -2176,7 +2180,7 @@ function viewMore(view, r) {
           : `${googleConfigured() ? `<button data-m="google">${googleG()} Sign in with Google</button>` : ``}
              <button data-m="reset" class="danger">${icon(`trash`)} Clear demo data</button>`}
       </div>
-      <p class="fine center">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? `Everything is in your Drive folder “${esc(CONFIG.ROOT_FOLDER_NAME)}”.` : ``}</p>
+      <p class="fine center">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? driveWhere(repo.backend) : ``}</p>
     </div>`;
 
   $(`#invite`)?.addEventListener(`submit`, async (e) => {
