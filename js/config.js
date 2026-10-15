@@ -8,7 +8,7 @@ export const CONFIG = {
   APP_NAME: `Paran`,
   // Names used when creating a NEW inventory. Existing ones are found by their Drive tag
   // (appProperties.stash), never by name, so inventories created as "Stash" keep working unchanged.
-  ROOT_FOLDER_NAME: `Paran – Home Inventory`,
+  ROOT_FOLDER_NAME: `Paran Inventory`,
   SHEET_NAME: `Paran Inventory`,
   LEGACY_SHEET_NAME: `Stash Inventory`, // early pilot inventories; still offered when joining
 };
