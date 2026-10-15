@@ -656,3 +656,21 @@ body.scanning { overflow: hidden; }
 .about h3 { font-size: 1rem; margin: 18px 0 6px; }
 .about p { margin: 0 0 10px; line-height: 1.5; color: var(--ink-2); }
 .about .about-by { margin-top: 18px; color: var(--ink-3); }
+
+/* ---------- Place page: rooms that expand ---------- */
+.head-links { display: flex; gap: 14px; align-items: center; }
+.rooms { display: grid; gap: 8px; }
+.room { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.room-row { display: flex; align-items: center; min-height: 58px; }
+.room-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 8px 6px 8px 10px; background: none; border: 0; text-align: left; cursor: pointer; color: var(--ink); }
+.room-toggle:active { background: var(--surface-2); }
+.room-toggle > .ic { color: var(--accent); flex: none; }
+.room .caret { width: 18px; flex: none; display: grid; place-items: center; color: var(--ink-3); }
+.room .caret .ic { width: 16px; height: 16px; transition: transform 0.15s; }
+.room.open .caret .ic { transform: rotate(90deg); }
+.room-name { min-width: 0; display: flex; flex-direction: column; font-weight: 600; }
+.room-name small { font-weight: 400; color: var(--ink-2); font-size: 0.82rem; }
+.room-open { flex: none; margin-right: 6px; color: var(--ink-3); border-left: 1px solid var(--line); border-radius: 0; height: 40px; width: 48px; }
+.room > .cards { padding: 0 10px 10px; }
+.add-list { margin-top: 10px; }
+.cards + .rooms { margin-top: 10px; }

@@ -1690,6 +1690,15 @@ function reviewItems(items, canvas, startLoc, { scan = false } = {}) {
 }
 
 // ============================================================ Places
+// Which rooms are expanded on a place page, remembered per place on this device.
+const OPEN_KEY = `paran.openRooms`;
+function openRooms(placeId) {
+  try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || `{}`)[placeId] || []); } catch { return new Set(); }
+}
+function saveOpenRooms(placeId, set) {
+  try { const all = JSON.parse(localStorage.getItem(OPEN_KEY) || `{}`); all[placeId] = [...set]; localStorage.setItem(OPEN_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+}
+
 function viewPlace(view, r) {
   const loc = r.id ? repo.locById(r.id) : null;
   if (r.id && !loc) { view.innerHTML = `<div class="empty"><h3>Place not found</h3><a class="btn ghost" href="#/places">All places</a></div>`; return; }
@@ -1714,20 +1723,52 @@ function viewPlace(view, r) {
       </div>
       ${loc ? `<div class="place-add"><a class="btn primary" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>
         <button type="button" class="btn ghost" data-a="scan">${icon(`spark`)} Scan many</button></div>` : ``}
-      ${kids.length || loc ? `<div class="label-sm">${loc ? `Places inside` : `Your places`}</div>
-        <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>`
+      ${!loc ? (kids.length ? `<div class="label-sm">Your places</div>
+        <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>
+        <a class="link small setup-link" href="#/setup">${icon(`plus`)} Quick-add rooms and places</a>`
         : `<div class="empty"><h3>No places yet</h3><p>Tell Paran where you keep things: your home and its rooms, a storage unit, the car…</p>
-            <a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a></div>`}
-      ${!loc && kids.length ? `<a class="link small setup-link" href="#/setup">${icon(`plus`)} Quick-add rooms and places</a>` : ``}
-      ${loc ? `<div class="list-head"><div class="label-sm">Everything in ${esc(loc.name)}${total ? ` · ${total}` : ``}</div>${total ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
-        ${!total ? `<p class="muted">Nothing here yet.</p>` : ``}
-        ${direct.length ? `${groups.length ? `<div class="group-head">Directly in ${esc(loc.name)}</div>` : ``}<div class="cards">${sortByName(direct).map((i) => itemCard(i)).join(``)}</div>` : ``}
-        ${groups.map((g) => `<a class="group-head link" href="#/place/${esc(g.k.id)}">${icon(KIND_ICON[g.k.kind] || `box`)} ${esc(g.k.name)} <small>${g.items.length}</small></a>
-          <div class="cards">${sortByName(g.items).map((i) => itemCard(i)).join(``)}</div>`).join(``)}` : ``}
+            <a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a></div>`) : ``}
+      ${loc ? (() => {
+        const open = openRooms(loc.id);
+        const allOpen = kids.length && kids.filter((k) => count(k.id)).every((k) => open.has(k.id));
+        const room = (k) => {
+          const n = count(k.id); const isOpen = n && open.has(k.id);
+          const subs = repo.childrenOf(k.id).length;
+          return `<section class="room${isOpen ? ` open` : ``}">
+            <div class="room-row">
+              <button type="button" class="room-toggle" ${n ? `data-toggle="${esc(k.id)}" aria-expanded="${isOpen ? `true` : `false`}"` : `data-open="${esc(k.id)}"`}>
+                <span class="caret">${n ? icon(`chevron`) : ``}</span>${icon(KIND_ICON[k.kind] || `box`)}
+                <span class="room-name">${esc(k.name)}<small>${n ? itemsWord(n) : `Empty`}${subs ? ` · ${subs} place${subs > 1 ? `s` : ``} inside` : ``}</small></span>
+              </button>
+              <a class="icon-btn room-open" href="#/place/${esc(k.id)}" aria-label="Open ${esc(k.name)}">${icon(`chevron`)}</a>
+            </div>
+            ${isOpen ? `<div class="cards">${sortByName(repo.itemsIn(k.id, true)).map((i) => itemCard(i)).join(``)}</div>` : ``}
+          </section>`;
+        };
+        return `
+        <div class="list-head"><div class="label-sm">Inside ${esc(loc.name)}${total ? ` · ${itemsWord(total)}` : ``}</div>
+          <div class="head-links">${groups.length > 1 ? `<button type="button" class="link small" data-a="${allOpen ? `collapse` : `expand`}">${allOpen ? `Collapse all` : `Expand all`}</button>` : ``}
+          ${direct.length || kids.some((k) => open.has(k.id) && count(k.id)) ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div></div>
+        ${direct.length ? `${kids.length ? `<div class="group-head">Directly in ${esc(loc.name)}</div>` : ``}<div class="cards">${sortByName(direct).map((i) => itemCard(i)).join(``)}</div>` : ``}
+        ${kids.length ? `<div class="rooms">${kids.map(room).join(``)}</div>` : ``}
+        ${!total && !kids.length ? `<p class="muted">Nothing here yet.</p>` : ``}
+        <div class="list add-list">${addInsideRow}</div>`;
+      })() : ``}
     </div>`;
 
   view.onclick = async (e) => {
+    const t = e.target.closest(`[data-toggle]`);
+    if (t && loc) {
+      const open = openRooms(loc.id); const id = t.dataset.toggle;
+      if (open.has(id)) open.delete(id); else open.add(id);
+      saveOpenRooms(loc.id, open); render(); return;
+    }
+    const o = e.target.closest(`[data-open]`); if (o) { location.hash = `#/place/${o.dataset.open}`; return; }
     const b = e.target.closest(`[data-a]`); if (!b) return;
+    if ((b.dataset.a === `expand` || b.dataset.a === `collapse`) && loc) {
+      saveOpenRooms(loc.id, new Set(b.dataset.a === `expand` ? kids.filter((k) => count(k.id)).map((k) => k.id) : []));
+      render(); return;
+    }
     if (b.dataset.a === `new`) {
       const name = await promptSheet(loc ? `New place in ${loc.name}` : `New place`, {
         label: `Name`, placeholder: loc ? `e.g. Top shelf, Blue bin, Drawer 2` : `e.g. Home, Storage unit, Office`, okLabel: `Add` });
