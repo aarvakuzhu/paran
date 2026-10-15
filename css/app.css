@@ -674,3 +674,15 @@ body.scanning { overflow: hidden; }
 .room > .cards { padding: 0 10px 10px; }
 .add-list { margin-top: 10px; }
 .cards + .rooms { margin-top: 10px; }
+
+/* ---------- QR label scanning ---------- */
+.search .search-qr { margin-right: -8px; flex: none; color: var(--accent); }
+.search .search-qr .ic { color: var(--accent); }
+.menu small { margin-left: auto; color: var(--ink-3); font-size: 0.78rem; text-align: right; }
+.qrscan .qr-frame { position: absolute; left: 50%; top: 46%; width: min(64vw, 280px); aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none; }
+.qrscan .qr-frame i { position: absolute; width: 34px; height: 34px; border: 4px solid #fff; border-radius: 6px; }
+.qrscan .qr-frame i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; }
+.qrscan .qr-frame i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; }
+.qrscan .qr-frame i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
+.qrscan .qr-frame i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
+.qrscan .qr-hint { position: absolute; left: 16px; right: 16px; bottom: calc(40px + env(safe-area-inset-bottom)); margin: 0 auto; }

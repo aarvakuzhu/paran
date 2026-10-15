@@ -6,6 +6,7 @@ import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.
 import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
+import { scanLabel } from './qrscan.js';
 
 const MODE_KEY = `stash.mode`;
 const RECENT_LOC_KEY = `stash.recentLocs`;
@@ -379,8 +380,15 @@ function pickLocation(startId = ``, title = `Where does it live?`, { exclude = n
     const ok = (l) => !exclude || !exclude.has(l.id);
     sheet(title, (el, close) => {
       const finish = (id) => { done = true; rememberLoc(id); resolve(id); close(); };
-      el.innerHTML = `<label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search places" autocomplete="off" enterkeyhint="search"></label><div class="pk-body"></div>`;
+      el.innerHTML = `<label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search places" autocomplete="off" enterkeyhint="search">
+        <button type="button" class="icon-btn search-qr" data-scanpick aria-label="Scan a label">${icon(`qr`)}</button></label><div class="pk-body"></div>`;
       const qEl = $(`[data-q]`, el); const body = $(`.pk-body`, el);
+      $(`[data-scanpick]`, el).addEventListener(`click`, async (e) => {
+        e.preventDefault();
+        const loc = await scanToPlace(title, `Point at the label on the box or shelf.`);
+        if (loc && ok(loc)) finish(loc.id);
+        else if (loc) toast(`Can’t put it there`);
+      });
       const draw = () => {
         const q = qEl.value.trim().toLowerCase();
         if (q) {
@@ -950,7 +958,8 @@ function viewFind(view) {
     <div class="find-top" id="find-top">
       <div class="hello"><small>${esc(hello)}</small><h1>Your things</h1></div>
       <div class="search-wrap">
-        <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="What do you need? e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search"></label>
+        <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="Search, e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search">
+          <button type="button" class="icon-btn search-qr" id="scanlabel" aria-label="Scan a box or shelf label">${icon(`qr`)}</button></label>
       </div>
       ${cats.length ? `<div class="chips scroll" id="filters">${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}</div>` : `<div id="filters"></div>`}
     </div>
@@ -961,6 +970,7 @@ function viewFind(view) {
   q.addEventListener(`focus`, searching);
   q.addEventListener(`blur`, () => setTimeout(searching, 250)); // let a chip tap land first
   q.addEventListener(`input`, () => { findState.q = q.value; renderResults(); });
+  $(`#scanlabel`).addEventListener(`click`, (e) => { e.preventDefault(); scanLabelFlow(); });
   $(`#results`).addEventListener(`click`, async (e) => {
     const p = e.target.closest(`[data-person]`); if (p) { e.preventDefault(); return personSheet(p.dataset.person); }
     const s = e.target.closest(`[data-show]`); if (s) { e.preventDefault(); findState.filter = s.dataset.show; renderResults(); return window.scrollTo(0, 0); }
@@ -1716,6 +1726,7 @@ function viewPlace(view, r) {
       ${loc ? `<div class="crumbs top"><a href="#/places">All places</a><span class="sep">›</span>${crumbs(loc.id)}</div>` : ``}
       <div class="place-head">
         <h1>${loc ? `${icon(KIND_ICON[loc.kind] || `box`)} ${esc(loc.name)}` : `Places`}</h1>
+        ${!loc ? `<button class="btn ghost small" data-a="scanlabel">${icon(`qr`)} Scan label</button>` : ``}
         ${loc ? `<div class="detail-tools">
             ${loc.kind === `container` ? `<button class="btn ghost small" data-a="qr">${icon(`qr`)} QR label</button>` : ``}
             <button class="icon-btn" data-a="share" aria-label="Share what’s here">${icon(`share`)}</button>
@@ -1778,6 +1789,7 @@ function viewPlace(view, r) {
     if (b.dataset.a === `qr`) printLabel(loc);
     if (b.dataset.a === `scan`) scanPlace(loc.id);
     if (b.dataset.a === `share`) sharePlace(loc);
+    if (b.dataset.a === `scanlabel`) scanLabelFlow();
   };
 }
 
@@ -2036,6 +2048,44 @@ function shareList({ sheetTitle, head, groups: groupsFor, groupLabel, byPlace = 
   });
 }
 
+// ============================================================ Scan a QR label (in the app)
+/** The place a label points to, if it's in this inventory. */
+function labelLoc(text) {
+  const m = /#\/place\/([\w-]+)/.exec(String(text || ``));
+  const loc = m && repo.locById(m[1]);
+  return loc && !loc.deleted ? loc : null;
+}
+const labelVerdict = (t) => (labelLoc(t) ? true
+  : /#\/place\//.test(t) ? `This label is from another inventory, or that place was removed.` : `That isn’t a Paran label.`);
+async function scanToPlace(title, hint) {
+  const text = await scanLabel({ title, hint, accept: labelVerdict });
+  return text ? labelLoc(text) : null;
+}
+
+/** Scan from Find or Places: see what's inside, or put things away there. */
+async function scanLabelFlow() {
+  const loc = await scanToPlace(`Scan a label`, `Point at a box or shelf label.`);
+  if (!loc) return;
+  const n = repo.itemsIn(loc.id, true).length;
+  sheet(loc.name, (el, close) => {
+    el.innerHTML = `<p class="muted small">${esc(repo.pathText(loc.id))} · ${itemsWord(n)}</p>
+      <div class="menu">
+        <button data-m="open">${icon(`search`)} See what’s inside</button>
+        <button data-m="bring">${icon(`ret`)} Put items away here</button>
+        <button data-m="add">${icon(`plus`)} Add a new item here</button>
+        <button data-m="scan">${icon(`spark`)} Scan many into it</button>
+      </div>`;
+    el.onclick = (e) => {
+      const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
+      close();
+      if (m === `open`) location.hash = `#/place/${loc.id}`;
+      else if (m === `add`) location.hash = `#/add?loc=${loc.id}`;
+      else if (m === `bring`) bringItemsSheet(loc);
+      else if (m === `scan`) scanPlace(loc.id);
+    };
+  });
+}
+
 // ============================================================ Scan many: pan across a shelf, AI lists everything
 const SCAN_MAX = 8;
 async function scanPlace(locId) {
@@ -2128,7 +2178,7 @@ async function printLabel(loc) {
     <style>body{font-family:system-ui,sans-serif;margin:24px;color:#111}.label{display:flex;gap:16px;align-items:center;border:2px dashed #999;padding:16px;width:fit-content;border-radius:12px}
     .label svg{width:140px;height:140px}.n{font-size:22px;font-weight:700}.p{color:#555;font-size:13px;margin-top:4px}ul{columns:2;font-size:13px;color:#333;max-width:640px}
     @media print{button{display:none}}</style></head><body>
-    <div class="label">${svg}<div><div class="n">${esc(loc.name)}</div><div class="p">${esc(repo.pathText(loc.id))}</div><div class="p">Scan to see what’s inside</div></div></div>
+    <div class="label">${svg}<div><div class="n">${esc(loc.name)}</div><div class="p">${esc(repo.pathText(loc.id))}</div><div class="p">Scan in Paran (QR button by the search bar) to see what’s inside</div></div></div>
     ${items.length ? `<h3>Inside (${items.length})</h3><ul>${items.map((i) => `<li>${esc(i.name)}</li>`).join(``)}</ul>` : ``}
     <p><button onclick="print()">Print</button></p></body></html>`);
   w.document.close();
