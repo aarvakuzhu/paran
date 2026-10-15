@@ -5,7 +5,7 @@ export const CONFIG = {
   API_KEY: `AIzaSyCcaHYDWy1h3BFsIB0u5AA84EtDEWMr1k0`,         // API key restricted to the Google Picker API (only needed to join a shared inventory)
   APP_ID: `329365162340`,          // Google Cloud project NUMBER (digits only), used by the Picker
 
-  APP_NAME: `Stash`,
+  APP_NAME: `Paran`,
   ROOT_FOLDER_NAME: `Stash – Home Inventory`,
   SHEET_NAME: `Stash Inventory`,
 };

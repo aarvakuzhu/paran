@@ -1,6 +1,6 @@
 // Optional AI suggestions via Google Gemini, using the user's OWN API key.
 // Off by default; requires explicit consent. The key stays on this device (never written to the Sheet).
-// Photos go from the device straight to Google's Gemini API; Stash has no server in between.
+// Photos go from the device straight to Google's Gemini API; Paran has no server in between.
 
 const SETTINGS_KEY = `stash.ai`;
 const USAGE_KEY = `stash.ai.usage`;

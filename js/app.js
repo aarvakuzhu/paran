@@ -42,7 +42,7 @@ function registerServiceWorker() {
     if (!hadController || reloading) return; // first install: nothing to update
     const busy = document.querySelector(`.sheet-wrap.open, .viewer`) || [`add`, `edit`].includes(route().name);
     if (Date.now() - bootedAt < 4000 && !busy) { reloading = true; location.reload(); return; }
-    toast(`A new version of Stash is ready`, { action: `Reload`, ms: 15000, onAction: () => { reloading = true; location.reload(); } });
+    toast(`A new version of Paran is ready`, { action: `Reload`, ms: 15000, onAction: () => { reloading = true; location.reload(); } });
   });
 }
 
@@ -948,7 +948,7 @@ function viewFind(view) {
   const hello = `${hr < 12 ? `Good morning` : hr < 18 ? `Good afternoon` : `Good evening`}${first ? `, ${first}` : ``}`;
   view.innerHTML = `
     <div class="find-top" id="find-top">
-      <div class="hello"><small>${esc(hello)}</small><h1>Your stash</h1></div>
+      <div class="hello"><small>${esc(hello)}</small><h1>Your things</h1></div>
       <div class="search-wrap">
         <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="What do you need? e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search"></label>
       </div>
@@ -1008,7 +1008,7 @@ function renderResults() {
   if (!all.length) {
     const noPlaces = !repo.locations.some((l) => !l.deleted);
     box.innerHTML = `<div class="empty">${icon(`box`, `big`)}<h3>Nothing here yet</h3>
-      ${noPlaces ? `<p>Start by telling Stash where you keep things. It takes 30 seconds.</p><a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a>`
+      ${noPlaces ? `<p>Start by telling Paran where you keep things. It takes 30 seconds.</p><a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a>`
         : `<p>Add the first thing you always end up hunting for.</p><a class="btn primary" href="#/add">${icon(`plus`)} Add an item</a>`}</div>`;
     return;
   }
@@ -1716,7 +1716,7 @@ function viewPlace(view, r) {
         <button type="button" class="btn ghost" data-a="scan">${icon(`spark`)} Scan many</button></div>` : ``}
       ${kids.length || loc ? `<div class="label-sm">${loc ? `Places inside` : `Your places`}</div>
         <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>`
-        : `<div class="empty"><h3>No places yet</h3><p>Tell Stash where you keep things: your home and its rooms, a storage unit, the car…</p>
+        : `<div class="empty"><h3>No places yet</h3><p>Tell Paran where you keep things: your home and its rooms, a storage unit, the car…</p>
             <a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a></div>`}
       ${!loc && kids.length ? `<a class="link small setup-link" href="#/setup">${icon(`plus`)} Quick-add rooms and places</a>` : ``}
       ${loc ? `<div class="list-head"><div class="label-sm">Everything in ${esc(loc.name)}${total ? ` · ${total}` : ``}</div>${total ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
@@ -1741,7 +1741,7 @@ function viewPlace(view, r) {
 }
 
 // ============================================================ Share with anyone (a copy via the phone's share sheet)
-const SHARE_SIGN = `Shared from Stash`;
+const SHARE_SIGN = `Shared from Paran`;
 
 /** Phone share sheet → files if supported → text only → clipboard → a sheet to copy from. */
 async function shareOut({ title, text, file, files }) {
@@ -2096,7 +2096,7 @@ function aiConsent(keyOnly = false) {
     sheet(keyOnly ? `Change Gemini key` : `AI suggestions`, (el, close) => {
       el.innerHTML = `<form class="stack consent">
         ${keyOnly ? `` : `<div class="consent-points">
-          <p>${icon(`camera`)}<span>When you use it, a reduced copy of the photo is sent <b>from this phone directly to Google Gemini</b>, using your own API key. Stash has no server and never sees it.</span></p>
+          <p>${icon(`camera`)}<span>When you use it, a reduced copy of the photo is sent <b>from this phone directly to Google Gemini</b>, using your own API key. Paran has no server and never sees it.</span></p>
           <p>${icon(`alert`)}<span>On Gemini’s <b>free tier</b>, Google may use what you send to improve its products, and people at Google may review it. Don’t photograph IDs, documents or anything private with AI on. Paid-tier keys aren’t used that way.</span></p>
           <p>${icon(`check`)}<span>You always review suggestions before anything is saved. Nothing you typed gets overwritten.</span></p>
           <p>${icon(`cloud`)}<span>The free tier allows a few hundred photos a day (check your limits in Google AI Studio). One photo of a bin can list many items.</span></p>
@@ -2202,7 +2202,7 @@ function viewMore(view, r) {
     if (m === `csv`) {
       const a = document.createElement(`a`);
       a.href = URL.createObjectURL(repo.exportCsv());
-      a.download = `stash-inventory-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+      a.download = `paran-inventory-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
     }
     if (m === `sync`) { await repo.refresh(); toast(repo.status === `synced` ? `Up to date` : `Sync: ${repo.status}`); }
     if (m === `signout`) {
