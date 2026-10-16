@@ -860,3 +860,45 @@ body.readonly .edit-only { display: none !important; }
 .src-row.maybe { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
 .sheet .src-list + .label-sm { margin-top: 16px; }
 .sheet .src-list + .line-form, .sheet .src-list + form { margin-top: 14px; }
+
+/* ---------- Event: still needed ---------- */
+.needed-card { margin-top: 22px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--amber) 35%, var(--line)); border-radius: var(--radius); padding: 12px 14px 14px; }
+.needed-card .nc-head { display: flex; align-items: baseline; justify-content: space-between; }
+.needed-card .nc-head span { color: var(--amber); font-weight: 650; font-size: 0.9rem; }
+.needed-card .label-sm { margin: 14px 0 6px; }
+.needed-card ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.needed-card li { display: grid; padding-left: 14px; position: relative; }
+.needed-card li::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.nc-find li::before { background: var(--red); }
+.nc-check li::before { background: var(--ink-3); }
+.needed-card li small { color: var(--ink-2); font-size: 0.84rem; }
+.needed-card .row-actions { margin-top: 14px; }
+.needed-card.done { display: flex; gap: 10px; align-items: center; border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.needed-card.done > .ic { color: var(--accent); width: 26px; height: 26px; }
+.needed-card.done > div { display: grid; }
+.needed-card.done small { color: var(--ink-2); }
+.link-results { margin-top: 6px; max-height: none; }
+.link-results .bring-row { width: 100%; text-align: left; font: inherit; color: var(--ink); }
+.link-results .bring-row > div:not(.thumb) { flex: 1; min-width: 0; }
+.link-results + .line-form { margin-top: 16px; }
+.link-go { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 600; font-size: 0.86rem; flex: none; }
+.link-go .ic { width: 16px; height: 16px; }
+
+/* ---------- printing (only the list prepared for paper) ---------- */
+#print-sheet { display: none; }
+@media print {
+  body.print-mode > *:not(#print-sheet) { display: none !important; }
+  body.print-mode { background: #fff !important; }
+  body.print-mode #print-sheet { display: block; color: #000; background: #fff; font: 11pt/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  #print-sheet h1 { font-size: 16pt; margin: 0 0 2pt; }
+  #print-sheet h2 { font-size: 11pt; text-transform: uppercase; letter-spacing: 0.06em; margin: 14pt 0 4pt; border-bottom: 1px solid #999; padding-bottom: 2pt; }
+  #print-sheet .ps-sub { margin: 0 0 6pt; color: #444; }
+  #print-sheet table { width: 100%; border-collapse: collapse; }
+  #print-sheet td { padding: 4pt 6pt 4pt 0; vertical-align: top; border-bottom: 1px solid #ddd; }
+  #print-sheet td.box { width: 16pt; font-size: 13pt; line-height: 1; }
+  #print-sheet td.sec { color: #555; text-align: right; white-space: nowrap; }
+  #print-sheet small { color: #444; }
+  #print-sheet tr { break-inside: avoid; }
+  #print-sheet .ps-foot { margin-top: 16pt; color: #777; font-size: 9pt; }
+  @page { margin: 14mm; }
+}

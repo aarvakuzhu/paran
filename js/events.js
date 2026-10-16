@@ -200,7 +200,7 @@ export function viewEvent(view, r) {
     <div class="detail-top">
       <button type="button" class="back" data-a="back">${icon(`back`)} Back</button>
       <div class="detail-tools">
-        <button type="button" class="icon-btn" data-ev="share" aria-label="Share the list">${icon(`share`)}</button>
+        <button type="button" class="icon-btn" data-ev="share" aria-label="Share or print">${icon(`share`)}</button>
         ${canEdit ? `<button type="button" class="icon-btn" data-ev="menu" aria-label="More actions">${icon(`more`)}</button>` : ``}
       </div>
     </div>
@@ -227,7 +227,8 @@ export function viewEvent(view, r) {
         <div class="ev-ghead"><h2>${esc(gr.label)}</h2><span>${esc(gr.sub)}</span>${gr.section !== undefined ? plus(gr.section) : ``}</div>
         <div class="elines">${gr.rows.map(({ l, x }) => lineRow(ev, l, x, st.by === `place`)).join(``)}</div>
       </section>`).join(``) || `<p class="muted pad">Nothing ${esc((STATE_LABEL[st.filter] || ``).toLowerCase())} right now.</p>`}
-      ${canEdit ? `<div class="row-actions left"><button type="button" class="btn ghost" data-ev="add">${icon(`plus`)} Add items</button></div>` : ``}`
+      ${canEdit ? `<div class="row-actions left"><button type="button" class="btn ghost" data-ev="add">${icon(`plus`)} Add items</button></div>` : ``}
+      ${neededCard(ev)}`
       : `<div class="empty">${icon(`box`, `big`)}<h3>What does ${esc(ev.name)} need?</h3>
         <p>Add things from ${g ? `any of ${esc(g.name)}’s inventories` : `your inventory`}, grouped in sections like Stage, Decor or Food. Things nobody has logged yet can go on the list too.</p>
         ${canEdit ? `<button type="button" class="btn primary" data-ev="add">${icon(`plus`)} Add items</button>` : ``}</div>`}
@@ -243,7 +244,9 @@ export function viewEvent(view, r) {
     const ln = t.closest(`[data-line]`); if (ln) { const line = repo.eventLines.find((x) => x.id === ln.dataset.line); if (line) lineSheet(ev, line); return; }
     const a = t.closest(`[data-ev]`)?.dataset.ev; if (!a) return;
     if (a === `add`) return addItemsSheet(ev, ``);
-    if (a === `share`) return shareEvent(ev);
+    if (a === `share`) return shareMenu(ev);
+    if (a === `needshare`) return shareNeeded(ev);
+    if (a === `needprint`) return printNeeded(ev);
     if (a === `menu`) return eventMenu(ev);
   };
 }
@@ -285,6 +288,7 @@ function lineRow(ev, l, x, placeView) {
     sub = [problem, l.section].filter(Boolean).join(` · `) || STATE_LABEL[x.key];
   } else {
     sub = stateText(ev, x);
+    if (x.key === `none` && !x.parts?.length && !x.off && R().canEditEvent(ev)) sub += ` · tap to find or add it`;
     if (x.parts?.length > 1 || x.off) {
       parts = `<small class="el-parts">${[...(x.parts?.length > 1 ? x.parts.map((p) => esc(partText(ev, p))) : []),
         ...(x.off ? [`${x.off} not for this event`] : [])].join(`<br>`)}</small>`;
@@ -506,7 +510,10 @@ function lineSheet(ev, line) {
       el.innerHTML = `<div class="el-banner st-${x.key}"><span class="el-dot"></span><div>${x.key === `none` ? `<b>${esc(x.text)}</b>`
           : x.key === `unknown` && srcs.length === 1 ? `<b>In ${esc(invNameOf(x.invId))}</b><small>Not on this phone yet, so it can’t be checked here.</small>`
           : `<b>${esc(STATE_LABEL[x.key])}</b><small>${esc(stateText(ev, x))}</small>`}</div></div>
-        ${srcs.length ? `<div class="label-sm first">${srcs.length > 1 ? `From ${srcs.length} items` : `From`}</div><div class="src-list">${srcs.map(srcRow).join(``)}</div>` : ``}
+        ${srcs.length ? `<div class="label-sm first">${srcs.length > 1 ? `From ${srcs.length} items` : `From`}</div><div class="src-list">${srcs.map(srcRow).join(``)}</div>`
+          : canEdit ? `<div class="label-sm first">Already logged? Find it</div>
+            <label class="search sm">${icon(`search`)}<input data-linkq type="search" value="${esc(el._q ?? (cur.name || name))}" placeholder="Search ${ev._g ? `the group’s items` : `your items`}" autocomplete="off" enterkeyhint="search"></label>
+            <div class="bring-list link-results"></div>` : ``}
         ${also.length ? `<div class="label-sm">Also found</div><div class="src-list">${also.map((m, i) => `<div class="src-row maybe">${picOf(m.item, m.thumbs)}
             <div class="src-main"><b>${esc(m.item.name)}${Number(m.item.qty) > 1 ? ` <span class="qty">×${esc(m.item.qty)}</span>` : ``}</b><small>${esc(withInv(m.invName, m.pathText(m.item.locationId)) || `No location`)}</small></div>
             <button type="button" class="btn small ghost" data-also="${i}">${icon(`plus`)} Use it</button></div>`).join(``)}</div>` : ``}
@@ -521,11 +528,31 @@ function lineSheet(ev, line) {
         <div class="menu">
           ${srcs.some((s2) => !s2.off && repo.sourceState(s2, dataOf).key === `unknown`) ? `<button data-l="include">${icon(`plus`)} Check ${esc([...new Set(srcs.filter((s2) => repo.sourceState(s2, dataOf).key === `unknown`).map((s2) => invNameOf(repo.srcInv(s2))))].join(`, `))} on this phone</button>` : ``}
           ${canEdit && !repo.readOnly ? `<button data-l="add">${icon(`plus`)} ${srcs.length ? `Log more` : `Add`} “${esc(name)}” in ${esc(ctx.invName())}</button>` : ``}
-          ${canEdit ? `<button data-l="link">${icon(`search`)} ${srcs.length ? `Add another item to this line` : `It’s already in ${ev._g ? `an inventory` : `the inventory`}`}</button>` : ``}
+          ${canEdit && srcs.length ? `<button data-l="link">${icon(`search`)} Search and add another item to this line</button>` : ``}
           ${canEdit ? `<button data-l="remove" class="danger">${icon(`trash`)} Remove from ${esc(ev.name)}</button>` : ``}
         </div>`;
       el._also = also; el._srcs = srcs; el._name = name; el._cur = cur;
+      if ($(`[data-linkq]`, el)) drawLinkResults();
     };
+    // manual link: search everything the event can use (all the group's inventories on this phone)
+    const drawLinkResults = () => {
+      const q = $(`[data-linkq]`, el).value.trim(); el._q = q;
+      const entries = pool(ev).entries;
+      let hits = q ? searchPool(entries, q) : []; let loose = false;
+      if (q && !hits.length) { // every word has to match; if nothing does, try each word on its own ("lamps", "diyas")
+        const seen = new Set(); loose = true;
+        for (const w of q.split(/[\s(),/-]+/).filter((x) => x.length >= 3).sort((x, y) => y.length - x.length)) {
+          for (const m of searchPool(entries, w)) { const k = keyOf(m.invId, m.item.id); if (!seen.has(k)) { seen.add(k); hits.push(m); } }
+        }
+      }
+      el._hits = hits.slice(0, 8);
+      $(`.link-results`, el).innerHTML = el._hits.map((m, i) => `<button type="button" class="bring-row" data-linkpick="${i}">${picOf(m.item, m.thumbs)}
+          <div><b>${esc(m.item.name)}${Number(m.item.qty) > 1 ? ` <span class="qty">×${esc(m.item.qty)}</span>` : ``}</b><small>${esc(withInv(m.invName, m.pathText(m.item.locationId)) || `No location`)}</small></div>
+          <span class="link-go">${icon(`plus`)} Link</span></button>`).join(``)
+        || `<p class="fine pad">${q ? `Nothing matches “${esc(q)}”. Try a different word.` : `Type part of its name.`}</p>`;
+      if (loose && el._hits.length) $(`.link-results`, el).insertAdjacentHTML(`afterbegin`, `<p class="fine">Nothing has all those words. Close matches:</p>`);
+    };
+    el.addEventListener(`input`, (e) => { if (e.target.matches(`[data-linkq]`)) drawLinkResults(); });
     el.addEventListener(`submit`, (e) => {
       const form = e.target.closest(`.line-form`); if (!form) return;
       e.preventDefault();
@@ -539,6 +566,15 @@ function lineSheet(ev, line) {
       if (off) { // mark one item "not for this event" (or use it again)
         const list = srcs.map((s2, i) => (i === Number(off.dataset.off) ? { ...s2, off: s2.off ? undefined : 1 } : s2)).map(({ off: o, ...rest }) => (o ? { ...rest, off: 1 } : rest));
         repo.setSources(cur, list); draw(); return;
+      }
+      const lp = e.target.closest(`[data-linkpick]`);
+      if (lp) {
+        const pick = el._hits[Number(lp.dataset.linkpick)]; if (!pick) return;
+        const k = keyOf(pick.invId, pick.item.id);
+        const more = matchesFor(ev, pick.item.name, new Set([k]));
+        repo.setSources(cur, [srcOf(ev, pick), ...more.map((m) => srcOf(ev, m))], { name: pick.item.name });
+        toast(more.length ? `Linked ${pick.item.name} · found ${more.length} more in other places` : `Linked ${pick.item.name}`);
+        el._q = undefined; draw(); return;
       }
       const also = e.target.closest(`[data-also]`);
       if (also) { const m = el._also[Number(also.dataset.also)]; repo.setSources(cur, [...srcs, srcOf(ev, m)]); draw(); return; }
@@ -643,22 +679,141 @@ function renameSectionSheet(ev, secs) {
   });
 }
 
-/** The list as text for WhatsApp or email: section by section, with where each thing is (and which inventory). */
+/** Everything on the list, section by section, with where each thing is (and which inventory). */
+function fullList(ev) {
+  const repo = R();
+  return bySection(repo.linesOf(ev.id).map((l) => ({ l, x: lineState(l) })), repo.sectionsOf(ev.id)).map((g) => ({
+    label: g.label,
+    rows: g.rows.map(({ l, x }) => ({
+      key: x.key, name: lineName(l, x), qty: Number(l.qty) || 1, note: l.note || ``,
+      where: x.key === `unknown` && (x.parts || []).length <= 1 ? `in ${invNameOf(x.invId)}` : stateText(ev, x),
+      parts: x.parts?.length > 1 ? x.parts.map((p) => partText(ev, p)) : [],
+    })),
+  }));
+}
+
+/**
+ * What's left to sort out before the event, grouped by what someone has to do:
+ * buy or borrow (not enough anywhere), get back (lent out), find (marked missing), check (an inventory not on this phone).
+ */
+export function stillNeeded(ev) {
+  const repo = R(); const lines = repo.linesOf(ev.id);
+  const g = { buy: [], back: [], find: [], check: [] }; let open = 0;
+  for (const l of lines) {
+    const x = lineState(l);
+    if (x.key === `ready`) continue;
+    open++;
+    const name = lineName(l, x); const need = Number(l.qty) || 1; const section = l.section || ``;
+    const parts = x.parts || [];
+    const ready = parts.filter((p) => p.key === `ready`).reduce((n, p) => n + p.have, 0);
+    let gap = need - ready;
+    let unsure = false;
+    for (const p of parts) {
+      const inv = ev._g && p.invId !== repo.hereId ? invNameOf(p.invId) : ``;
+      if (p.key === `out`) { g.back.push({ name, qty: p.have, detail: `${p.reserved ? `reserved for` : `with`} ${p.who || `someone`}${inv ? ` (${inv})` : ``}`, section }); gap -= p.have; }
+      else if (p.key === `missing`) { g.find.push({ name, qty: p.have, detail: `marked missing${p.where || inv ? `, last in ${withInv(inv, p.where || ``)}` : ``}`, section }); gap -= p.have; }
+      else if (p.key === `unknown`) { g.check.push({ name, qty: 0, detail: `in ${invNameOf(p.invId)}, not checked on this phone`, section }); unsure = true; }
+    }
+    if (!unsure && gap > 0) {
+      const have = ready ? `have ${ready} of ${need}` : parts.length ? `none ready` : `not in any inventory`;
+      g.buy.push({ name, qty: gap, more: Boolean(ready), detail: have, section });
+    }
+  }
+  const groups = [
+    { key: `buy`, title: `To buy or borrow`, items: g.buy },
+    { key: `back`, title: `To get back`, items: g.back },
+    { key: `find`, title: `To find`, items: g.find },
+    { key: `check`, title: `To check`, items: g.check },
+  ].filter((x) => x.items.length);
+  return { groups, open, total: lines.length };
+}
+
+const neededLine = (it) => `${it.name}${it.qty > 1 || it.more ? ` ×${it.qty}${it.more ? ` more` : ``}` : ``}`;
+
+function neededCard(ev) {
+  const n = stillNeeded(ev);
+  if (!n.total) return ``;
+  if (!n.open) return `<section class="needed-card done">${icon(`check`)}<div><b>Everything on the list is ready</b><small>${n.total} item${n.total === 1 ? `` : `s`}, all in place.</small></div></section>`;
+  return `<section class="needed-card">
+    <div class="nc-head"><h2>Still needed</h2><span>${n.open} of ${n.total}</span></div>
+    ${n.groups.map((g) => `<div class="nc-group nc-${g.key}"><div class="label-sm">${esc(g.title)}</div><ul>${g.items.map((it) => `<li><b>${esc(neededLine(it))}</b><small>${esc(it.detail)}</small></li>`).join(``)}</ul></div>`).join(``)}
+    <div class="row-actions left">
+      <button type="button" class="btn primary" data-ev="needshare">${icon(`share`)} Share</button>
+      <button type="button" class="btn ghost" data-ev="needprint">${icon(`print`)} Print</button>
+    </div></section>`;
+}
+
+const header = (ev) => { const w = whenText(ev.date); return `${ev.name}${ev.date ? ` – ${w.main}` : ``}`; };
+
+/** "Still needed" as text for WhatsApp or Messages. */
+function shareNeeded(ev) {
+  const n = stillNeeded(ev);
+  const out = [header(ev), `Still needed: ${n.open} of ${n.total} on the list`, ``];
+  for (const g of n.groups) {
+    out.push(g.title.toUpperCase());
+    for (const it of g.items) out.push(`• ${neededLine(it)} – ${it.detail}`);
+    out.push(``);
+  }
+  out.push(ctx.shareSign);
+  return ctx.shareOut({ title: `${ev.name}: still needed`, text: out.join(`\n`) });
+}
+
+/** The full list as text. */
 function shareEvent(ev) {
-  const repo = R(); const w = whenText(ev.date); const s = summaryOf(ev);
   const mark = { ready: `✓`, short: `!`, out: `→`, missing: `✗`, none: `○`, unknown: `?` };
-  const out = [`${ev.name}${ev.date ? ` – ${w.main}` : ``}`, summaryText(s), ``];
-  for (const g of bySection(repo.linesOf(ev.id).map((l) => ({ l, x: lineState(l) })), repo.sectionsOf(ev.id))) {
+  const out = [header(ev), summaryText(summaryOf(ev)), ``];
+  for (const g of fullList(ev)) {
     out.push(g.label.toUpperCase());
-    for (const { l, x } of g.rows) {
-      const where = x.key === `unknown` ? `in ${invNameOf(x.invId)}` : stateText(ev, x);
-      out.push(`${mark[x.key]} ${lineName(l, x)}${Number(l.qty) > 1 ? ` ×${l.qty}` : ``} – ${where}${l.note ? ` (${l.note})` : ``}`);
-      if (x.parts?.length > 1) for (const p of x.parts) out.push(`    ${partText(ev, p)}`);
+    for (const r of g.rows) {
+      out.push(`${mark[r.key]} ${r.name}${r.qty > 1 ? ` ×${r.qty}` : ``} – ${r.where}${r.note ? ` (${r.note})` : ``}`);
+      for (const p of r.parts) out.push(`    ${p}`);
     }
     out.push(``);
   }
   out.push(ctx.shareSign);
   return ctx.shareOut({ title: ev.name, text: out.join(`\n`) });
+}
+
+/** Print a page: only #print-sheet shows on paper (see @media print). Tick boxes to use on the day. */
+function printPage(title, bodyHtml) {
+  document.getElementById(`print-sheet`)?.remove();
+  const el = document.createElement(`div`);
+  el.id = `print-sheet`;
+  el.innerHTML = `<h1>${esc(title)}</h1>${bodyHtml}<p class="ps-foot">${esc(ctx.shareSign)} · printed ${esc(new Date().toLocaleDateString(undefined, { month: `short`, day: `numeric`, year: `numeric` }))}</p>`;
+  document.body.appendChild(el);
+  document.body.classList.add(`print-mode`);
+  const done = () => { document.body.classList.remove(`print-mode`); el.remove(); window.removeEventListener(`afterprint`, done); };
+  window.addEventListener(`afterprint`, done);
+  setTimeout(() => { try { window.print(); } catch { toast(`This phone can’t print from here. Use Share instead.`); done(); } }, 50);
+}
+
+function printNeeded(ev) {
+  const n = stillNeeded(ev);
+  printPage(`${header(ev)}: still needed`, `<p class="ps-sub">${n.open} of ${n.total} on the list</p>`
+    + n.groups.map((g) => `<h2>${esc(g.title)}</h2><table>${g.items.map((it) => `<tr><td class="box">☐</td><td><b>${esc(neededLine(it))}</b></td><td>${esc(it.detail)}</td><td class="sec">${esc(it.section)}</td></tr>`).join(``)}</table>`).join(``));
+}
+
+function printFull(ev) {
+  printPage(header(ev), `<p class="ps-sub">${esc(summaryText(summaryOf(ev)))}</p>`
+    + fullList(ev).map((g) => `<h2>${esc(g.label)}</h2><table>${g.rows.map((r) => `<tr><td class="box">☐</td><td><b>${esc(r.name)}${r.qty > 1 ? ` ×${r.qty}` : ``}</b>${r.note ? `<br><small>${esc(r.note)}</small>` : ``}</td>
+        <td>${esc(r.where)}${r.parts.map((p) => `<br><small>${esc(p)}</small>`).join(``)}</td></tr>`).join(``)}</table>`).join(``));
+}
+
+function shareMenu(ev) {
+  const n = stillNeeded(ev);
+  sheet(`Share or print`, (el, close) => {
+    el.innerHTML = `<div class="menu">
+      <button data-s="full">${icon(`share`)} Share the full list</button>
+      <button data-s="fullprint">${icon(`print`)} Print the full list</button>
+      ${n.open ? `<button data-s="need">${icon(`share`)} Share what’s still needed <small>${n.open}</small></button>
+      <button data-s="needprint">${icon(`print`)} Print what’s still needed</button>` : ``}
+    </div><p class="fine">Shares as a message (WhatsApp, Messages, email). Printed lists have boxes to tick on the day.</p>`;
+    el.onclick = (e) => {
+      const k = e.target.closest(`[data-s]`)?.dataset.s; if (!k) return;
+      close();
+      setTimeout(() => ({ full: shareEvent, fullprint: printFull, need: shareNeeded, needprint: printNeeded })[k](ev), 250); // after the sheet closes
+    };
+  });
 }
 
 /** Item page: the upcoming events that need this item. */
