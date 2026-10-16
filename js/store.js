@@ -912,22 +912,60 @@ export class Repo extends EventTarget {
   /** This inventory's data, in the shape lineState expects of any inventory. */
   hereData() { return { items: this.items, pathText: (id) => this.pathText(id), thumbs: this.thumbs }; }
 
-  /** Who's bringing a line: [{ name, qty }] (qty 0 = all of it). */
+  /** Who's bringing a line: [{ name, qty, email }]. qty 0 only on older entries (= the rest). email = their Google account, if linked. */
   bringersOf(line) {
     try { const a = JSON.parse(line.bringers || `[]`); return Array.isArray(a) ? a.filter((b) => b && String(b.name || ``).trim()) : []; } catch { return []; }
   }
   setBringers(line, list) {
-    const clean = list.map((b) => ({ name: String(b.name).trim(), qty: Math.max(0, Number(b.qty) || 0) })).filter((b) => b.name);
+    const clean = list.map((b) => ({ name: String(b.name).trim(), qty: Math.max(0, Number(b.qty) || 0), ...(b.email ? { email: String(b.email).trim().toLowerCase() } : {}) }))
+      .filter((b) => b.name);
     return this.saveLine({ id: line.id, bringers: clean.length ? JSON.stringify(clean) : `` });
   }
-  /** Names to offer when assigning: people already bringing things to events, then people you lend to. Latest spelling wins. */
-  bringerNames() {
+
+  /** Google accounts with access here (this inventory's people, and the group's): [{ email, role }], not removed, not me first. */
+  accounts() {
     const map = new Map();
-    for (const l of [...this.eventLines].filter((x) => !x.deleted).sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))) {
-      for (const b of this.bringersOf(l)) map.set(Repo.personKey(b.name), b.name);
-    }
-    for (const p of this.people()) if (!map.has(p.key)) map.set(p.key, p.name);
+    for (const m of this.members) if (m.email && m.role !== `removed`) map.set(m.email.toLowerCase(), { email: m.email.toLowerCase(), role: m.role });
+    for (const p of this.group()?.people || []) if (p.email && p.role !== `removed`) map.set(p.email.toLowerCase(), { email: p.email.toLowerCase(), role: p.role });
     return [...map.values()];
+  }
+  /** "ravi.kumar@gmail.com" -> "Ravi Kumar" (unless they've been called something else on an event). */
+  static nameFromEmail(email) {
+    return String(email || ``).split(`@`)[0].split(/[._-]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(` `) || email;
+  }
+
+  /**
+   * People to offer when assigning: [{ name, email }]. Accounts with access first (named as they were last called on an
+   * event, else from their email), then other names used on events, then people you lend to.
+   */
+  bringerNames() {
+    const byEmail = new Map(); const byName = new Map();
+    for (const l of [...this.eventLines].filter((x) => !x.deleted).sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))) {
+      for (const b of this.bringersOf(l)) {
+        if (b.email) byEmail.set(b.email.toLowerCase(), b.name);
+        byName.set(Repo.personKey(b.name), { name: b.name, email: b.email || byName.get(Repo.personKey(b.name))?.email || `` });
+      }
+    }
+    const out = []; const seen = new Set();
+    const me = String(this.user?.email || ``).toLowerCase();
+    for (const a of this.accounts().sort((x, y) => (x.email === me) - (y.email === me))) {
+      const name = byEmail.get(a.email) || (a.email === me && this.user?.name && !this.user.name.includes(`@`) ? this.user.name : Repo.nameFromEmail(a.email));
+      out.push({ name, email: a.email }); seen.add(Repo.personKey(name)); seen.add(a.email);
+    }
+    for (const [k, v] of byName) if (!seen.has(k) && !(v.email && seen.has(v.email))) { out.push(v); seen.add(k); }
+    for (const p of this.people()) if (!seen.has(p.key)) { out.push({ name: p.name, email: `` }); seen.add(p.key); }
+    return out;
+  }
+  /** The Google account a typed name or email belongs to, if any. */
+  accountFor(text) {
+    const t = String(text || ``).trim().toLowerCase(); if (!t) return ``;
+    if (t.includes(`@`)) return this.accounts().some((a) => a.email === t) ? t : ``;
+    return this.bringerNames().find((p) => p.email && Repo.personKey(p.name) === Repo.personKey(t))?.email || ``;
+  }
+  /** Lines in an event that this signed-in person is bringing. */
+  myLines(eventId) {
+    const me = String(this.user?.email || ``).toLowerCase(); if (!me) return [];
+    return this.linesOf(eventId).filter((l) => this.bringersOf(l).some((b) => String(b.email || ``).toLowerCase() === me));
   }
 
   /** The items a line draws on: [{ inv, id, name, off }]. inv '' = this inventory. Older lines have just itemId/invId. */

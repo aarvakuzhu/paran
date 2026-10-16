@@ -7,6 +7,7 @@
 import { esc, $, toast, sheet, confirmSheet, icon } from './ui.js';
 import { search, findDuplicates } from './search.js';
 import { loadKnown } from './inventories.js';
+import { Repo } from './store.js';
 import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 
 // ctx: { repo(), thumbHtml(item, cls), goBack(fallback), shareOut({title,text}), shareSign, todayStr(), invName(),
@@ -109,7 +110,8 @@ export function eventCard(ev) {
     <div class="ev-main"><b>${esc(ev.name)}</b>
       <small>${esc(w.main)}${w.rel ? ` · ${esc(w.rel)}` : ``}${esc(scope)}</small>
       ${readyBar(s)}
-      <small class="ev-sum">${esc(summaryText(s))}</small></div>
+      <small class="ev-sum">${esc(summaryText(s))}</small>
+      ${R().myLines(ev.id).length ? `<small class="ev-mine">${icon(`users`)} You’re bringing ${R().myLines(ev.id).length} thing${R().myLines(ev.id).length === 1 ? `` : `s`}</small>` : ``}</div>
     ${icon(`chevron`)}</a>`;
 }
 
@@ -209,6 +211,7 @@ export function viewEvent(view, r) {
     ${g ? `<p class="ev-scope-line">${icon(`users`)}<span>${esc(g.name)}${used.size ? ` · things from ${used.size} inventor${used.size === 1 ? `y` : `ies`}` : ``}</span></p>`
       : repo.group() ? `<p class="ev-scope-line">${icon(`box`)}<span>Only ${esc(ctx.invName())}</span></p>` : ``}
     ${ev.notes ? `<p class="muted">${esc(ev.notes)}</p>` : ``}
+    ${mineCard(ev)}
     ${notHere.length ? `<button type="button" class="xtap" data-include>${icon(`plus`)} Include ${esc(notHere.map((i) => i.name).join(`, `))} <small>one tap to open on this phone, so their items show here</small></button>` : ``}
     ${lines.length ? `
       <div class="readiness">
@@ -281,13 +284,13 @@ function partText(ev, p) {
   return `${p.src?.name || `an item`} no longer in ${inv || `the inventory`}`;
 }
 
-/** Who brings how many. A blank count means "the rest" (all of it if they're the only one). */
+/** Who brings how many: [{ name, qty, email, split }]. Older entries without a number get what's left. */
 function shares(l) {
   const list = R().bringersOf(l); const need = Number(l.qty) || 1;
   const fixed = list.filter((b) => b.qty).reduce((n, b) => n + b.qty, 0);
   const rest = list.filter((b) => !b.qty);
   const each = rest.length ? Math.max(0, need - fixed) / rest.length : 0;
-  return list.map((b) => ({ name: b.name, qty: b.qty || Math.max(1, Math.ceil(each)), split: list.length > 1 }));
+  return list.map((b) => ({ name: b.name, email: b.email || ``, qty: b.qty || Math.max(1, Math.ceil(each)), split: list.length > 1 || (b.qty && b.qty !== need) }));
 }
 /** "Ravi" or "Ravi 10, Kumar 10" */
 const bringersText = (l) => shares(l).map((b) => (b.split ? `${b.name} ${b.qty}` : b.name)).join(`, `);
@@ -556,10 +559,7 @@ function lineSheet(ev, line) {
             <button type="button" class="btn small ghost" data-also="${i}">${icon(`plus`)} Use it</button></div>`).join(``)}</div>` : ``}
         ${srcs.length || !canEdit ? `<div class="label-sm">Who’s bringing it</div>${whoBlock(cur, canEdit)}` : ``}
         ${canEdit ? `<form class="stack line-form">
-          <div class="two">
-            <label class="field"><span>How many needed</span><input name="qty" type="number" min="1" inputmode="numeric" value="${esc(cur.qty || 1)}"></label>
-            <label class="field"><span>Section</span><input name="section" list="ev-secs" value="${esc(cur.section || ``)}" placeholder="No section"></label>
-          </div>
+          <label class="field"><span>Section</span><input name="section" list="ev-secs" value="${esc(cur.section || ``)}" placeholder="No section"></label>
           <datalist id="ev-secs">${sections.map((s2) => `<option value="${esc(s2)}">`).join(``)}</datalist>
           <label class="field"><span>Note <small>(optional)</small></span><input name="note" value="${esc(cur.note || ``)}" placeholder="e.g. the tall one, check batteries"></label>
           <div class="row-actions"><button class="btn primary">Save</button></div></form>` : (cur.note ? `<p class="muted">${esc(cur.note)}</p>` : ``)}
@@ -591,19 +591,37 @@ function lineSheet(ev, line) {
       if (loose && el._hits.length) $(`.link-results`, el).insertAdjacentHTML(`afterbegin`, `<p class="fine">Nothing has all those words. Close matches:</p>`);
     };
     el.addEventListener(`input`, (e) => { if (e.target.matches(`[data-linkq]`)) drawLinkResults(); });
+    /** Add (or update) a person on this line with a number. An email, or a name that belongs to an account, links them. */
+    const assign = (typed, email, qty) => {
+      const cur = el._cur;
+      const acct = (email || repo.accountFor(typed)).toLowerCase();
+      const name = typed.includes(`@`) ? (repo.bringerNames().find((p) => p.email === acct)?.name || Repo.nameFromEmail(typed)) : typed;
+      const list = shares(cur).filter((b) => b.name.toLowerCase() !== name.toLowerCase() && !(acct && b.email === acct));
+      repo.setBringers(cur, [...list, { name, qty, email: acct }]);
+      draw();
+      setTimeout(() => $(`.who-form [name=who]`, el)?.focus({ preventScroll: true }), 0);
+    };
+    el.addEventListener(`change`, (e) => {
+      const cur = el._cur;
+      const q = e.target.closest(`[data-wq]`);
+      if (q) { const list = shares(cur); list[Number(q.dataset.wq)].qty = Math.max(1, Number(q.value) || 1); repo.setBringers(cur, list); draw(); return; }
+      const a = e.target.closest(`[data-acct]`);
+      if (a) { const list = shares(cur); list[Number(a.dataset.acct)].email = a.value; repo.setBringers(cur, list); draw(); return; }
+      // "How many needed" applies at once, so the split below follows it
+      const need = e.target.closest(`[data-need]`);
+      if (need) { repo.saveLine({ id: cur.id, qty: Math.max(1, Number(need.value) || 1) }); draw(); }
+    });
     el.addEventListener(`submit`, (e) => {
       const wf = e.target.closest(`.who-form`);
-      if (wf) { // assign someone (optionally just some of it)
+      if (wf) { // assign someone, with how many they bring
         e.preventDefault();
-        const who = wf.elements.who.value.trim(); if (!who) return;
-        const cur = el._cur; const list = repo.bringersOf(cur).filter((b) => b.name.toLowerCase() !== who.toLowerCase());
-        repo.setBringers(cur, [...list, { name: who, qty: Number(wf.elements.wq.value) || 0 }]);
-        draw(); return;
+        const typed = wf.elements.who.value.trim(); if (!typed) return;
+        assign(typed, ``, Number(wf.elements.wq.value) || 1); return;
       }
       const form = e.target.closest(`.line-form`); if (!form) return;
       e.preventDefault();
       close();
-      repo.saveLine({ id: line.id, qty: Math.max(1, Number(form.elements.qty.value) || 1), section: form.elements.section.value.trim(), note: form.elements.note.value.trim() });
+      repo.saveLine({ id: line.id, section: form.elements.section.value.trim(), note: form.elements.note.value.trim() });
       toast(`Saved`);
     });
     el.addEventListener(`click`, async (e) => {
@@ -614,9 +632,13 @@ function lineSheet(ev, line) {
         repo.setSources(cur, list); draw(); return;
       }
       const bq = e.target.closest(`[data-bring]`);
-      if (bq) { repo.setBringers(cur, [...repo.bringersOf(cur), { name: bq.dataset.bring, qty: 0 }]); draw(); return; }
+      if (bq) { assign(bq.dataset.bring, bq.dataset.email || ``, Number($(`.who-form [name=wq]`, el)?.value) || 1); return; }
       const ub = e.target.closest(`[data-unbring]`);
-      if (ub) { const list = repo.bringersOf(cur); list.splice(Number(ub.dataset.unbring), 1); repo.setBringers(cur, list); draw(); return; }
+      if (ub) { const list = shares(cur); list.splice(Number(ub.dataset.unbring), 1); repo.setBringers(cur, list); draw(); return; }
+      const ns = e.target.closest(`[data-needstep]`);
+      if (ns) { repo.saveLine({ id: cur.id, qty: Math.max(1, (Number(cur.qty) || 1) + Number(ns.dataset.needstep)) }); draw(); return; }
+      const ws = e.target.closest(`[data-wstep]`);
+      if (ws) { const list = shares(cur); const b = list[Number(ws.dataset.wstep)]; b.qty = Math.max(1, b.qty + Number(ws.dataset.d)); repo.setBringers(cur, list); draw(); return; }
       const lp = e.target.closest(`[data-linkpick]`);
       if (lp) {
         const pick = el._hits[Number(lp.dataset.linkpick)]; if (!pick) return;
@@ -665,22 +687,62 @@ function lineSheet(ev, line) {
   }, { onClose: () => setTimeout(() => ctx.redraw(), 0) });
 }
 
-/** Who's bringing a line: chips (tap ✕ to remove), a name + optional count, and quick picks of familiar names. */
+/** Home screen: everything the signed-in person is bringing, per upcoming event (soonest first). */
+export function myJobsHtml() {
+  const repo = R(); const me = String(repo.user?.email || ``).toLowerCase(); if (!me) return ``;
+  const blocks = [];
+  for (const ev of splitEvents().upcoming) {
+    const p = peopleLists(ev).find((x) => x.email === me); if (!p) continue;
+    freshen(otherInvs(ev));
+    const w = whenText(ev.date);
+    blocks.push(`<a class="job-card" href="#/event/${esc(ev.id)}">
+      <div class="jc-head"><b>${esc(ev.name)}</b><span>${esc(w.rel || w.main)}</span></div>
+      <ul>${p.rows.map((r) => `<li class="${r.ready ? `ok` : ``}"><b>${esc(r.name)}${r.qty > 1 ? ` ×${r.qty}` : ``}</b>${r.todo ? `<small>${esc(r.todo)}</small>` : ``}</li>`).join(``)}</ul></a>`);
+  }
+  return blocks.length ? `<section class="dash"><div class="dash-head"><h2>You’re bringing</h2><a class="link small" href="#/events">All events</a></div>
+    <div class="cards">${blocks.join(``)}</div></section>` : ``;
+}
+
+/** The signed-in person's part: what they're bringing to this event and what to do for each. */
+function mineCard(ev) {
+  const me = String(R().user?.email || ``).toLowerCase(); if (!me) return ``;
+  const p = peopleLists(ev).find((x) => x.email === me); if (!p) return ``;
+  return `<section class="mine-card"><div class="mc-head">${icon(`users`)}<b>You’re bringing</b></div>
+    <ul>${p.rows.map((r) => `<li><b>${esc(r.name)}${r.qty > 1 ? ` ×${r.qty}` : ``}</b>${r.todo ? `<small>${esc(r.todo)}</small>` : ``}</li>`).join(``)}</ul></section>`;
+}
+
+/** Who's bringing a line: a row per person with their own count (− / +) and Google account, then a row to add someone. */
 function whoBlock(line, canEdit) {
-  const repo = R(); const list = repo.bringersOf(line);
-  const chips = list.map((b, i) => `<span class="chip on who-chip">${icon(`users`)} ${esc(b.name)}${b.qty ? ` · ${esc(b.qty)}` : ``}${canEdit ? `<button type="button" class="un" data-unbring="${i}" aria-label="Remove ${esc(b.name)}">${icon(`x`)}</button>` : ``}</span>`).join(``);
-  if (!canEdit) return list.length ? `<div class="chips">${chips}</div>` : `<p class="fine">Nobody yet.</p>`;
-  const taken = new Set(list.map((b) => b.name.toLowerCase()));
+  const repo = R(); const sh = shares(line); const need = Number(line.qty) || 1;
+  const assigned = sh.reduce((n, b) => n + b.qty, 0); const left = need - assigned;
+  const accounts = repo.accounts(); const me = String(repo.user?.email || ``).toLowerCase();
+  const sum = !sh.length ? `` : left > 0 ? `${assigned} of ${need} assigned · <b>${left} left</b>` : left < 0 ? `${assigned} assigned · ${-left} more than needed` : `All ${need} assigned`;
+  const acctLabel = (email) => (email === me ? `you` : email);
+  if (!canEdit) {
+    return sh.length ? `<div class="who-rows">${sh.map((b) => `<div class="who-row"><span class="who-name">${icon(`users`)} <b>${esc(b.name)}</b>${b.email ? `<small>${esc(acctLabel(b.email))}</small>` : ``}</span><span class="who-n">${need > 1 ? `×${b.qty}` : ``}</span></div>`).join(``)}</div>
+      ${need > 1 ? `<p class="who-sum">${sum}</p>` : ``}` : `<p class="fine">Nobody yet.</p>`;
+  }
+  const taken = new Set(sh.map((b) => b.name.toLowerCase())); const takenEmail = new Set(sh.map((b) => b.email).filter(Boolean));
   const names = repo.bringerNames();
-  const quick = names.filter((n) => !taken.has(n.toLowerCase())).slice(0, 6);
-  const need = Number(line.qty) || 1;
-  return `${list.length ? `<div class="chips who-list">${chips}</div>` : ``}
-    <form class="inline-new who-form"><input name="who" list="ev-people" placeholder="${list.length ? `Someone else` : `Name`}" autocomplete="off" enterkeyhint="done">
-      ${need > 1 ? `<input name="wq" type="number" min="1" max="${need}" inputmode="numeric" placeholder="${list.length ? `The rest` : `All ${need}`}" class="who-qty" aria-label="How many they bring">` : `<input name="wq" type="hidden" value="">`}
+  const quick = names.filter((n) => !taken.has(n.name.toLowerCase()) && !(n.email && takenEmail.has(n.email))).slice(0, 8);
+  const start = Math.max(1, left > 0 ? left : need > 1 ? 1 : 1);
+  const rows = sh.map((b, i) => `<div class="who-row">
+      <span class="who-name">${icon(b.email ? `check` : `users`)} <b>${esc(b.name)}</b>
+        ${accounts.length ? `<select data-acct="${i}" aria-label="Google account for ${esc(b.name)}"><option value="">No Google account linked</option>${accounts.map((a) => `<option value="${esc(a.email)}" ${a.email === b.email ? `selected` : ``}>${esc(acctLabel(a.email))}</option>`).join(``)}</select>` : ``}</span>
+      ${need > 1 || sh.length > 1 ? `<span class="stepper sm"><button type="button" class="icon-btn" data-wstep="${i}" data-d="-1" aria-label="Fewer">−</button><input type="number" min="1" inputmode="numeric" value="${b.qty}" data-wq="${i}" aria-label="How many ${esc(b.name)} brings"><button type="button" class="icon-btn" data-wstep="${i}" data-d="1" aria-label="More">+</button></span>` : ``}
+      <button type="button" class="icon-btn un" data-unbring="${i}" aria-label="Remove ${esc(b.name)}">${icon(`x`)}</button>
+    </div>`).join(``);
+  const needRow = `<div class="need-row"><span>How many needed</span>
+      <span class="stepper sm"><button type="button" class="icon-btn" data-needstep="-1" aria-label="One fewer">−</button><input type="number" min="1" inputmode="numeric" value="${need}" data-need aria-label="How many needed"><button type="button" class="icon-btn" data-needstep="1" aria-label="One more">+</button></span></div>`;
+  return `${needRow}${sh.length ? `<div class="who-rows">${rows}</div>${need > 1 ? `<p class="who-sum">${sum}</p>` : ``}` : ``}
+    ${`<form class="inline-new who-form">
+      <input name="who" list="ev-people" placeholder="${sh.length ? `Someone else` : `Name or email`}" autocomplete="off" enterkeyhint="done">
+      ${need > 1 ? `<input name="wq" type="number" min="1" inputmode="numeric" value="${start}" class="who-qty" aria-label="How many they bring">` : `<input name="wq" type="hidden" value="1">`}
       <button class="btn primary">Add</button></form>
-    <datalist id="ev-people">${names.map((n) => `<option value="${esc(n)}">`).join(``)}</datalist>
-    ${quick.length ? `<div class="chips who-quick">${quick.map((n) => `<button type="button" class="chip" data-bring="${esc(n)}">${icon(`plus`)} ${esc(n)}</button>`).join(``)}</div>` : ``}
-    ${need > 1 ? `<p class="fine">${list.length ? `Leave the number empty and they bring whatever is left.` : `Leave the number empty if they bring all of it. To split it, add people with a number each.`}</p>` : ``}`;
+    <datalist id="ev-people">${names.map((n) => `<option value="${esc(n.name)}">${esc(n.email || ``)}</option>`).join(``)}</datalist>
+    ${quick.length ? `<div class="chips who-quick">${quick.map((n) => `<button type="button" class="chip" data-bring="${esc(n.name)}" data-email="${esc(n.email || ``)}">${icon(n.email ? `check` : `plus`)} ${esc(n.email === me ? `Me` : n.name)}</button>`).join(``)}</div>` : ``}
+    ${need > 1 ? `<p class="fine">Set how many first, then tap a name or type one. ${accounts.length ? `Names with ✓ have access to ${esc(repo.group()?.name || ctx.invName())}; they’ll see what they’re bringing when they open ${esc(ctx.appName || `Paran`)}.` : ``}</p>`
+      : accounts.length ? `<p class="fine">Names with ✓ have access; they’ll see what they’re bringing when they open the app.</p>` : ``}`}`;
 }
 
 /** Pick one item the event can use. Resolves a pool entry { invId, item }, or null. */
@@ -810,8 +872,8 @@ export function peopleLists(ev) {
     const bs = shares(l); if (!bs.length) continue;
     const x = lineState(l); const name = lineName(l, x);
     for (const b of bs) {
-      const k = b.name.trim().toLowerCase();
-      if (!map.has(k)) map.set(k, { name: b.name.trim(), rows: [] });
+      const k = b.email || b.name.trim().toLowerCase(); // the same account is one person, whatever they were called
+      if (!map.has(k)) map.set(k, { name: b.name.trim(), email: b.email || ``, rows: [] });
       map.get(k).rows.push({ name, qty: b.qty, todo: todoText(ev, l, x), section: l.section || ``, ready: x.key === `ready` });
     }
   }
@@ -908,13 +970,22 @@ function printNeeded(ev) {
 }
 
 /** One person's list, as a message to them. */
-function sharePerson(ev, name) {
-  const p = peopleLists(ev).find((x) => x.name.toLowerCase() === name.toLowerCase()); if (!p) return;
+function personText(ev, p) {
   const first = p.name.split(/\s+/)[0];
   const out = [header(ev), ``, `${first}, here’s what you’re bringing:`, ``];
   for (const r of p.rows) out.push(`• ${r.name}${r.qty > 1 ? ` ×${r.qty}` : ``}${r.todo ? ` – ${r.todo}` : ``}`);
   out.push(``, `Thank you!`, ``, ctx.shareSign);
-  return ctx.shareOut({ title: `${ev.name}: ${p.name}`, text: out.join(`\n`) });
+  return out.join(`\n`);
+}
+const findPerson = (ev, name) => peopleLists(ev).find((x) => x.name.toLowerCase() === name.toLowerCase() || (x.email && x.email === name.toLowerCase()));
+function sharePerson(ev, name) {
+  const p = findPerson(ev, name); if (!p) return;
+  return ctx.shareOut({ title: `${ev.name}: ${p.name}`, text: personText(ev, p) });
+}
+/** Email their list straight to their Google account (opens the mail app). */
+function emailPerson(ev, name) {
+  const p = findPerson(ev, name); if (!p?.email) return;
+  location.href = `mailto:${encodeURIComponent(p.email)}?subject=${encodeURIComponent(`${ev.name}: what you’re bringing`)}&body=${encodeURIComponent(personText(ev, p))}`;
 }
 
 /** Everyone's lists on paper, one page per person, then what nobody is bringing yet. */
@@ -955,10 +1026,16 @@ function shareMenu(ev) {
 function peopleSheet(ev) {
   sheet(`Send each person their list`, (el) => {
     const draw = () => {
-      el.innerHTML = `<div class="menu">${peopleLists(ev).map((p) => `<button data-p="${esc(p.name)}">${icon(`users`)}<span class="grow"><b>${esc(p.name)}</b><small>${esc(p.rows.map((r) => r.name).join(`, `))}</small></span>${icon(`share`)}</button>`).join(``)}</div>
-        <p class="fine">Each opens your share sheet with that person’s list, ready to send on WhatsApp or Messages.</p>`;
+      el.innerHTML = `<div class="person-list">${peopleLists(ev).map((p) => `<div class="pl-row">
+          <div class="grow"><b>${esc(p.name)}</b><small>${esc(p.email ? `${p.email} · ` : ``)}${esc(p.rows.map((r) => r.name).join(`, `))}</small></div>
+          <button type="button" class="btn small ghost" data-p="${esc(p.name)}">${icon(`share`)} Share</button>
+          ${p.email ? `<button type="button" class="btn small ghost" data-mail="${esc(p.name)}">Email</button>` : ``}</div>`).join(``)}</div>
+        <p class="fine">Share opens your share sheet (WhatsApp, Messages). Email goes to their Google account.</p>`;
     };
-    el.onclick = (e) => { const b = e.target.closest(`[data-p]`); if (b) { b.classList.add(`sent`); sharePerson(ev, b.dataset.p); } };
+    el.onclick = (e) => {
+      const b = e.target.closest(`[data-p]`); if (b) { b.classList.add(`sent`); sharePerson(ev, b.dataset.p); return; }
+      const m = e.target.closest(`[data-mail]`); if (m) { m.classList.add(`sent`); emailPerson(ev, m.dataset.mail); }
+    };
     draw();
   });
 }

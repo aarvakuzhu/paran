@@ -10,7 +10,7 @@ import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeI
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { scanLabel } from './qrscan.js';
-import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet } from './events.js';
+import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml } from './events.js';
 
 const MODE_KEY = `paran.mode`;
 const RECENT_LOC_KEY = `paran.recentLocs`;
@@ -1139,6 +1139,7 @@ function renderResults() {
         <div><b>${esc(i.name)}</b><small>${esc(r.text)}</small></div>
         ${a ? `<button type="button" class="btn small ghost" data-quick="${a[0]}" data-id="${esc(i.id)}">${a[1]}</button>` : ``}</a>`; }).join(``)}
       ${attention.length > 3 ? `<a class="link small" href="#/out">See all ${attention.length}</a>` : ``}</div>` : ``}
+    ${myJobsHtml()}
     ${soon.length ? `<section class="dash"><div class="dash-head"><h2>Coming up</h2><a class="link small" href="#/events">All events</a></div>
       <div class="cards">${soon.map(eventCard).join(``)}</div></section>` : ``}
     ${rooms.length ? `<section class="dash"><div class="dash-head"><h2>Places</h2><a class="link small" href="#/places">All places</a></div>

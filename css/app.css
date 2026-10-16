@@ -931,3 +931,51 @@ body.readonly .edit-only { display: none !important; }
 .nc-people .chip .ic { width: 14px; height: 14px; }
 .menu button.sent { background: var(--accent-soft); }
 @media print { #print-sheet .ps-person + .ps-person { break-before: page; } }
+
+/* who's bringing: a row per person with their own count */
+.who-rows { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.who-row { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-bottom: 1px solid var(--line); }
+.who-row:last-child { border-bottom: 0; }
+.who-name { flex: 1; min-width: 0; display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: center; }
+.who-name .ic { width: 16px; height: 16px; color: var(--accent); }
+.who-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who-name select, .who-name small { grid-column: 2; font-size: 0.78rem; color: var(--ink-3); border: 0; background: none; padding: 0; max-width: 100%; text-overflow: ellipsis; }
+.who-n { color: var(--ink-2); font-weight: 600; }
+.stepper.sm { gap: 4px; flex: none; }
+.stepper.sm .icon-btn { width: 34px; height: 34px; font-size: 1.15rem; }
+.stepper.sm input { width: 48px; min-height: 34px; font-size: 0.95rem; border-radius: 9px; }
+.who-row .un { width: 32px; height: 32px; }
+.who-row .un .ic { width: 16px; height: 16px; }
+.who-sum { font-size: 0.86rem; color: var(--ink-2); margin: 6px 2px 0; }
+.who-sum b { color: var(--amber); }
+.who-form .who-qty { flex: 0 0 64px; text-align: center; }
+.who-quick .chip { display: inline-flex; align-items: center; gap: 4px; }
+.who-quick .chip .ic { width: 14px; height: 14px; color: var(--accent); }
+.mine-card { margin: 12px 0 4px; background: var(--accent-soft); border-radius: var(--radius); padding: 10px 14px 12px; }
+.mine-card .mc-head { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.mine-card .mc-head .ic { width: 18px; height: 18px; }
+.mine-card ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.mine-card li { display: grid; }
+.mine-card li small { color: var(--ink-2); font-size: 0.84rem; }
+.ev-mine { display: inline-flex; align-items: center; gap: 4px; color: var(--accent) !important; font-weight: 600; font-size: 0.8rem; }
+.ev-mine .ic { width: 14px; height: 14px; }
+.person-list { display: grid; gap: 8px; }
+.pl-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.pl-row .grow { flex: 1; min-width: 0; display: grid; }
+.pl-row small { color: var(--ink-3); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-row .btn.sent { background: var(--accent-soft); }
+.need-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+.need-row > span:first-child { font-weight: 600; color: var(--ink-2); font-size: 0.92rem; }
+.who-name > * { min-width: 0; }
+.who-name select { width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink-3); -webkit-appearance: none; appearance: none; cursor: pointer; }
+.who-name select:focus { outline: none; color: var(--accent); }
+/* home: what you're bringing, per event */
+.job-card { display: block; background: var(--accent-soft); border-radius: var(--radius); padding: 10px 14px 12px; }
+.job-card:active { filter: brightness(0.97); }
+.jc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.jc-head span { color: var(--accent); font-weight: 600; font-size: 0.86rem; white-space: nowrap; }
+.job-card ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.job-card li { display: grid; padding-left: 14px; position: relative; }
+.job-card li::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.job-card li.ok::before { background: var(--accent); }
+.job-card li small { color: var(--ink-2); font-size: 0.84rem; }
