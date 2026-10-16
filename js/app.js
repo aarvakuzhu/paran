@@ -8,8 +8,8 @@ import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } fr
 import { captureScan } from './scan.js';
 import { scanLabel } from './qrscan.js';
 
-const MODE_KEY = `stash.mode`;
-const RECENT_LOC_KEY = `stash.recentLocs`;
+const MODE_KEY = `paran.mode`;
+const RECENT_LOC_KEY = `paran.recentLocs`;
 let repo = null;
 let findState = { q: ``, filter: `` };
 
@@ -141,7 +141,7 @@ function onRepoChange() {
 
 // ============================================================ pre-app screens
 function renderWelcome(error) {
-  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
+  window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
   const g = googleConfigured();
   app.innerHTML = `
   <main class="welcome">
@@ -166,7 +166,7 @@ function renderWelcome(error) {
 }
 
 function renderReconnect() {
-  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
+  window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
   <main class="welcome">
     <div class="brand-mark">${icon(`box`)}</div>
@@ -180,7 +180,7 @@ function renderReconnect() {
 }
 
 function renderChoice(user) {
-  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
+  window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
   <main class="welcome">
     <h1>Hi ${esc((user.name || ``).split(` `)[0] || `there`)}</h1>
@@ -201,7 +201,7 @@ function renderChoice(user) {
 }
 
 function renderLoading(msg) {
-  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
+  window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `<main class="welcome"><div class="spinner"></div><p class="muted">${esc(msg)}</p></main>`;
 }
 
@@ -209,7 +209,7 @@ const googleG = () => `<svg class="g" viewBox="0 0 48 48" aria-hidden="true"><pa
 
 // ============================================================ shell + routing
 function renderShell() {
-  window.__stashStarted = true; // something is on screen: the startup watchdog in index.html stands down
+  window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
     <header class="topbar">
       <a href="#/" class="logo">${icon(`box`)}<span>${esc(CONFIG.APP_NAME)}</span></a>
@@ -1419,11 +1419,11 @@ function viewEdit(view, r) {
   const drawAiRow = () => {
     const row = $(`#aiRow`); if (!row) return;
     if (!aiReady()) {
-      let hidden = false; try { hidden = localStorage.getItem(`stash.aiPromoHidden`) === `1`; } catch { /* ignore */ }
+      let hidden = false; try { hidden = localStorage.getItem(`paran.aiPromoHidden`) === `1`; } catch { /* ignore */ }
       row.innerHTML = editing || hidden ? `` : `<div class="ai-setup"><a href="#/more?ai=1">${icon(`spark`)}<span>Let AI suggest details from your photos</span><b>Set up</b></a>
         <button type="button" class="icon-btn" data-hidepromo aria-label="Don’t show again">${icon(`x`)}</button></div>`;
       const x = row.querySelector(`[data-hidepromo]`);
-      if (x) x.onclick = () => { try { localStorage.setItem(`stash.aiPromoHidden`, `1`); } catch { /* ignore */ } row.innerHTML = ``; toast(`You can turn AI on any time in More`); };
+      if (x) x.onclick = () => { try { localStorage.setItem(`paran.aiPromoHidden`, `1`); } catch { /* ignore */ } row.innerHTML = ``; toast(`You can turn AI on any time in More`); };
       return;
     }
     const s = aiSettings();
@@ -2093,11 +2093,11 @@ async function scanPlace(locId) {
     const ok = await confirmSheet(`Scan many items at once`, `Pan your camera across a shelf or room, and AI lists everything it sees for you to review. This uses AI suggestions with your own free Gemini key.`, `Set up AI`);
     if (!ok || !(await aiConsent())) return;
   }
-  let seen = false; try { seen = localStorage.getItem(`stash.scanNote`) === `1`; } catch { /* ignore */ }
+  let seen = false; try { seen = localStorage.getItem(`paran.scanNote`) === `1`; } catch { /* ignore */ }
   if (!seen) {
     const ok = await confirmSheet(`Before you scan`, `Wide photos of a room show more of your space than a single item. They go from this phone to Google Gemini, and on the free tier Google may use them to improve its products. Keep papers, screens and people out of the shot.`, `Start scanning`);
     if (!ok) return;
-    try { localStorage.setItem(`stash.scanNote`, `1`); } catch { /* ignore */ }
+    try { localStorage.setItem(`paran.scanNote`, `1`); } catch { /* ignore */ }
   }
   const where = repo.pathText(locId);
   const shots = await captureScan({ max: SCAN_MAX, title: repo.locById(locId)?.name || `` });
@@ -2306,11 +2306,11 @@ function viewMore(view, r) {
     if (m === `sync`) { await repo.refresh(); toast(repo.status === `synced` ? `Up to date` : `Sync: ${repo.status}`); }
     if (m === `signout`) {
       if (repo.outbox.length && !(await confirmSheet(`Sign out?`, `${repo.outbox.length} change(s) haven’t reached Google yet and will be lost.`, `Sign out anyway`, true))) return;
-      signOut(); [MODE_KEY, `stash.session`].forEach((k) => localStorage.removeItem(k)); location.hash = ``; location.reload();
+      signOut(); [MODE_KEY, `paran.session`].forEach((k) => localStorage.removeItem(k)); location.hash = ``; location.reload();
     }
     if (m === `google`) { localStorage.removeItem(MODE_KEY); start(`google`, { interactive: true }); }
     if (m === `reset` && await confirmSheet(`Clear demo data?`, `Removes everything stored in this browser.`, `Clear`, true)) {
-      localStorage.removeItem(`stash.cache.demo`); localStorage.removeItem(MODE_KEY); location.hash = ``; location.reload();
+      localStorage.removeItem(`paran.cache.demo`); localStorage.removeItem(MODE_KEY); location.hash = ``; location.reload();
     }
   };
 }

@@ -2,7 +2,7 @@
 // Everything runs in the browser; requests go straight from the user's device to Google.
 import { CONFIG, SCOPES } from './config.js';
 
-const TOKEN_KEY = `stash.token`;
+const TOKEN_KEY = `paran.token`;
 let tokenClient = null;
 let token = null; // { access_token, expires_at }
 let pendingResolve = null;

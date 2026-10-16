@@ -40,21 +40,37 @@
     // Startup watchdog: if the app hasn't started (a failed or half-finished update, a bad connection),
     // never leave the user on the logo. Offer Try again, and Repair = re-download the app files.
     // Repair only clears the app's own files; the inventory (stored separately on this phone and in Google) is untouched.
+    // Paran and the frozen Stash pilot (/stash/) share this site, so they share the phone's storage.
+    // Paran keeps its own "paran." keys; on first run it copies the pilot's "stash." keys once (sign-in, cache,
+    // settings), so testers continue where they were. The pilot's keys are never changed.
+    (function () {
+      try {
+        if (!localStorage.getItem('paran.migrated')) {
+          for (var i = 0; i < localStorage.length; i++) {
+            var k = localStorage.key(i);
+            if (k && k.indexOf('stash.') === 0) { var nk = 'paran.' + k.slice(6); if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k)); }
+          }
+          localStorage.setItem('paran.migrated', String(Date.now()));
+        }
+      } catch (e) {}
+    })();
     (function () {
       var shown = false;
       function fail() {
-        if (window.__stashStarted || shown) return; shown = true;
+        if (window.__paranStarted || shown) return; shown = true;
         var a = document.getElementById('app');
         a.innerHTML = '<div class="splash"><i><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i>'
           + '<div class="splash-msg">Paran didn’t start properly. This can happen right after an update.</div>'
           + '<button class="splash-btn primary" onclick="location.reload()">Try again</button>'
-          + '<button class="splash-btn" onclick="window.__stashRepair()">Repair and reload</button>'
+          + '<button class="splash-btn" onclick="window.__paranRepair()">Repair and reload</button>'
           + '<small class="splash-note">Repair downloads the app again. Your inventory isn’t affected.</small></div>';
       }
-      window.__stashRepair = function () {
+      window.__paranRepair = function () {
         var jobs = [];
-        try { if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
-        try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+        // only this app's own worker and files: other apps on this site (the Stash pilot) are left alone
+        var here = new URL('./', location.href).href;
+        try { if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.filter(function (r) { return r.scope === here; }).map(function (r) { return r.unregister(); })); })); } catch (e) {}
+        try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.indexOf('paran-') === 0; }).map(function (k) { return caches.delete(k); })); })); } catch (e) {}
         Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname + '?r=' + Date.now() + location.hash); });
       };
       setTimeout(fail, 8000);

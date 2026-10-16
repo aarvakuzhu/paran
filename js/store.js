@@ -67,8 +67,8 @@ class DemoBackend {
   get cacheKey() { return `demo`; }
 }
 
-const SESSION_KEY = `stash.session`;
-const PHOTO_LRU_KEY = `stash.photoLRU`;
+const SESSION_KEY = `paran.session`;
+const PHOTO_LRU_KEY = `paran.photoLRU`;
 const PHOTO_CACHE_MAX = 150;
 
 class GoogleBackend {
@@ -77,7 +77,7 @@ class GoogleBackend {
 
   get cacheKey() { return this.sheetId; }
   get canShare() { return this.isOwner; }
-  prefKey() { return `stash.sheet.${this.user.email}`; }
+  prefKey() { return `paran.sheet.${this.user.email}`; }
 
   /** choice: undefined (auto), `create` (start a new inventory), or a spreadsheet id picked to join */
   async connect(choice) {
@@ -121,13 +121,13 @@ class GoogleBackend {
   /** Installs from before sessions were saved: rebuild one from the keys they already have on the device. */
   static legacySession() {
     try {
-      const key = Object.keys(localStorage).find((k) => k.startsWith(`stash.sheet.`) && localStorage.getItem(k));
+      const key = Object.keys(localStorage).find((k) => k.startsWith(`paran.sheet.`) && localStorage.getItem(k));
       if (!key) return null;
-      const email = key.slice(`stash.sheet.`.length);
+      const email = key.slice(`paran.sheet.`.length);
       const sheetId = localStorage.getItem(key);
-      if (!localStorage.getItem(`stash.cache.${sheetId}`)) return null; // nothing cached to show yet
+      if (!localStorage.getItem(`paran.cache.${sheetId}`)) return null; // nothing cached to show yet
       return { user: { email, name: email.split(`@`)[0] }, sheetId, isOwner: true, rootFolderId: null,
-        photoFolderId: localStorage.getItem(`stash.photos.${email}.${sheetId}`), sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, legacy: true };
+        photoFolderId: localStorage.getItem(`paran.photos.${email}.${sheetId}`), sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, legacy: true };
     } catch { return null; }
   }
 
@@ -165,7 +165,7 @@ class GoogleBackend {
 
   /** Older sheets: add header cells for columns introduced since (they're always appended at the end). */
   async ensureHeaders() {
-    const key = `stash.hdr.${this.sheetId}`;
+    const key = `paran.hdr.${this.sheetId}`;
     const ver = `${ITEM_COLS.length}.${LOG_COLS.length}`;
     if (localStorage.getItem(key) === ver) return;
     const r = await sheets.batchGet(this.sheetId, [`Items!1:1`, `Log!1:1`]);
@@ -180,7 +180,7 @@ class GoogleBackend {
   }
 
   async ensurePhotoFolder() {
-    const key = `stash.photos.${this.user.email}.${this.sheetId}`;
+    const key = `paran.photos.${this.user.email}.${this.sheetId}`;
     this.photoFolderId = localStorage.getItem(key);
     if (this.photoFolderId) return;
     const role = `photos-${this.sheetId}`;
@@ -315,7 +315,7 @@ export class Repo extends EventTarget {
   }
 
   emit(type = `change`) { this.dispatchEvent(new Event(type)); }
-  get key() { return `stash.cache.${this.backend.cacheKey}`; }
+  get key() { return `paran.cache.${this.backend.cacheKey}`; }
 
   async connect(choice) {
     const info = await this.backend.connect(choice);

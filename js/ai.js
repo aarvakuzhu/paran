@@ -2,8 +2,8 @@
 // Off by default; requires explicit consent. The key stays on this device (never written to the Sheet).
 // Photos go from the device straight to Google's Gemini API; Paran has no server in between.
 
-const SETTINGS_KEY = `stash.ai`;
-const USAGE_KEY = `stash.ai.usage`;
+const SETTINGS_KEY = `paran.ai`;
+const USAGE_KEY = `paran.ai.usage`;
 export const AI_MODELS = [`gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`]; // first available wins
 const API = `https://generativelanguage.googleapis.com/v1beta`;
 const MIN_GAP_MS = 4100; // stay under 15 requests/minute
