@@ -840,3 +840,23 @@ body.readonly .edit-only { display: none !important; }
 .stepper input { width: 84px; text-align: center; font-weight: 650; font-size: 1.05rem; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; min-height: 46px; outline: 0; -moz-appearance: textfield; }
 .stepper input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* a line drawing on several items: one row per item, each can be "not for this event" */
+.el-parts { font-size: 0.8rem; color: var(--ink-2); line-height: 1.35; margin-top: 2px; }
+.src-list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.src-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.src-row:last-child { border-bottom: 0; }
+.src-main { flex: 1; min-width: 0; display: grid; text-align: left; background: none; border: 0; padding: 0; color: var(--ink); font: inherit; cursor: pointer; }
+.src-main:disabled { cursor: default; }
+.src-main b { font-weight: 600; overflow-wrap: anywhere; }
+.src-main small { color: var(--ink-2); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src-row.st-ready .src-main small { color: var(--accent); }
+.src-row.st-out .src-main small { color: var(--amber); }
+.src-row.st-missing .src-main small { color: var(--red); }
+.src-row.off { background: var(--surface-2); }
+.src-row.off .thumb, .src-row.off .src-main { opacity: 0.5; }
+.src-row.off .src-main small { color: var(--ink-3) !important; }
+.src-row .btn.small { flex: none; }
+.src-row .btn.text { color: var(--ink-2); font-weight: 500; font-size: 0.82rem; padding: 0 6px; }
+.src-row.maybe { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
+.sheet .src-list + .label-sm { margin-top: 16px; }
+.sheet .src-list + .line-form, .sheet .src-list + form { margin-top: 14px; }

@@ -25,7 +25,9 @@ export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `q
 // date is YYYY-MM-DD (optional). A line with no itemId is something needed that isn't in the inventory yet.
 // New columns go at the END of each list so older sheets stay aligned.
 export const EVENT_COLS = [`id`, `name`, `date`, `notes`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `deleted`];
-export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`];
+export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`, `sources`];
+// sources: JSON [{ inv, id, name, off }] — every item that counts toward this line (tablecloths in the school closet AND the
+// storage unit). off = marked "not for this event". itemId/invId mirror the first one, so older app versions still show something.
 // invId: which inventory (spreadsheet id) the item is in. Group events (kept in the group's directory sheet) draw on every
 // inventory in the group; an inventory's own events leave it empty (= this inventory).
 export const EVENT_TABS = [
@@ -874,7 +876,7 @@ export class Repo extends EventTarget {
     const ev = this.events.find((e) => e.id === (existing?.eventId || fields.eventId));
     if (!this.canEditEvent(ev)) { this.emit(`readonly`); return null; }
     const line = existing ? { ...existing, ...fields } : {
-      id: uid(), eventId: ``, section: ``, itemId: ``, invId: ``, name: ``, qty: 1, note: ``, sort: Date.now(), deleted: ``, ...fields, ...(ev?._g ? { _g: 1 } : {}),
+      id: uid(), eventId: ``, section: ``, itemId: ``, invId: ``, sources: ``, name: ``, qty: 1, note: ``, sort: Date.now(), deleted: ``, ...fields, ...(ev?._g ? { _g: 1 } : {}),
     };
     line.updatedAt = now(); line.updatedBy = this.user.email;
     if (existing) Object.assign(existing, line); else this.eventLines.push(line);
@@ -884,13 +886,18 @@ export class Repo extends EventTarget {
   }
   deleteLine(line) { return this.saveLine({ id: line.id, deleted: now() }); }
 
-  /** Add several lines to one section in one go. entries: [{ itemId?, invId?, name?, qty? }] */
+  /** Add several lines to one section in one go. entries: [{ itemId?, invId?, name?, qty?, sources? }] */
   addLines(eventId, section, entries) {
     const ev = this.eventById(eventId);
     const base = Date.now();
-    const out = entries.map((e, i) => this.saveLine({
-      eventId, section, itemId: e.itemId || ``, invId: ev?._g && e.itemId ? (e.invId || this.hereId) : ``, name: e.name || ``, qty: e.qty || 1, sort: base + i,
-    }, { quiet: true }));
+    const out = entries.map((e, i) => {
+      const src = e.sources || (e.itemId ? [{ inv: ev?._g ? (e.invId || this.hereId) : ``, id: e.itemId, name: e.name || `` }] : []);
+      const first = src[0];
+      return this.saveLine({
+        eventId, section, itemId: first?.id || ``, invId: first?.inv || ``, name: e.name || first?.name || ``, qty: e.qty || 1, sort: base + i,
+        sources: src.length > 1 ? JSON.stringify(src) : ``,
+      }, { quiet: true });
+    });
     this.emit();
     return out.filter(Boolean);
   }
@@ -904,27 +911,68 @@ export class Repo extends EventTarget {
   /** This inventory's data, in the shape lineState expects of any inventory. */
   hereData() { return { items: this.items, pathText: (id) => this.pathText(id), thumbs: this.thumbs }; }
 
+  /** The items a line draws on: [{ inv, id, name, off }]. inv '' = this inventory. Older lines have just itemId/invId. */
+  sourcesOf(line) {
+    let list = [];
+    try { list = JSON.parse(line.sources || `[]`); } catch { /* ignore */ }
+    if (!Array.isArray(list)) list = [];
+    if (!list.length && line.itemId) list = [{ inv: line.invId || ``, id: line.itemId, name: line.name || `` }];
+    return list.filter((x) => x && x.id);
+  }
+  srcInv(src) { return src.inv || this.hereId; }
+  /** Replace a line's items. The first one in use is mirrored into itemId/invId. */
+  setSources(line, list, extra = {}) {
+    const first = list.find((x) => !x.off) || list[0];
+    return this.saveLine({ id: line.id, sources: list.length ? JSON.stringify(list) : ``, itemId: first?.id || ``, invId: first?.inv || ``, ...extra });
+  }
+
+  /** One item behind a line: { src, invId, key: ready|out|missing|gone|unknown, item, have, where, who, thumbs } */
+  sourceState(src, data) {
+    const invId = this.srcInv(src);
+    const d = data(invId);
+    if (!d) return { src, invId, key: `unknown`, have: 0 };
+    const item = d.items.find((i) => i.id === src.id && !(i.deleted === true || (i.deleted && i.deleted !== `FALSE`)));
+    if (!item) return { src, invId, key: `gone`, have: 0 };
+    const base = { src, invId, item, have: Number(item.qty) || 1, thumbs: d.thumbs, where: d.pathText(item.locationId) };
+    if (item.status === `missing`) return { ...base, key: `missing` };
+    if (item.status === `lent` || item.status === `reserved`) return { ...base, key: `out`, who: item.lentTo, reserved: item.status === `reserved` };
+    return { ...base, key: `ready` };
+  }
+
   /**
-   * Is this line ready for the event?
-   * key: ready (in its place) | short (fewer than needed) | out (lent or reserved) | missing | none (not in an inventory)
-   *      | unknown (its inventory isn't on this phone yet)
+   * Is this line ready for the event? Counts every item it draws on (except ones marked not for this event).
+   * key: ready | short (fewer than needed) | out (some lent or reserved) | missing | none (nothing in an inventory)
+   *      | unknown (an inventory it draws on isn't on this phone yet)
    * data(invId): { items, pathText(locId), thumbs } for an inventory, or null when there's no copy on this phone.
    */
   lineState(line, data = (id) => (id === this.hereId ? this.hereData() : null)) {
-    if (!line.itemId) return { key: `none`, text: `Not in inventory yet`, item: null };
-    const invId = this.lineInv(line);
-    const d = data(invId);
-    if (!d) return { key: `unknown`, text: `Not checked yet`, item: null, invId };
-    const item = d.items.find((i) => i.id === line.itemId && !(i.deleted === true || (i.deleted && i.deleted !== `FALSE`)));
-    if (!item) return { key: `none`, text: `No longer in the inventory`, item: null, invId };
-    const base = { item, invId, thumbs: d.thumbs };
-    if (item.status === `missing`) return { ...base, key: `missing`, text: `Marked missing` };
-    if (item.status === `lent`) return { ...base, key: `out`, text: `With ${item.lentTo || `someone`}`, who: item.lentTo };
-    if (item.status === `reserved`) return { ...base, key: `out`, text: `Reserved for ${item.lentTo || `someone`}`, who: item.lentTo };
-    const need = Number(line.qty) || 1; const have = Number(item.qty) || 1;
-    const where = d.pathText(item.locationId);
-    if (need > have) return { ...base, key: `short`, text: `Need ${need}, have ${have}${where ? ` · ${where}` : ``}`, where };
-    return { ...base, key: `ready`, text: where || `Place not set`, where };
+    const all = this.sourcesOf(line);
+    const used = all.filter((x) => !x.off);
+    const off = all.length - used.length;
+    if (!used.length) return { key: `none`, text: all.length ? `Nothing picked for this event` : `Not in inventory yet`, item: null, parts: [], off };
+    const parts = used.map((x) => this.sourceState(x, data));
+    const need = Number(line.qty) || 1;
+    const shown = parts.find((p) => p.item) || parts[0];
+    const base = { item: shown.item || null, invId: shown.invId, thumbs: shown.thumbs, parts, off, need };
+    if (parts.length === 1) { // one item: say exactly what's going on with it
+      const p = parts[0];
+      if (p.key === `unknown`) return { ...base, key: `unknown`, text: `Not checked yet` };
+      if (p.key === `gone`) return { ...base, key: `none`, text: `No longer in the inventory` };
+      if (p.key === `missing`) return { ...base, key: `missing`, text: `Marked missing` };
+      if (p.key === `out`) return { ...base, key: `out`, text: `${p.reserved ? `Reserved for` : `With`} ${p.who || `someone`}`, who: p.who };
+      if (need > p.have) return { ...base, key: `short`, text: `Need ${need}, have ${p.have}${p.where ? ` · ${p.where}` : ``}`, where: p.where, have: p.have };
+      return { ...base, key: `ready`, text: p.where || `Place not set`, where: p.where, have: p.have };
+    }
+    const sum = (k) => parts.filter((p) => p.key === k).reduce((n, p) => n + p.have, 0);
+    const ready = sum(`ready`); const out = parts.filter((p) => p.key === `out`); const outQty = sum(`out`);
+    const unknown = parts.filter((p) => p.key === `unknown`).length;
+    const places = parts.filter((p) => p.key === `ready`).length;
+    if (ready >= need) return { ...base, key: `ready`, have: ready, text: `${ready} ready${places > 1 ? ` in ${places} places` : ``}${ready > need ? ` (need ${need})` : ``}` };
+    if (unknown) return { ...base, key: `unknown`, have: ready, text: `${ready} of ${need} ready so far · ${unknown} not checked` };
+    if (out.length) return { ...base, key: `out`, have: ready, who: out[0].who, text: `${ready} of ${need} ready · ${outQty} with ${[...new Set(out.map((p) => p.who || `someone`))].join(`, `)}` };
+    if (parts.some((p) => p.key === `missing`)) return { ...base, key: `missing`, have: ready, text: `${ready} of ${need} ready · some marked missing` };
+    if (!ready && parts.every((p) => p.key === `gone`)) return { ...base, key: `none`, text: `No longer in the inventory` };
+    return { ...base, key: `short`, have: ready, text: `Need ${need}, have ${ready}` };
   }
 
   /** Counts for an event: { total, ready, short, out, missing, none, unknown } */
@@ -934,9 +982,9 @@ export class Repo extends EventTarget {
     return s;
   }
 
-  /** Upcoming (or undated) events that need this item (of this inventory). */
+  /** Upcoming (or undated) events that need this item (of this inventory), unless it's marked not for that event. */
   eventsForItem(itemId, today = new Date().toISOString().slice(0, 10)) {
-    const ids = new Set(this.eventLines.filter((l) => l.itemId === itemId && !l.deleted && this.lineInv(l) === this.hereId).map((l) => l.eventId));
+    const ids = new Set(this.eventLines.filter((l) => !l.deleted && this.sourcesOf(l).some((x) => x.id === itemId && !x.off && this.srcInv(x) === this.hereId)).map((l) => l.eventId));
     return this.liveEvents().filter((e) => ids.has(e.id) && (!e.date || String(e.date) >= today))
       .sort((a, b) => String(a.date || `9999`).localeCompare(String(b.date || `9999`)));
   }
@@ -949,6 +997,8 @@ export class Repo extends EventTarget {
     const ev = this.saveEvent({ name: `Diwali party`, date, notes: `Backyard, about 30 people` });
     this.addLines(ev.id, `Decor`, [{ itemId: find(`Christmas lights (warm white)`), qty: 4 }, { name: `Diyas (clay lamps)`, qty: 20 }]);
     this.addLines(ev.id, `Setup`, [{ itemId: find(`Extension cord 25 ft`), qty: 2 }, { itemId: find(`Pressure washer`) }, { name: `Folding tables`, qty: 4 }]);
+    const cloths = this.items.filter((i) => i.name === `Tablecloths (white)`).map((i) => ({ inv: ``, id: i.id, name: i.name }));
+    if (cloths.length) this.addLines(ev.id, `Setup`, [{ name: `Tablecloths (white)`, qty: 24, sources: cloths }]);
   }
 
   seedDemo() {
@@ -969,6 +1019,8 @@ export class Repo extends EventTarget {
     S(`Spare house keys`, `Lockout backup, give to house sitter`, `Keys`, `keys, backup`, drawer.id);
     S(`Christmas lights (warm white)`, `Front porch and tree`, `Holiday`, `christmas, decor, lights`, bigBox.id, { qty: 4 })
       .then((it) => this.reserveItem(it, `Kumar`, new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)));
+    S(`Tablecloths (white)`, `Covering banquet tables`, `Party`, `linen, table cover`, shelf.id, { qty: 12 });
+    S(`Tablecloths (white)`, `Covering banquet tables`, `Party`, `linen, table cover`, bigBox.id, { qty: 8 });
     S(`Pressure washer`, `Driveway and deck cleaning`, `Outdoor`, `cleaning, deck`, garage.id).then((pw) => this.lendItem(pw, `Ravi`));
     this.seedDemoEvent();
     this.setStatus(`synced`);

@@ -5,7 +5,7 @@
 //  - An inventory that isn't in a group keeps its own events in its own sheet (an inventory in a group can too).
 // Other inventories are read from this phone's copy (refreshed in the background), the same way search across them works.
 import { esc, $, toast, sheet, confirmSheet, icon } from './ui.js';
-import { search } from './search.js';
+import { search, findDuplicates } from './search.js';
 import { loadKnown } from './inventories.js';
 import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 
@@ -56,7 +56,7 @@ function freshen(ids) {
     xfetch(id).then(() => ctx.redraw());
   }
 }
-const otherInvs = (ev) => (ev._g ? R().linesOf(ev.id).filter((l) => l.itemId).map((l) => R().lineInv(l)) : []);
+const otherInvs = (ev) => (ev._g ? R().linesOf(ev.id).flatMap((l) => R().sourcesOf(l).filter((x) => !x.off).map((x) => R().srcInv(x))) : []);
 
 // ------------------------------------------------------------ dates
 function whenText(date) {
@@ -191,7 +191,7 @@ export function viewEvent(view, r) {
   const w = whenText(ev.date);
   const shown = lines.map((l) => ({ l, x: lineState(l) })).filter(({ x }) => !st.filter || x.key === st.filter);
   const g = ev._g ? repo.group() : null;
-  const used = new Set(lines.filter((l) => l.itemId).map((l) => repo.lineInv(l)));
+  const used = new Set(lines.flatMap((l) => repo.sourcesOf(l).filter((x) => !x.off).map((x) => repo.srcInv(x))));
   const notHere = groupInventories().filter((i) => !i.here && !i.reachable && used.has(i.id));
 
   const groups = st.by === `place` ? byPlace(shown, ev) : bySection(shown, repo.sectionsOf(ev.id));
@@ -259,6 +259,7 @@ const fromText = (ev, x) => (ev._g && x.invId && x.invId !== R().hereId ? invNam
 const withInv = (inv, path) => (!inv ? path : !path ? inv : path.toLowerCase().startsWith(inv.toLowerCase()) ? path : `${inv} › ${path}`);
 /** One line about a line's state, naming the inventory when it's another one. */
 function stateText(ev, x) {
+  if (x.parts?.length > 1) return x.text;
   const from = fromText(ev, x);
   if (x.key === `ready`) return withInv(from, x.where || ``) || `Place not set`;
   if (x.key === `short`) return [x.text.split(` · `)[0], withInv(from, x.where || ``)].filter(Boolean).join(` · `);
@@ -266,17 +267,33 @@ function stateText(ev, x) {
   return [x.text, from].filter(Boolean).join(` · `);
 }
 
+/** Where one item behind a line is: "15 · Storage unit › Shelf 1", "4 with Ravi". */
+function partText(ev, p) {
+  const inv = ev._g && p.invId !== R().hereId ? invNameOf(p.invId) : ``;
+  if (p.key === `ready`) return `${p.have} · ${withInv(inv, p.where) || `place not set`}`;
+  if (p.key === `out`) return `${p.have} ${p.reserved ? `reserved for` : `with`} ${p.who || `someone`}`;
+  if (p.key === `missing`) return `${p.have} missing${inv ? ` · ${inv}` : ``}`;
+  if (p.key === `unknown`) return `? in ${invNameOf(p.invId)}`;
+  return `${p.src?.name || `an item`} no longer in ${inv || `the inventory`}`;
+}
+
 function lineRow(ev, l, x, placeView) {
   const pic = x.item ? picOf(x.item, x.thumbs) : `<div class="thumb sm ph">${icon(x.key === `unknown` ? `cloud` : `plus`)}</div>`;
-  let sub;
-  if (placeView) { // the group heading already says where: show the problem (if any) and the section
-    const problem = x.key === `short` ? x.text.split(` · `)[0] : x.key === `ready` ? `` : x.key === `out` || x.key === `missing` ? `` : x.text;
+  let sub; let parts = ``;
+  if (placeView) { // the group heading already says where: show how many of what's needed (if it matters) and the section
+    const problem = x.partOf ? `${x.have} of ${x.need}` : x.key === `short` ? x.text.split(` · `)[0] : x.key === `ready` || x.key === `out` || x.key === `missing` ? `` : x.text;
     sub = [problem, l.section].filter(Boolean).join(` · `) || STATE_LABEL[x.key];
-  } else sub = stateText(ev, x);
+  } else {
+    sub = stateText(ev, x);
+    if (x.parts?.length > 1 || x.off) {
+      parts = `<small class="el-parts">${[...(x.parts?.length > 1 ? x.parts.map((p) => esc(partText(ev, p))) : []),
+        ...(x.off ? [`${x.off} not for this event`] : [])].join(`<br>`)}</small>`;
+    }
+  }
   return `<button type="button" class="eline st-${x.key}" data-line="${esc(l.id)}">
     ${pic}
     <span class="el-main"><b>${esc(lineName(l, x))}${Number(l.qty) > 1 ? ` <span class="qty">×${esc(l.qty)}</span>` : ``}</b>
-      <small class="el-state">${esc(sub)}</small>
+      <small class="el-state">${esc(sub)}</small>${parts}
       ${l.note ? `<small class="el-note">${esc(l.note)}</small>` : ``}</span>
     <span class="el-dot" title="${esc(STATE_LABEL[x.key])}"></span></button>`;
 }
@@ -294,7 +311,12 @@ function bySection(rows, order) {
 function byPlace(rows, ev) {
   const map = new Map();
   const put = (key, label, sort, row) => { if (!map.has(key)) map.set(key, { label, sort, rows: [] }); map.get(key).rows.push(row); };
-  for (const row of rows) {
+  // a line drawing on several items shows up under each of their places
+  const flat = rows.flatMap((row) => (row.x.parts?.length > 1 ? row.x.parts.map((p) => ({ l: row.l, x: {
+    key: p.key === `gone` ? `none` : p.key, item: p.item, thumbs: p.thumbs, invId: p.invId, where: p.where, who: p.who, have: p.have, need: row.x.need, partOf: true,
+    text: p.key === `out` ? `${p.reserved ? `Reserved for` : `With`} ${p.who || `someone`}` : p.key === `gone` ? `No longer in the inventory` : ``,
+  } })) : [row]));
+  for (const row of flat) {
     const { x } = row;
     if (x.key === `ready` || x.key === `short`) {
       const path = x.where || `Place not set`;
@@ -322,6 +344,23 @@ function pool(ev) {
   return { entries: out, missing };
 }
 const keyOf = (invId, itemId) => `${invId}|${itemId}`;
+const srcKey = (src) => keyOf(R().srcInv(src), src.id);
+/** A line's item reference for a pool entry. Group events name the inventory; an inventory's own events leave it empty. */
+const srcOf = (ev, e) => ({ inv: ev._g ? e.invId : ``, id: e.item.id, name: e.item.name });
+/** Same-named items the event could also use (tablecloths in the closet and the storage unit). */
+function matchesFor(ev, name, skip = new Set()) {
+  const byInv = new Map();
+  for (const e of pool(ev).entries) { if (!byInv.has(e.invId)) byInv.set(e.invId, []); byInv.get(e.invId).push(e); }
+  const out = [];
+  for (const list of byInv.values()) {
+    const idx = new Map(list.map((e) => [e.item.id, e]));
+    for (const d of findDuplicates(list.map((e) => e.item), name)) {
+      const e = idx.get(d.item.id);
+      if (e && !skip.has(keyOf(e.invId, e.item.id))) out.push(e);
+    }
+  }
+  return out;
+}
 function searchPool(entries, q) {
   if (!q) return [...entries].sort((a, b) => a.item.name.localeCompare(b.item.name));
   // search each inventory with its own place names, keep this inventory first
@@ -342,7 +381,7 @@ function addItemsSheet(ev, startSection) {
   let section = startSection || sections[sections.length - 1] || ``;
   const extra = new Set(section && !sections.includes(section) ? [section] : []); // sections typed in this sheet
   const chosen = new Map(); const named = []; // key -> entry; free-text things not in any inventory yet
-  const already = new Set(repo.linesOf(ev.id).filter((l) => l.itemId).map((l) => keyOf(repo.lineInv(l), l.itemId)));
+  const already = new Set(repo.linesOf(ev.id).flatMap((l) => repo.sourcesOf(l).map(srcKey)));
   sheet(`Add to ${ev.name}`, (el, close) => {
     el.innerHTML = `<div class="label-sm first">Section</div><div class="chips sec-chips"></div>
       <label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search ${ev._g ? `the group’s items` : `your items`}, or type something new" autocomplete="off" enterkeyhint="search"></label>
@@ -415,73 +454,129 @@ function addItemsSheet(ev, startSection) {
       if (!searchPool(pool(ev).entries, q).length) { named.push(q); qEl.value = ``; draw(); }
     });
     go.onclick = () => {
-      const entries = [...[...chosen.values()].filter(Boolean).map((e) => ({ itemId: e.item.id, invId: e.invId, name: e.item.name })), ...named.map((name) => ({ name }))];
+      // Each pick becomes one line, together with same-named items elsewhere (and other picks of the same thing):
+      // "Tablecloths" in the school closet and in the storage unit count toward one total.
+      const used = new Set(already); const lines = []; let found = 0;
+      for (const e of [...chosen.values()].filter(Boolean)) {
+        const k = keyOf(e.invId, e.item.id); if (used.has(k)) continue;
+        used.add(k);
+        const more = matchesFor(ev, e.item.name, used);
+        more.forEach((m) => used.add(keyOf(m.invId, m.item.id)));
+        found += more.filter((m) => !chosen.has(keyOf(m.invId, m.item.id))).length;
+        const all = [e, ...more];
+        const total = all.reduce((n, m) => n + (Number(m.item.qty) || 1), 0);
+        lines.push({ name: e.item.name, sources: all.map((m) => srcOf(ev, m)), qty: all.length > 1 ? total : 1 });
+      }
+      const entries = [...lines, ...named.map((name) => ({ name }))];
       close(); // first, so the event page redraws with the new lines
       const added = repo.addLines(ev.id, section, entries);
-      if (added.length) toast(`Added ${added.length} to ${section || ev.name}`);
+      if (added.length) toast(`Added ${added.length} to ${section || ev.name}${found ? ` · found ${found} more in other places` : ``}`, { ms: 4500 });
     };
     el._redraw = draw; // other inventories arriving in the background
     drawSections(); draw();
   });
 }
 
-// ------------------------------------------------------------ One line: quantity, note, section, link, remove
+// ------------------------------------------------------------ One line: quantity, items it draws on, note, section
 function lineSheet(ev, line) {
   const repo = R();
-  const x = lineState(line);
-  const name = lineName(line, x);
   const canEdit = repo.canEditEvent(ev);
-  const other = x.invId && x.invId !== repo.hereId;
-  sheet(name, (el, close) => {
-    const sections = repo.sectionsOf(ev.id).filter(Boolean);
-    el.innerHTML = `<div class="el-banner st-${x.key}"><span class="el-dot"></span><div>${x.key === `none` ? `<b>${esc(x.text)}</b>`
-        : x.key === `unknown` ? `<b>In ${esc(invNameOf(x.invId))}</b><small>Not on this phone yet, so it can’t be checked here.</small>`
-        : `<b>${esc(STATE_LABEL[x.key])}</b><small>${esc(stateText(ev, x))}</small>`}</div></div>
-      ${canEdit ? `<form class="stack line-form">
-        <div class="two">
-          <label class="field"><span>How many needed</span><input name="qty" type="number" min="1" inputmode="numeric" value="${esc(line.qty || 1)}"></label>
-          <label class="field"><span>Section</span><input name="section" list="ev-secs" value="${esc(line.section || ``)}" placeholder="No section"></label>
-        </div>
-        <datalist id="ev-secs">${sections.map((s) => `<option value="${esc(s)}">`).join(``)}</datalist>
-        <label class="field"><span>Note <small>(optional)</small></span><input name="note" value="${esc(line.note || ``)}" placeholder="e.g. the tall one, check batteries"></label>
-        <div class="row-actions"><button class="btn primary">Save</button></div></form>` : (line.note ? `<p class="muted">${esc(line.note)}</p>` : ``)}
-      <div class="menu">
-        ${x.item ? `<button data-l="open">${icon(other ? `ext` : `box`)} Open ${esc(x.item.name)}${other ? ` <small>in ${esc(invNameOf(x.invId))}</small>` : ``}</button>` : ``}
-        ${x.key === `unknown` ? `<button data-l="include">${icon(`plus`)} Include ${esc(invNameOf(x.invId))} on this phone</button>` : ``}
-        ${canEdit && !line.itemId && !repo.readOnly ? `<button data-l="add">${icon(`plus`)} Add “${esc(name)}” to ${esc(ctx.invName())}</button>` : ``}
-        ${canEdit ? `<button data-l="link">${icon(`search`)} ${line.itemId ? `Use a different item` : `It’s already in ${ev._g ? `an inventory` : `the inventory`}`}</button>` : ``}
-        ${canEdit ? `<button data-l="remove" class="danger">${icon(`trash`)} Remove from ${esc(ev.name)}</button>` : ``}
-      </div>`;
-    const form = $(`.line-form`, el);
-    if (form) form.onsubmit = (e) => {
+  sheet(lineName(line, lineState(line)), (el, close) => {
+    const draw = () => {
+      const cur = repo.eventLines.find((l) => l.id === line.id) || line;
+      const x = lineState(cur);
+      const name = lineName(cur, x);
+      const srcs = repo.sourcesOf(cur);
+      const sections = repo.sectionsOf(ev.id).filter(Boolean);
+      const inUse = new Set(srcs.map(srcKey));
+      const also = canEdit && srcs.length ? matchesFor(ev, cur.name || name, inUse) : [];
+      const srcRow = (src, i) => {
+        const p = repo.sourceState(src, dataOf);
+        const inv = ev._g && p.invId !== repo.hereId ? invNameOf(p.invId) : ``;
+        const where = p.key === `ready` ? withInv(inv, p.where) || `Place not set`
+          : p.key === `out` ? `${p.reserved ? `Reserved for` : `With`} ${p.who || `someone`}${inv ? ` · ${inv}` : ``}`
+          : p.key === `missing` ? `Marked missing${inv ? ` · ${inv}` : ``}`
+          : p.key === `unknown` ? `In ${invNameOf(p.invId)} · not on this phone yet` : `No longer in ${inv || `the inventory`}`;
+        return `<div class="src-row${src.off ? ` off` : ``} st-${p.key === `gone` ? `none` : p.key}">
+          ${p.item ? picOf(p.item, p.thumbs) : `<div class="thumb sm ph">${icon(p.key === `unknown` ? `cloud` : `x`)}</div>`}
+          <button type="button" class="src-main" data-open="${i}" ${p.item ? `` : `disabled`}><b>${esc(p.item?.name || src.name || `Item`)}${p.have ? ` <span class="qty">×${esc(p.have)}</span>` : ``}</b><small>${esc(src.off ? `Not for this event` : where)}</small></button>
+          ${canEdit ? `<button type="button" class="btn small ${src.off ? `ghost` : `text`}" data-off="${i}">${src.off ? `Use it` : `Not for this event`}</button>` : ``}
+        </div>`;
+      };
+      el.innerHTML = `<div class="el-banner st-${x.key}"><span class="el-dot"></span><div>${x.key === `none` ? `<b>${esc(x.text)}</b>`
+          : x.key === `unknown` && srcs.length === 1 ? `<b>In ${esc(invNameOf(x.invId))}</b><small>Not on this phone yet, so it can’t be checked here.</small>`
+          : `<b>${esc(STATE_LABEL[x.key])}</b><small>${esc(stateText(ev, x))}</small>`}</div></div>
+        ${srcs.length ? `<div class="label-sm first">${srcs.length > 1 ? `From ${srcs.length} items` : `From`}</div><div class="src-list">${srcs.map(srcRow).join(``)}</div>` : ``}
+        ${also.length ? `<div class="label-sm">Also found</div><div class="src-list">${also.map((m, i) => `<div class="src-row maybe">${picOf(m.item, m.thumbs)}
+            <div class="src-main"><b>${esc(m.item.name)}${Number(m.item.qty) > 1 ? ` <span class="qty">×${esc(m.item.qty)}</span>` : ``}</b><small>${esc(withInv(m.invName, m.pathText(m.item.locationId)) || `No location`)}</small></div>
+            <button type="button" class="btn small ghost" data-also="${i}">${icon(`plus`)} Use it</button></div>`).join(``)}</div>` : ``}
+        ${canEdit ? `<form class="stack line-form">
+          <div class="two">
+            <label class="field"><span>How many needed</span><input name="qty" type="number" min="1" inputmode="numeric" value="${esc(cur.qty || 1)}"></label>
+            <label class="field"><span>Section</span><input name="section" list="ev-secs" value="${esc(cur.section || ``)}" placeholder="No section"></label>
+          </div>
+          <datalist id="ev-secs">${sections.map((s2) => `<option value="${esc(s2)}">`).join(``)}</datalist>
+          <label class="field"><span>Note <small>(optional)</small></span><input name="note" value="${esc(cur.note || ``)}" placeholder="e.g. the tall one, check batteries"></label>
+          <div class="row-actions"><button class="btn primary">Save</button></div></form>` : (cur.note ? `<p class="muted">${esc(cur.note)}</p>` : ``)}
+        <div class="menu">
+          ${srcs.some((s2) => !s2.off && repo.sourceState(s2, dataOf).key === `unknown`) ? `<button data-l="include">${icon(`plus`)} Check ${esc([...new Set(srcs.filter((s2) => repo.sourceState(s2, dataOf).key === `unknown`).map((s2) => invNameOf(repo.srcInv(s2))))].join(`, `))} on this phone</button>` : ``}
+          ${canEdit && !repo.readOnly ? `<button data-l="add">${icon(`plus`)} ${srcs.length ? `Log more` : `Add`} “${esc(name)}” in ${esc(ctx.invName())}</button>` : ``}
+          ${canEdit ? `<button data-l="link">${icon(`search`)} ${srcs.length ? `Add another item to this line` : `It’s already in ${ev._g ? `an inventory` : `the inventory`}`}</button>` : ``}
+          ${canEdit ? `<button data-l="remove" class="danger">${icon(`trash`)} Remove from ${esc(ev.name)}</button>` : ``}
+        </div>`;
+      el._also = also; el._srcs = srcs; el._name = name; el._cur = cur;
+    };
+    el.addEventListener(`submit`, (e) => {
+      const form = e.target.closest(`.line-form`); if (!form) return;
       e.preventDefault();
       close();
       repo.saveLine({ id: line.id, qty: Math.max(1, Number(form.elements.qty.value) || 1), section: form.elements.section.value.trim(), note: form.elements.note.value.trim() });
       toast(`Saved`);
-    };
+    });
     el.addEventListener(`click`, async (e) => {
+      const srcs = el._srcs; const name = el._name; const cur = el._cur;
+      const off = e.target.closest(`[data-off]`);
+      if (off) { // mark one item "not for this event" (or use it again)
+        const list = srcs.map((s2, i) => (i === Number(off.dataset.off) ? { ...s2, off: s2.off ? undefined : 1 } : s2)).map(({ off: o, ...rest }) => (o ? { ...rest, off: 1 } : rest));
+        repo.setSources(cur, list); draw(); return;
+      }
+      const also = e.target.closest(`[data-also]`);
+      if (also) { const m = el._also[Number(also.dataset.also)]; repo.setSources(cur, [...srcs, srcOf(ev, m)]); draw(); return; }
+      const op = e.target.closest(`[data-open]`);
+      if (op) {
+        const src = srcs[Number(op.dataset.open)]; const inv = repo.srcInv(src);
+        close();
+        if (inv !== repo.hereId) ctx.switchTo(inv, { hash: `#/item/${src.id}` }); else location.hash = `#/item/${src.id}`;
+        return;
+      }
       const a = e.target.closest(`[data-l]`)?.dataset.l; if (!a) return;
-      if (a === `open`) { close(); if (other) ctx.switchTo(x.invId, { hash: `#/item/${x.item.id}` }); else location.hash = `#/item/${x.item.id}`; return; }
       if (a === `include`) {
         close();
-        if (known().inv[x.invId]?.reachable === false) await ctx.openGroupInventories(repo.group()?.id);
-        else { tried[x.invId] = 0; await xfetch(x.invId); }
+        const invs = [...new Set(srcs.map((s2) => repo.srcInv(s2)).filter((id) => id !== repo.hereId))];
+        if (invs.some((id) => known().inv[id]?.reachable === false)) await ctx.openGroupInventories(repo.group()?.id);
+        for (const id of invs) { tried[id] = 0; await xfetch(id); }
         ctx.redraw(); return;
       }
-      if (a === `add`) { close(); location.hash = `#/add?name=${encodeURIComponent(name)}&qty=${encodeURIComponent(line.qty || 1)}&eline=${encodeURIComponent(line.id)}`; return; }
+      if (a === `add`) { close(); location.hash = `#/add?name=${encodeURIComponent(name)}&qty=${encodeURIComponent(srcs.length ? 1 : cur.qty || 1)}&eline=${encodeURIComponent(line.id)}`; return; }
       if (a === `link`) {
         close();
-        const pick = await pickItem(ev, `Which item is “${name}”?`, line.name || x.item?.name || ``);
-        if (pick) { repo.saveLine({ id: line.id, itemId: pick.item.id, invId: ev._g ? pick.invId : ``, name: pick.item.name }); toast(`Linked to ${pick.item.name}`); }
+        const pick = await pickItem(ev, srcs.length ? `Add to “${name}”` : `Which item is “${name}”?`, cur.name || name);
+        if (!pick) return;
+        const k = keyOf(pick.invId, pick.item.id);
+        if (srcs.some((s2) => srcKey(s2) === k)) { toast(`Already on this line`); return; }
+        const more = srcs.length ? [] : matchesFor(ev, pick.item.name, new Set([k]));
+        repo.setSources(cur, [...srcs, srcOf(ev, pick), ...more.map((m) => srcOf(ev, m))], srcs.length ? {} : { name: pick.item.name });
+        toast(more.length ? `Linked ${pick.item.name} · found ${more.length} more in other places` : `Added ${pick.item.name}`);
         return;
       }
       if (a === `remove`) {
         close();
-        repo.deleteLine(line);
+        repo.deleteLine(cur);
         toast(`Removed ${name}`, { action: `Undo`, ms: 6000, onAction: () => repo.saveLine({ id: line.id, deleted: `` }) });
       }
     });
-  });
+    draw();
+  }, { onClose: () => setTimeout(() => ctx.redraw(), 0) });
 }
 
 /** Pick one item the event can use. Resolves a pool entry { invId, item }, or null. */
@@ -558,6 +653,7 @@ function shareEvent(ev) {
     for (const { l, x } of g.rows) {
       const where = x.key === `unknown` ? `in ${invNameOf(x.invId)}` : stateText(ev, x);
       out.push(`${mark[x.key]} ${lineName(l, x)}${Number(l.qty) > 1 ? ` ×${l.qty}` : ``} – ${where}${l.note ? ` (${l.note})` : ``}`);
+      if (x.parts?.length > 1) for (const p of x.parts) out.push(`    ${partText(ev, p)}`);
     }
     out.push(``);
   }
@@ -574,13 +670,15 @@ export function neededForHtml(item) {
   }).join(``)}</div></div>`;
 }
 
-/** After "Add to the inventory" from an event line: point the line at the new item (in this inventory). */
+/** After "Add to the inventory" from an event line: the new item (in this inventory) counts toward that line. */
 export function linkLineToItem(lineId, itemId) {
   const repo = R();
   const line = repo.eventLines.find((l) => l.id === lineId && !l.deleted);
   if (!line || !itemId) return false;
   const item = repo.items.find((i) => i.id === itemId);
-  repo.saveLine({ id: line.id, itemId, invId: line._g ? repo.hereId : ``, ...(item ? { name: item.name } : {}) });
+  const src = { inv: line._g ? repo.hereId : ``, id: itemId, name: item?.name || line.name };
+  const list = repo.sourcesOf(line).filter((x) => !(x.id === itemId && repo.srcInv(x) === repo.srcInv(src)));
+  repo.setSources(line, [...list, src], list.length ? {} : { name: item?.name || line.name });
   return true;
 }
 
