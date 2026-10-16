@@ -25,9 +25,10 @@ export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `q
 // date is YYYY-MM-DD (optional). A line with no itemId is something needed that isn't in the inventory yet.
 // New columns go at the END of each list so older sheets stay aligned.
 export const EVENT_COLS = [`id`, `name`, `date`, `notes`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `deleted`];
-export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`, `sources`];
+export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`, `sources`, `bringers`];
 // sources: JSON [{ inv, id, name, off }] — every item that counts toward this line (tablecloths in the school closet AND the
-// storage unit). off = marked "not for this event". itemId/invId mirror the first one, so older app versions still show something.
+// storage unit). off = marked "not for this event".
+// bringers: JSON [{ name, qty }] — who is bringing it (buying, borrowing, or taking it from where it's kept). qty 0 = all of it. itemId/invId mirror the first one, so older app versions still show something.
 // invId: which inventory (spreadsheet id) the item is in. Group events (kept in the group's directory sheet) draw on every
 // inventory in the group; an inventory's own events leave it empty (= this inventory).
 export const EVENT_TABS = [
@@ -910,6 +911,24 @@ export class Repo extends EventTarget {
 
   /** This inventory's data, in the shape lineState expects of any inventory. */
   hereData() { return { items: this.items, pathText: (id) => this.pathText(id), thumbs: this.thumbs }; }
+
+  /** Who's bringing a line: [{ name, qty }] (qty 0 = all of it). */
+  bringersOf(line) {
+    try { const a = JSON.parse(line.bringers || `[]`); return Array.isArray(a) ? a.filter((b) => b && String(b.name || ``).trim()) : []; } catch { return []; }
+  }
+  setBringers(line, list) {
+    const clean = list.map((b) => ({ name: String(b.name).trim(), qty: Math.max(0, Number(b.qty) || 0) })).filter((b) => b.name);
+    return this.saveLine({ id: line.id, bringers: clean.length ? JSON.stringify(clean) : `` });
+  }
+  /** Names to offer when assigning: people already bringing things to events, then people you lend to. Latest spelling wins. */
+  bringerNames() {
+    const map = new Map();
+    for (const l of [...this.eventLines].filter((x) => !x.deleted).sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))) {
+      for (const b of this.bringersOf(l)) map.set(Repo.personKey(b.name), b.name);
+    }
+    for (const p of this.people()) if (!map.has(p.key)) map.set(p.key, p.name);
+    return [...map.values()];
+  }
 
   /** The items a line draws on: [{ inv, id, name, off }]. inv '' = this inventory. Older lines have just itemId/invId. */
   sourcesOf(line) {

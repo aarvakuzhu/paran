@@ -241,6 +241,7 @@ export function viewEvent(view, r) {
     const f = t.closest(`[data-filter]`); if (f) { st.filter = f.dataset.filter; return viewEvent(view, r); }
     const by = t.closest(`[data-by]`); if (by) { st.by = by.dataset.by; return viewEvent(view, r); }
     const add = t.closest(`[data-addto]`); if (add) return addItemsSheet(ev, add.dataset.addto);
+    const ps = t.closest(`[data-person-share]`); if (ps) return sharePerson(ev, ps.dataset.personShare);
     const ln = t.closest(`[data-line]`); if (ln) { const line = repo.eventLines.find((x) => x.id === ln.dataset.line); if (line) lineSheet(ev, line); return; }
     const a = t.closest(`[data-ev]`)?.dataset.ev; if (!a) return;
     if (a === `add`) return addItemsSheet(ev, ``);
@@ -280,6 +281,17 @@ function partText(ev, p) {
   return `${p.src?.name || `an item`} no longer in ${inv || `the inventory`}`;
 }
 
+/** Who brings how many. A blank count means "the rest" (all of it if they're the only one). */
+function shares(l) {
+  const list = R().bringersOf(l); const need = Number(l.qty) || 1;
+  const fixed = list.filter((b) => b.qty).reduce((n, b) => n + b.qty, 0);
+  const rest = list.filter((b) => !b.qty);
+  const each = rest.length ? Math.max(0, need - fixed) / rest.length : 0;
+  return list.map((b) => ({ name: b.name, qty: b.qty || Math.max(1, Math.ceil(each)), split: list.length > 1 }));
+}
+/** "Ravi" or "Ravi 10, Kumar 10" */
+const bringersText = (l) => shares(l).map((b) => (b.split ? `${b.name} ${b.qty}` : b.name)).join(`, `);
+
 function lineRow(ev, l, x, placeView) {
   const pic = x.item ? picOf(x.item, x.thumbs) : `<div class="thumb sm ph">${icon(x.key === `unknown` ? `cloud` : `plus`)}</div>`;
   let sub; let parts = ``;
@@ -298,6 +310,7 @@ function lineRow(ev, l, x, placeView) {
     ${pic}
     <span class="el-main"><b>${esc(lineName(l, x))}${Number(l.qty) > 1 ? ` <span class="qty">×${esc(l.qty)}</span>` : ``}</b>
       <small class="el-state">${esc(sub)}</small>${parts}
+      ${bringersText(l) ? `<small class="el-who">${icon(`users`)} ${esc(bringersText(l))}</small>` : ``}
       ${l.note ? `<small class="el-note">${esc(l.note)}</small>` : ``}</span>
     <span class="el-dot" title="${esc(STATE_LABEL[x.key])}"></span></button>`;
 }
@@ -534,12 +547,14 @@ function lineSheet(ev, line) {
           : x.key === `unknown` && srcs.length === 1 ? `<b>In ${esc(invNameOf(x.invId))}</b><small>Not on this phone yet, so it can’t be checked here.</small>`
           : `<b>${esc(STATE_LABEL[x.key])}</b><small>${esc(stateText(ev, x))}</small>`}</div></div>
         ${srcs.length ? `<div class="label-sm first">${srcs.length > 1 ? `From ${srcs.length} items` : `From`}</div><div class="src-list">${srcs.map(srcRow).join(``)}</div>`
-          : canEdit ? `<div class="label-sm first">Already logged? Find it</div>
+          : canEdit ? `<div class="label-sm first">Who’s bringing it</div>${whoBlock(cur, canEdit)}
+            <div class="label-sm">Already logged? Find it</div>
             <label class="search sm">${icon(`search`)}<input data-linkq type="search" value="${esc(el._q ?? (cur.name || name))}" placeholder="Search ${ev._g ? `the group’s items` : `your items`}" autocomplete="off" enterkeyhint="search"></label>
             <div class="bring-list link-results"></div>` : ``}
         ${also.length ? `<div class="label-sm">Also found</div><div class="src-list">${also.map((m, i) => `<div class="src-row maybe">${picOf(m.item, m.thumbs)}
             <div class="src-main"><b>${esc(m.item.name)}${Number(m.item.qty) > 1 ? ` <span class="qty">×${esc(m.item.qty)}</span>` : ``}</b><small>${esc(withInv(m.invName, m.pathText(m.item.locationId)) || `No location`)}</small></div>
             <button type="button" class="btn small ghost" data-also="${i}">${icon(`plus`)} Use it</button></div>`).join(``)}</div>` : ``}
+        ${srcs.length || !canEdit ? `<div class="label-sm">Who’s bringing it</div>${whoBlock(cur, canEdit)}` : ``}
         ${canEdit ? `<form class="stack line-form">
           <div class="two">
             <label class="field"><span>How many needed</span><input name="qty" type="number" min="1" inputmode="numeric" value="${esc(cur.qty || 1)}"></label>
@@ -577,6 +592,14 @@ function lineSheet(ev, line) {
     };
     el.addEventListener(`input`, (e) => { if (e.target.matches(`[data-linkq]`)) drawLinkResults(); });
     el.addEventListener(`submit`, (e) => {
+      const wf = e.target.closest(`.who-form`);
+      if (wf) { // assign someone (optionally just some of it)
+        e.preventDefault();
+        const who = wf.elements.who.value.trim(); if (!who) return;
+        const cur = el._cur; const list = repo.bringersOf(cur).filter((b) => b.name.toLowerCase() !== who.toLowerCase());
+        repo.setBringers(cur, [...list, { name: who, qty: Number(wf.elements.wq.value) || 0 }]);
+        draw(); return;
+      }
       const form = e.target.closest(`.line-form`); if (!form) return;
       e.preventDefault();
       close();
@@ -590,6 +613,10 @@ function lineSheet(ev, line) {
         const list = srcs.map((s2, i) => (i === Number(off.dataset.off) ? { ...s2, off: s2.off ? undefined : 1 } : s2)).map(({ off: o, ...rest }) => (o ? { ...rest, off: 1 } : rest));
         repo.setSources(cur, list); draw(); return;
       }
+      const bq = e.target.closest(`[data-bring]`);
+      if (bq) { repo.setBringers(cur, [...repo.bringersOf(cur), { name: bq.dataset.bring, qty: 0 }]); draw(); return; }
+      const ub = e.target.closest(`[data-unbring]`);
+      if (ub) { const list = repo.bringersOf(cur); list.splice(Number(ub.dataset.unbring), 1); repo.setBringers(cur, list); draw(); return; }
       const lp = e.target.closest(`[data-linkpick]`);
       if (lp) {
         const pick = el._hits[Number(lp.dataset.linkpick)]; if (!pick) return;
@@ -636,6 +663,24 @@ function lineSheet(ev, line) {
     });
     draw();
   }, { onClose: () => setTimeout(() => ctx.redraw(), 0) });
+}
+
+/** Who's bringing a line: chips (tap ✕ to remove), a name + optional count, and quick picks of familiar names. */
+function whoBlock(line, canEdit) {
+  const repo = R(); const list = repo.bringersOf(line);
+  const chips = list.map((b, i) => `<span class="chip on who-chip">${icon(`users`)} ${esc(b.name)}${b.qty ? ` · ${esc(b.qty)}` : ``}${canEdit ? `<button type="button" class="un" data-unbring="${i}" aria-label="Remove ${esc(b.name)}">${icon(`x`)}</button>` : ``}</span>`).join(``);
+  if (!canEdit) return list.length ? `<div class="chips">${chips}</div>` : `<p class="fine">Nobody yet.</p>`;
+  const taken = new Set(list.map((b) => b.name.toLowerCase()));
+  const names = repo.bringerNames();
+  const quick = names.filter((n) => !taken.has(n.toLowerCase())).slice(0, 6);
+  const need = Number(line.qty) || 1;
+  return `${list.length ? `<div class="chips who-list">${chips}</div>` : ``}
+    <form class="inline-new who-form"><input name="who" list="ev-people" placeholder="${list.length ? `Someone else` : `Name`}" autocomplete="off" enterkeyhint="done">
+      ${need > 1 ? `<input name="wq" type="number" min="1" max="${need}" inputmode="numeric" placeholder="${list.length ? `The rest` : `All ${need}`}" class="who-qty" aria-label="How many they bring">` : `<input name="wq" type="hidden" value="">`}
+      <button class="btn primary">Add</button></form>
+    <datalist id="ev-people">${names.map((n) => `<option value="${esc(n)}">`).join(``)}</datalist>
+    ${quick.length ? `<div class="chips who-quick">${quick.map((n) => `<button type="button" class="chip" data-bring="${esc(n)}">${icon(`plus`)} ${esc(n)}</button>`).join(``)}</div>` : ``}
+    ${need > 1 ? `<p class="fine">${list.length ? `Leave the number empty and they bring whatever is left.` : `Leave the number empty if they bring all of it. To split it, add people with a number each.`}</p>` : ``}`;
 }
 
 /** Pick one item the event can use. Resolves a pool entry { invId, item }, or null. */
@@ -727,19 +772,22 @@ export function stillNeeded(ev) {
     if (x.key === `ready`) continue;
     open++;
     const name = lineName(l, x); const need = Number(l.qty) || 1; const section = l.section || ``;
+    const who = bringersText(l); const lineId = l.id;
     const parts = x.parts || [];
     const ready = parts.filter((p) => p.key === `ready`).reduce((n, p) => n + p.have, 0);
     let gap = need - ready;
     let unsure = false;
     for (const p of parts) {
       const inv = ev._g && p.invId !== repo.hereId ? invNameOf(p.invId) : ``;
-      if (p.key === `out`) { g.back.push({ name, qty: p.have, detail: `${p.reserved ? `reserved for` : `with`} ${p.who || `someone`}${inv ? ` (${inv})` : ``}`, section }); gap -= p.have; }
-      else if (p.key === `missing`) { g.find.push({ name, qty: p.have, detail: `marked missing${p.where || inv ? `, last in ${withInv(inv, p.where || ``)}` : ``}`, section }); gap -= p.have; }
-      else if (p.key === `unknown`) { g.check.push({ name, qty: 0, detail: `in ${invNameOf(p.invId)}, not checked on this phone`, section }); unsure = true; }
+      if (p.key === `out`) { g.back.push({ name, qty: p.have, detail: `${p.reserved ? `reserved for` : `with`} ${p.who || `someone`}${inv ? ` (${inv})` : ``}`, section, who, lineId }); gap -= p.have; }
+      else if (p.key === `missing`) { g.find.push({ name, qty: p.have, detail: `marked missing${p.where || inv ? `, last in ${withInv(inv, p.where || ``)}` : ``}`, section, who, lineId }); gap -= p.have; }
+      else if (p.key === `unknown`) { g.check.push({ name, qty: 0, detail: `in ${invNameOf(p.invId)}, not checked on this phone`, section, who, lineId }); unsure = true; }
     }
     if (!unsure && gap > 0) {
       const have = ready ? `have ${ready} of ${need}` : parts.length ? `none ready` : `not in any inventory`;
-      g.buy.push({ name, qty: gap, more: Boolean(ready), detail: have, section });
+      const bs = repo.bringersOf(l);
+      const covered = bs.some((b) => !b.qty) || bs.reduce((n, b) => n + b.qty, 0) >= gap;
+      g.buy.push({ name, qty: gap, more: Boolean(ready), detail: have, section, who, lineId, nobody: !bs.length, partly: bs.length && !covered });
     }
   }
   const groups = [
@@ -748,7 +796,43 @@ export function stillNeeded(ev) {
     { key: `find`, title: `To find`, items: g.find },
     { key: `check`, title: `To check`, items: g.check },
   ].filter((x) => x.items.length);
-  return { groups, open, total: lines.length };
+  const nobody = g.buy.filter((it) => it.nobody).length;
+  return { groups, open, total: lines.length, nobody };
+}
+
+/**
+ * Each person's list: everything assigned to them, with what to do (buy or borrow, or where to pick it up).
+ * Returns [{ name, rows: [{ name, qty, todo, section, ready }] }], plus lines still needed that nobody is bringing.
+ */
+export function peopleLists(ev) {
+  const repo = R(); const map = new Map();
+  for (const l of repo.linesOf(ev.id)) {
+    const bs = shares(l); if (!bs.length) continue;
+    const x = lineState(l); const name = lineName(l, x);
+    for (const b of bs) {
+      const k = b.name.trim().toLowerCase();
+      if (!map.has(k)) map.set(k, { name: b.name.trim(), rows: [] });
+      map.get(k).rows.push({ name, qty: b.qty, todo: todoText(ev, l, x), section: l.section || ``, ready: x.key === `ready` });
+    }
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** What bringing a line involves: "from School › Stage closet", "get it back from Ravi", "buy or borrow 4 more". */
+function todoText(ev, l, x) {
+  const parts = x.parts || []; const need = Number(l.qty) || 1; const bits = [];
+  const here = (p) => (ev._g && p.invId !== R().hereId ? invNameOf(p.invId) : ``);
+  const ready = parts.filter((p) => p.key === `ready`);
+  if (ready.length) bits.push(`from ${ready.map((p) => withInv(here(p), p.where || ``) || `where it’s kept`).join(` + `)}`);
+  for (const p of parts) {
+    if (p.key === `out`) bits.push(`get it back from ${p.who || `whoever has it`}`);
+    else if (p.key === `missing`) bits.push(`find it (marked missing)`);
+    else if (p.key === `unknown`) bits.push(`from ${invNameOf(p.invId)}`);
+  }
+  const have = ready.reduce((n, p) => n + p.have, 0);
+  if (!parts.length || (x.key === `none`)) bits.push(`buy or borrow`);
+  else if (x.key === `short` && need > have) bits.push(`buy or borrow ${need - have} more`);
+  return bits.join(` · `);
 }
 
 const neededLine = (it) => `${it.name}${it.qty > 1 || it.more ? ` ×${it.qty}${it.more ? ` more` : ``}` : ``}`;
@@ -759,11 +843,18 @@ function neededCard(ev) {
   if (!n.open) return `<section class="needed-card done">${icon(`check`)}<div><b>Everything on the list is ready</b><small>${n.total} item${n.total === 1 ? `` : `s`}, all in place.</small></div></section>`;
   return `<section class="needed-card">
     <div class="nc-head"><h2>Still needed</h2><span>${n.open} of ${n.total}</span></div>
-    ${n.groups.map((g) => `<div class="nc-group nc-${g.key}"><div class="label-sm">${esc(g.title)}</div><ul>${g.items.map((it) => `<li><b>${esc(neededLine(it))}</b><small>${esc(it.detail)}</small></li>`).join(``)}</ul></div>`).join(``)}
+    ${n.groups.map((g) => `<div class="nc-group nc-${g.key}"><div class="label-sm">${esc(g.title)}</div><ul>${g.items.map((it) => `<li data-line="${esc(it.lineId)}"><b>${esc(neededLine(it))}</b><small>${esc(it.detail)}</small>
+        ${it.who ? `<small class="nc-who${it.partly ? ` partly` : ``}">${icon(`users`)} ${esc(it.who)}${it.partly ? ` · not all of it yet` : ``}</small>` : g.key === `buy` ? `<small class="nc-who nobody">${icon(`users`)} Nobody yet · tap to assign</small>` : ``}</li>`).join(``)}</ul></div>`).join(``)}
+    ${peopleChips(ev)}
     <div class="row-actions left">
       <button type="button" class="btn primary" data-ev="needshare">${icon(`share`)} Share</button>
       <button type="button" class="btn ghost" data-ev="needprint">${icon(`print`)} Print</button>
     </div></section>`;
+}
+
+function peopleChips(ev) {
+  const ppl = peopleLists(ev); if (!ppl.length) return ``;
+  return `<div class="label-sm">Send each person their list</div><div class="chips nc-people">${ppl.map((p) => `<button type="button" class="chip" data-person-share="${esc(p.name)}">${icon(`share`)} ${esc(p.name)} <b>${p.rows.length}</b></button>`).join(``)}</div>`;
 }
 
 const header = (ev) => { const w = whenText(ev.date); return `${ev.name}${ev.date ? ` – ${w.main}` : ``}`; };
@@ -774,7 +865,7 @@ function shareNeeded(ev) {
   const out = [header(ev), `Still needed: ${n.open} of ${n.total} on the list`, ``];
   for (const g of n.groups) {
     out.push(g.title.toUpperCase());
-    for (const it of g.items) out.push(`• ${neededLine(it)} – ${it.detail}`);
+    for (const it of g.items) out.push(`• ${neededLine(it)} – ${it.detail}${it.who ? ` · ${it.who}` : g.key === `buy` ? ` · nobody yet` : ``}`);
     out.push(``);
   }
   out.push(ctx.shareSign);
@@ -813,7 +904,26 @@ function printPage(title, bodyHtml) {
 function printNeeded(ev) {
   const n = stillNeeded(ev);
   printPage(`${header(ev)}: still needed`, `<p class="ps-sub">${n.open} of ${n.total} on the list</p>`
-    + n.groups.map((g) => `<h2>${esc(g.title)}</h2><table>${g.items.map((it) => `<tr><td class="box">☐</td><td><b>${esc(neededLine(it))}</b></td><td>${esc(it.detail)}</td><td class="sec">${esc(it.section)}</td></tr>`).join(``)}</table>`).join(``));
+    + n.groups.map((g) => `<h2>${esc(g.title)}</h2><table>${g.items.map((it) => `<tr><td class="box">☐</td><td><b>${esc(neededLine(it))}</b></td><td>${esc(it.detail)}</td><td>${esc(it.who || (g.key === `buy` ? `—` : ``))}</td><td class="sec">${esc(it.section)}</td></tr>`).join(``)}</table>`).join(``));
+}
+
+/** One person's list, as a message to them. */
+function sharePerson(ev, name) {
+  const p = peopleLists(ev).find((x) => x.name.toLowerCase() === name.toLowerCase()); if (!p) return;
+  const first = p.name.split(/\s+/)[0];
+  const out = [header(ev), ``, `${first}, here’s what you’re bringing:`, ``];
+  for (const r of p.rows) out.push(`• ${r.name}${r.qty > 1 ? ` ×${r.qty}` : ``}${r.todo ? ` – ${r.todo}` : ``}`);
+  out.push(``, `Thank you!`, ``, ctx.shareSign);
+  return ctx.shareOut({ title: `${ev.name}: ${p.name}`, text: out.join(`\n`) });
+}
+
+/** Everyone's lists on paper, one page per person, then what nobody is bringing yet. */
+function printEveryone(ev) {
+  const ppl = peopleLists(ev); const n = stillNeeded(ev);
+  const nobody = (n.groups.find((g) => g.key === `buy`)?.items || []).filter((it) => it.nobody);
+  const table = (rows) => `<table>${rows.map((r) => `<tr><td class="box">☐</td><td><b>${esc(r.name)}${r.qty > 1 ? ` ×${r.qty}` : ``}</b></td><td>${esc(r.todo || ``)}</td><td class="sec">${esc(r.section)}</td></tr>`).join(``)}</table>`;
+  printPage(`${header(ev)}: who’s bringing what`, ppl.map((p) => `<div class="ps-person"><h2>${esc(p.name)}</h2>${table(p.rows)}</div>`).join(``)
+    + (nobody.length ? `<div class="ps-person"><h2>Nobody assigned yet</h2>${table(nobody.map((it) => ({ name: it.name, qty: it.qty, todo: `buy or borrow`, section: it.section })))}</div>` : ``));
 }
 
 function printFull(ev) {
@@ -823,19 +933,33 @@ function printFull(ev) {
 }
 
 function shareMenu(ev) {
-  const n = stillNeeded(ev);
+  const n = stillNeeded(ev); const ppl = peopleLists(ev);
   sheet(`Share or print`, (el, close) => {
     el.innerHTML = `<div class="menu">
       <button data-s="full">${icon(`share`)} Share the full list</button>
       <button data-s="fullprint">${icon(`print`)} Print the full list</button>
       ${n.open ? `<button data-s="need">${icon(`share`)} Share what’s still needed <small>${n.open}</small></button>
       <button data-s="needprint">${icon(`print`)} Print what’s still needed</button>` : ``}
+      ${ppl.length ? `<button data-s="people">${icon(`users`)} Send each person their list <small>${ppl.length}</small></button>
+      <button data-s="peopleprint">${icon(`print`)} Print everyone’s lists</button>` : ``}
     </div><p class="fine">Shares as a message (WhatsApp, Messages, email). Printed lists have boxes to tick on the day.</p>`;
     el.onclick = (e) => {
       const k = e.target.closest(`[data-s]`)?.dataset.s; if (!k) return;
       close();
-      setTimeout(() => ({ full: shareEvent, fullprint: printFull, need: shareNeeded, needprint: printNeeded })[k](ev), 250); // after the sheet closes
+      setTimeout(() => ({ full: shareEvent, fullprint: printFull, need: shareNeeded, needprint: printNeeded, people: peopleSheet, peopleprint: printEveryone })[k](ev), 250); // after the sheet closes
     };
+  });
+}
+
+/** Pick a person to send their list to (one message each). */
+function peopleSheet(ev) {
+  sheet(`Send each person their list`, (el) => {
+    const draw = () => {
+      el.innerHTML = `<div class="menu">${peopleLists(ev).map((p) => `<button data-p="${esc(p.name)}">${icon(`users`)}<span class="grow"><b>${esc(p.name)}</b><small>${esc(p.rows.map((r) => r.name).join(`, `))}</small></span>${icon(`share`)}</button>`).join(``)}</div>
+        <p class="fine">Each opens your share sheet with that person’s list, ready to send on WhatsApp or Messages.</p>`;
+    };
+    el.onclick = (e) => { const b = e.target.closest(`[data-p]`); if (b) { b.classList.add(`sent`); sharePerson(ev, b.dataset.p); } };
+    draw();
   });
 }
 

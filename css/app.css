@@ -911,3 +911,23 @@ body.readonly .edit-only { display: none !important; }
 .bring-row.new-need.only { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
 .named .chip.added { display: inline-flex; align-items: center; gap: 4px; }
 .named .chip.added .un { opacity: 0.7; display: inline-flex; }
+
+/* ---------- Event: who's bringing what ---------- */
+.el-who { display: inline-flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--accent); font-weight: 600; }
+.el-who .ic, .nc-who .ic { width: 14px; height: 14px; }
+.who-chip { display: inline-flex; align-items: center; gap: 4px; }
+.who-chip .ic { width: 14px; height: 14px; }
+.who-chip .un { border: 0; background: none; color: inherit; padding: 0 0 0 2px; display: inline-flex; cursor: pointer; opacity: 0.75; }
+.who-form { margin-top: 8px; }
+.who-form .who-qty { flex: 0 0 92px; }
+.who-quick { margin-top: 8px; }
+.who-list { margin-top: 0; }
+.needed-card li[data-line] { cursor: pointer; }
+.nc-who { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--accent) !important; }
+.nc-who.nobody { color: var(--amber) !important; font-weight: 500; }
+.nc-who.partly { color: var(--amber) !important; }
+.nc-people { margin-top: 0; }
+.nc-people .chip { display: inline-flex; align-items: center; gap: 6px; }
+.nc-people .chip .ic { width: 14px; height: 14px; }
+.menu button.sent { background: var(--accent-soft); }
+@media print { #print-sheet .ps-person + .ps-person { break-before: page; } }
