@@ -37,9 +37,8 @@
   <div id="app"><div class="splash" aria-label="Loading Paran"><i><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i>Paran</div></div>
   <div id="toasts" aria-live="polite"></div>
   <script>
-    // Startup watchdog: if the app hasn't started (a failed or half-finished update, a bad connection),
-    // never leave the user on the logo. Offer "Load the latest version" (re-download the app files) and Try again.
-    // Loading the latest version only clears the app's own files; the inventory (stored separately on this phone and in Google) is untouched.
+    // Startup check (below): never leave the user on the logo, and say exactly what's wrong.
+    // "Get the latest version" only clears the app's own files; the inventory (stored separately on this phone and in Google) is untouched.
     // Paran and the frozen Stash pilot (/stash/) share this site, so they share the phone's storage.
     // Paran keeps its own "paran." keys; on first run it copies the pilot's "stash." keys once (sign-in, cache,
     // settings), so testers continue where they were. The pilot's keys are never changed.
@@ -55,15 +54,72 @@
       } catch (e) {}
     })();
     (function () {
-      var shown = false;
-      function fail() {
+      // Startup check. If the app hasn't started after a few seconds, find out why before saying anything:
+      // a new version downloading, offline, a file that didn't load, an error, an older version on this phone,
+      // or just a slow connection. Then show that, with the one button that fixes it.
+      var shown = false; var problem = null; // { file } or { msg }
+      var LOGO = '<i><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i>';
+      var esc = function (t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+      var num = function (v) { var m = /(\d+)\s*$/.exec(v || ''); return m ? m[1] : (v || '?'); };
+      function show(msg, buttons, note) {
+        if (window.__paranStarted) return;
+        document.getElementById('app').innerHTML = '<div class="splash">' + LOGO + '<div class="splash-msg">' + msg + '</div>'
+          + buttons.map(function (b, i) { return '<button class="splash-btn' + (i ? '' : ' primary') + '" onclick="' + b[1] + '">' + b[0] + '</button>'; }).join('')
+          + (note ? '<small class="splash-note">' + note + '</small>' : '') + '</div>';
+      }
+      var UPDATE = ['Get the latest version', 'window.__paranRepair()'];
+      var AGAIN = ['Try again', 'location.reload()'];
+      var SAFE = 'Your inventory stays exactly as it is.';
+      function phoneVersion() { // asked from the worker running this page
+        return new Promise(function (res) {
+          var c = navigator.serviceWorker && navigator.serviceWorker.controller; if (!c) return res(null);
+          var t = setTimeout(function () { res(null); }, 1500);
+          navigator.serviceWorker.addEventListener('message', function on(e) { if (e.data && e.data.version) { clearTimeout(t); navigator.serviceWorker.removeEventListener('message', on); res(e.data.version); } });
+          c.postMessage('version');
+        });
+      }
+      function serverVersion() { // read straight from the server, never a cached copy
+        if (!navigator.onLine) return Promise.resolve(null);
+        return fetch('sw.js?check=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; })
+          .then(function (t) { var m = /VERSION\s*=\s*`([^`]+)`/.exec(t); return m ? m[1] : null; }).catch(function () { return null; });
+      }
+      function installing() {
+        if (!navigator.serviceWorker) return Promise.resolve(null);
+        return navigator.serviceWorker.getRegistration('./').then(function (r) { return r && (r.installing || r.waiting) ? r : null; }).catch(function () { return null; });
+      }
+      function diagnose() {
         if (window.__paranStarted || shown) return; shown = true;
-        var a = document.getElementById('app');
-        a.innerHTML = '<div class="splash"><i><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7 12 3l9 4-9 4-9-4Z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/></svg></i>'
-          + '<div class="splash-msg">Paran is taking longer than usual to open. A newer version may be on its way.</div>'
-          + '<button class="splash-btn primary" onclick="window.__paranRepair()">Load the latest version</button>'
-          + '<button class="splash-btn" onclick="location.reload()">Try again</button>'
-          + '<small class="splash-note">This downloads the newest Paran. Your inventory stays exactly as it is.</small></div>';
+        show('Checking why Paran is slow to open…', [], '');
+        Promise.all([phoneVersion(), serverVersion(), installing()]).then(function (r) {
+          var mine = r[0], latest = r[1], reg = r[2];
+          var vers = mine && latest ? (mine === latest ? 'Version ' + esc(num(mine)) + ', the latest' : 'This phone: version ' + esc(num(mine)) + ' · Latest: version ' + esc(num(latest)))
+            : latest ? 'Latest version: ' + esc(num(latest)) : mine ? 'Version ' + esc(num(mine)) : '';
+          if (reg) { // the new version is still downloading: say so, and open it as soon as it's ready
+            show('Paran is updating to version ' + esc(num(latest)) + '. It opens by itself when the download finishes.', [['Open it now', 'location.reload()']], vers);
+            var w = reg.installing || reg.waiting;
+            var go = function () { if (w.state === 'installed' || w.state === 'activated') location.reload(); };
+            if (w) { w.addEventListener('statechange', go); go(); }
+            return;
+          }
+          if (!navigator.onLine && !(navigator.serviceWorker && navigator.serviceWorker.controller)) {
+            return show('You’re offline, and Paran isn’t saved on this phone yet.', [AGAIN], 'Connect to Wi-Fi or mobile data, then try again.');
+          }
+          if (!navigator.onLine) {
+            return show('You’re offline, and part of Paran on this phone didn’t load' + (problem && problem.file ? ' (' + esc(problem.file) + ')' : '') + '.', [AGAIN], 'Connect to the internet and it downloads again. ' + SAFE);
+          }
+          if (mine && latest && mine !== latest) {
+            return show('This phone has an older version of Paran (version ' + esc(num(mine)) + '). Version ' + esc(num(latest)) + ' is ready.', [UPDATE, AGAIN], SAFE);
+          }
+          if (problem && problem.file) {
+            return show('Part of Paran didn’t load on this phone (' + esc(problem.file) + ').', [UPDATE, AGAIN], vers + (vers ? '. ' : '') + 'Getting the latest version downloads all of it again. ' + SAFE);
+          }
+          if (problem && problem.msg) {
+            return show('Paran hit an error while starting: “' + esc(problem.msg) + '”.', [UPDATE, AGAIN], vers + (vers ? '. ' : '') + 'Getting the latest version downloads the app again, which usually fixes this. ' + SAFE);
+          }
+          // nothing wrong found: the connection is just slow. Keep waiting; the app replaces this when it's ready.
+          show('Paran is still opening. Your connection seems slow.', [AGAIN], (vers ? vers + '. ' : '') + 'It opens here by itself when it’s ready.');
+          shown = false; setTimeout(diagnose, 10000);
+        });
       }
       window.__paranRepair = function () {
         var jobs = [];
@@ -73,10 +129,18 @@
         try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.indexOf('paran-') === 0; }).map(function (k) { return caches.delete(k); })); })); } catch (e) {}
         Promise.all(jobs).catch(function () {}).then(function () { location.replace(location.pathname + '?r=' + Date.now() + location.hash); });
       };
-      setTimeout(fail, 8000);
-      // a module that fails to load or link reports here; give it a moment in case the app recovers
-      window.addEventListener('error', function () { setTimeout(fail, 1200); }, true);
-      window.addEventListener('unhandledrejection', function () { setTimeout(fail, 3000); });
+      setTimeout(diagnose, 8000);
+      // what went wrong, for the message: a file that didn't load, or an error while starting
+      window.addEventListener('error', function (e) {
+        var t = e.target;
+        if (t && t !== window && (t.src || t.href)) problem = { file: String(t.src || t.href).split('/').pop().split('?')[0] };
+        else if (!problem) problem = { msg: String(e.message || 'unknown error').replace(/^Uncaught\s+/, '').slice(0, 120) };
+        setTimeout(diagnose, 1200);
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        if (!problem) problem = { msg: String((e.reason && e.reason.message) || e.reason || 'unknown error').slice(0, 120) };
+        setTimeout(diagnose, 3000);
+      });
     })();
   </script>
   <script type="module" src="js/app.js"></script>

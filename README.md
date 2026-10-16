@@ -3,7 +3,7 @@
 Know what you have, where it is, and who has it, for your home and the groups you run.
 Live at **https://aarvakuzhu.github.io/paran/**. This repo continues the Stash pilot (`aarvakuzhu/stash`, frozen; backup branch `backup/stash-final-2026-10-16`). Inventories live in each user's Google Drive, so the same inventories open here.
 
-**Sharing the site with the Stash pilot:** both apps are on `aarvakuzhu.github.io`, so they share the phone's storage. Paran keeps its own `paran.*` keys, its own `paran` IndexedDB and `paran-*` caches; on first run it copies the pilot's `stash.*` keys and pending photos once, and never changes them. "Load the latest version" only touches Paran's own worker and caches.
+**Sharing the site with the Stash pilot:** both apps are on `aarvakuzhu.github.io`, so they share the phone's storage. Paran keeps its own `paran.*` keys, its own `paran` IndexedDB and `paran-*` caches; on first run it copies the pilot's `stash.*` keys and pending photos once, and never changes them. "Get the latest version" only touches Paran's own worker and caches.
 
 
 Know what you have, where it is, and what it's for. A static web app (no server, no database) that keeps everything in **the user's own Google Drive**:
@@ -112,7 +112,7 @@ The Client ID and API key are not secrets in a browser app; they are protected b
 3. The app is at `https://aarvakuzhu.github.io/paran/`. Make sure `https://aarvakuzhu.github.io` is in the OAuth client's JavaScript origins.
 4. On the phone, open the URL, then **Share → Add to Home Screen** (iOS) or **Install app** (Android Chrome).
 
-After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on the phone (no network wait). A new version downloads in the background as one complete set (each file requested as `file?v=VERSION`, so GitHub's CDN can't hand back a stale copy mid-deploy) and is applied straight away if the app was just opened, or via the **Reload** prompt. If the app ever fails to start (e.g. a broken update), a startup check shows **Load the latest version** and **Try again** within seconds; the first re-downloads the app files and never touches the inventory.
+After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on the phone (no network wait). A new version downloads in the background as one complete set (each file requested as `file?v=VERSION`, so GitHub's CDN can't hand back a stale copy mid-deploy) and is applied straight away if the app was just opened, or via the **Reload** prompt. If the app ever fails to start (e.g. a broken update), a startup check works out why within seconds (a new version still downloading, offline, a file that didn't load, an error, an older version on the phone than on the server, or just a slow connection) and says that, with versions shown, plus the matching button: **Get the latest version** re-downloads the app files and never touches the inventory.
 
 ## How sharing works (and its limits)
 

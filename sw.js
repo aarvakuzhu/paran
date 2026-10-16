@@ -1,7 +1,7 @@
 // App shell served from the device instantly (cache first). Google API calls are never cached here.
 // Updating: bump VERSION (keep the paran- prefix: other apps on this site, like the Stash pilot, have their own caches). The new version is downloaded in the background as one complete set,
 // then the page offers "Reload" (or picks it up on the next open). Files are never mixed across versions.
-const VERSION = `paran-v15`;
+const VERSION = `paran-v16`;
 const SHELL = [
   `./`, `./index.html`, `./css/app.css`, `./manifest.webmanifest`,
   `./js/app.js`, `./js/config.js`, `./js/google.js`, `./js/store.js`, `./js/search.js`, `./js/image.js`, `./js/ui.js`, `./js/idb.js`, `./js/ai.js`, `./js/scan.js`, `./js/qrscan.js`, `./js/inventories.js`, `./js/events.js`, `./js/xinv.js`, `./js/vendor/jsQR.min.js`,
@@ -27,9 +27,13 @@ self.addEventListener(`activate`, (e) => {
     .then(() => self.clients.claim()));
 });
 
+// The startup check asks which version this phone is running.
+self.addEventListener(`message`, (e) => { if (e.data === `version`) e.source?.postMessage({ version: VERSION }); });
+
 self.addEventListener(`fetch`, (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== `GET` || url.origin !== location.origin) return; // Google APIs go straight to the network
+  if (url.pathname.endsWith(`/sw.js`)) return; // version checks always ask the server (and are never kept)
   const isPage = e.request.mode === `navigate`;
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);
