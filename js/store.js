@@ -25,7 +25,9 @@ export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `q
 // date is YYYY-MM-DD (optional). A line with no itemId is something needed that isn't in the inventory yet.
 // New columns go at the END of each list so older sheets stay aligned.
 export const EVENT_COLS = [`id`, `name`, `date`, `notes`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `deleted`];
-export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`, `sources`, `bringers`];
+export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`, `sources`, `bringers`, `got`, `after`];
+// got: JSON [{ who, n }] — what arrived on the day, and who brought it (who '' = not said). after: JSON { state, note, to, at, by }
+// once the event is over: back (in its place) | moved | missing | damaged | kept (added to the inventory) | gone (used up / returned).
 // sources: JSON [{ inv, id, name, off }] — every item that counts toward this line (tablecloths in the school closet AND the
 // storage unit). off = marked "not for this event".
 // bringers: JSON [{ name, qty }] — who is bringing it (buying, borrowing, or taking it from where it's kept). qty 0 = all of it. itemId/invId mirror the first one, so older app versions still show something.
@@ -912,6 +914,34 @@ export class Repo extends EventTarget {
   /** This inventory's data, in the shape lineState expects of any inventory. */
   hereData() { return { items: this.items, pathText: (id) => this.pathText(id), thumbs: this.thumbs }; }
 
+  // ---- on the day: what arrived, and who brought it
+  gotOf(line) {
+    try { const a = JSON.parse(line.got || `[]`); return Array.isArray(a) ? a.filter((g) => g && Number(g.n) > 0) : []; } catch { return []; }
+  }
+  gotTotal(line) { return this.gotOf(line).reduce((n, g) => n + Number(g.n), 0); }
+  setGot(line, list) {
+    const clean = list.map((g) => ({ who: String(g.who || ``), n: Math.max(0, Math.round(Number(g.n) || 0)) })).filter((g) => g.n > 0);
+    return this.saveLine({ id: line.id, got: clean.length ? JSON.stringify(clean) : `` });
+  }
+  // ---- after: where each thing went
+  afterOf(line) { try { const o = JSON.parse(line.after || `null`); return o && o.state ? o : null; } catch { return null; } }
+  setAfter(line, obj) {
+    return this.saveLine({ id: line.id, after: obj ? JSON.stringify({ ...obj, at: now(), by: this.user.email }) : `` });
+  }
+
+  /** Copy an event for next time: same sections, items, quantities and notes (and, if asked, who brings what). */
+  copyEvent(ev, { name, date = ``, notes = ev.notes || ``, keepPeople = false } = {}) {
+    const copy = this.saveEvent({ name: name || ev.name, date, notes }, { group: Boolean(ev._g) });
+    if (!copy) return null;
+    const base = Date.now();
+    this.linesOf(ev.id).forEach((l, i) => this.saveLine({
+      eventId: copy.id, section: l.section || ``, itemId: l.itemId || ``, invId: l.invId || ``, sources: l.sources || ``, name: l.name || ``,
+      qty: l.qty || 1, note: l.note || ``, sort: base + i, bringers: keepPeople ? l.bringers || `` : ``,
+    }, { quiet: true }));
+    this.emit();
+    return copy;
+  }
+
   /** Who's bringing a line: [{ name, qty, email }]. qty 0 only on older entries (= the rest). email = their Google account, if linked. */
   bringersOf(line) {
     try { const a = JSON.parse(line.bringers || `[]`); return Array.isArray(a) ? a.filter((b) => b && String(b.name || ``).trim()) : []; } catch { return []; }
@@ -984,7 +1014,7 @@ export class Repo extends EventTarget {
   }
 
   /** One item behind a line: { src, invId, key: ready|out|missing|gone|unknown, item, have, where, who, thumbs } */
-  sourceState(src, data) {
+  sourceState(src, data, forEvent = ``) {
     const invId = this.srcInv(src);
     const d = data(invId);
     if (!d) return { src, invId, key: `unknown`, have: 0 };
@@ -992,6 +1022,8 @@ export class Repo extends EventTarget {
     if (!item) return { src, invId, key: `gone`, have: 0 };
     const base = { src, invId, item, have: Number(item.qty) || 1, thumbs: d.thumbs, where: d.pathText(item.locationId) };
     if (item.status === `missing`) return { ...base, key: `missing` };
+    // reserved for this very event: it's set aside for it, so it counts as ready
+    if (item.status === `reserved` && forEvent && Repo.personKey(item.lentTo) === Repo.personKey(forEvent)) return { ...base, key: `ready`, held: true };
     if (item.status === `lent` || item.status === `reserved`) return { ...base, key: `out`, who: item.lentTo, reserved: item.status === `reserved` };
     return { ...base, key: `ready` };
   }
@@ -1007,7 +1039,8 @@ export class Repo extends EventTarget {
     const used = all.filter((x) => !x.off);
     const off = all.length - used.length;
     if (!used.length) return { key: `none`, text: all.length ? `Nothing picked for this event` : `Not in inventory yet`, item: null, parts: [], off };
-    const parts = used.map((x) => this.sourceState(x, data));
+    const evName = this.events.find((e) => e.id === line.eventId)?.name || ``;
+    const parts = used.map((x) => this.sourceState(x, data, evName));
     const need = Number(line.qty) || 1;
     const shown = parts.find((p) => p.item) || parts[0];
     const base = { item: shown.item || null, invId: shown.invId, thumbs: shown.thumbs, parts, off, need };

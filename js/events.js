@@ -4,7 +4,7 @@
 //    them, and each line can point at an item in any of the group's inventories (school, storage unit, a volunteer's).
 //  - An inventory that isn't in a group keeps its own events in its own sheet (an inventory in a group can too).
 // Other inventories are read from this phone's copy (refreshed in the background), the same way search across them works.
-import { esc, $, toast, sheet, confirmSheet, icon } from './ui.js';
+import { esc, $, toast, sheet, confirmSheet, promptSheet, icon } from './ui.js';
 import { search, findDuplicates } from './search.js';
 import { loadKnown } from './inventories.js';
 import { Repo } from './store.js';
@@ -186,7 +186,7 @@ export function viewEvent(view, r) {
   if (!ev) { view.innerHTML = `<div class="empty"><h3>Event not found</h3><a class="btn ghost" href="#/events">All events</a></div>`; return; }
   freshen(otherInvs(ev));
   const canEdit = repo.canEditEvent(ev);
-  const st = evView[ev.id] ||= { by: `section`, filter: `` };
+  const st = evView[ev.id] ||= { by: `section`, filter: ``, dayBy: `section`, mode: defaultMode(ev) };
   const lines = repo.linesOf(ev.id);
   const s = summaryOf(ev);
   if (st.filter && !s[st.filter]) st.filter = ``;
@@ -213,7 +213,8 @@ export function viewEvent(view, r) {
     ${ev.notes ? `<p class="muted">${esc(ev.notes)}</p>` : ``}
     ${mineCard(ev)}
     ${notHere.length ? `<button type="button" class="xtap" data-include>${icon(`plus`)} Include ${esc(notHere.map((i) => i.name).join(`, `))} <small>one tap to open on this phone, so their items show here</small></button>` : ``}
-    ${lines.length ? `
+    ${lines.length ? modeTabs(ev, st) : ``}
+    ${lines.length && st.mode === `day` ? dayBody(ev, st, canEdit) : lines.length && st.mode === `after` ? afterBody(ev, canEdit) : lines.length ? `${st.mode === `plan` ? reminderCard(ev, canEdit) : ``}
       <div class="readiness">
         <div class="rd-head"><b>${s.ready} of ${s.total}</b><span>ready</span></div>
         ${readyBar(s)}
@@ -243,6 +244,14 @@ export function viewEvent(view, r) {
     if (t.closest(`[data-include]`)) { await ctx.openGroupInventories(repo.group()?.id); return ctx.redraw(); }
     const f = t.closest(`[data-filter]`); if (f) { st.filter = f.dataset.filter; return viewEvent(view, r); }
     const by = t.closest(`[data-by]`); if (by) { st.by = by.dataset.by; return viewEvent(view, r); }
+    const md = t.closest(`[data-mode]`); if (md) { st.mode = md.dataset.mode; return viewEvent(view, r); }
+    const db = t.closest(`[data-dayby]`); if (db) { st.dayBy = db.dataset.dayby; return viewEvent(view, r); }
+    // on the day
+    const tk = t.closest(`[data-tick]`); if (tk) { tickLine(tk.dataset.tick, tk.dataset.who); return; }
+    const dc = t.closest(`[data-daycount]`); if (dc) { const line = repo.eventLines.find((x) => x.id === dc.dataset.daycount); if (line) countSheet(ev, line); return; }
+    const pa = t.closest(`[data-personall]`); if (pa) { personAllHere(ev, pa.dataset.personall); return; }
+    // after
+    const af = t.closest(`[data-after]`); if (af) { await afterAction(ev, af.dataset.line2, af.dataset.after); return; }
     const add = t.closest(`[data-addto]`); if (add) return addItemsSheet(ev, add.dataset.addto);
     const ps = t.closest(`[data-person-share]`); if (ps) return sharePerson(ev, ps.dataset.personShare);
     const ln = t.closest(`[data-line]`); if (ln) { const line = repo.eventLines.find((x) => x.id === ln.dataset.line); if (line) lineSheet(ev, line); return; }
@@ -252,7 +261,265 @@ export function viewEvent(view, r) {
     if (a === `needshare`) return shareNeeded(ev);
     if (a === `needprint`) return printNeeded(ev);
     if (a === `menu`) return eventMenu(ev);
+    if (a === `remind`) return peopleSheet(ev, { reminder: true });
+    if (a === `missingshare`) return shareMissingToday(ev);
+    if (a === `aftershare`) return shareAfter(ev);
+    if (a === `copy`) return copyFlow(ev);
   };
+}
+
+// ------------------------------------------------------------ Plan / Day of / After
+function defaultMode(ev) {
+  if (!ev.date) return `plan`;
+  const t = ctx.todayStr();
+  return String(ev.date) === t ? `day` : String(ev.date) < t ? `after` : `plan`;
+}
+function modeTabs(ev, st) {
+  const repo = R(); const lines = repo.linesOf(ev.id);
+  const here = lines.filter((l) => repo.gotTotal(l) >= (Number(l.qty) || 1)).length;
+  const sorted = lines.filter((l) => afterState(l)).length;
+  const tab = (k, label, sub) => `<button type="button" data-mode="${k}" class="${st.mode === k ? `on` : ``}"><span>${label}</span>${sub ? `<small>${sub}</small>` : ``}</button>`;
+  return `<div class="seg three ev-modes">${tab(`plan`, `Plan`, ``)}${tab(`day`, `Day of`, here ? `${here}/${lines.length} here` : ``)}${tab(`after`, `After`, sorted ? `${sorted}/${lines.length} sorted` : ``)}</div>`;
+}
+
+/** In the week before: remind everyone what they're bringing. */
+function reminderCard(ev, canEdit) {
+  if (!ev.date || !canEdit) return ``;
+  const days = Math.round((new Date(`${ev.date}T00:00`) - new Date(`${ctx.todayStr()}T00:00`)) / 86400000);
+  if (days < 0 || days > 7) return ``;
+  const n = peopleLists(ev).length; if (!n) return ``;
+  return `<section class="remind-card">${icon(`clock`)}<div class="grow"><b>${esc(ev.name)} is ${days === 0 ? `today` : days === 1 ? `tomorrow` : `in ${days} days`}</b>
+    <small>Send ${n === 1 ? `the person` : `each of the ${n} people`} bringing things a reminder of their list.</small></div>
+    <button type="button" class="btn small primary" data-ev="remind">Remind</button></section>`;
+}
+
+// ---- Day of: tick things off as they arrive
+const needOf = (l) => Number(l.qty) || 1;
+function dayBody(ev, st, canEdit) {
+  const repo = R(); const lines = repo.linesOf(ev.id);
+  const here = lines.filter((l) => repo.gotTotal(l) >= needOf(l)).length;
+  const part = lines.filter((l) => { const g = repo.gotTotal(l); return g > 0 && g < needOf(l); }).length;
+  const bar = `<div class="ready-bar">${here ? `<i class="st-ready" style="flex:${here}"></i>` : ``}${part ? `<i class="st-short" style="flex:${part}"></i>` : ``}${lines.length - here - part ? `<i class="st-unknown" style="flex:${lines.length - here - part}"></i>` : ``}</div>`;
+  const row = (l, who = ``, share = 0) => {
+    const x = lineState(l); const need = needOf(l); const got = repo.gotTotal(l);
+    const mine = who ? (repo.gotOf(l).find((g) => g.who.toLowerCase() === who.toLowerCase())?.n || 0) : 0;
+    const done = who ? mine >= share : got >= need;
+    const sub = who ? `${share} of ${need}${got ? ` · ${got} here in all` : ``}` : [bringersText(l), x.parts?.length ? todoText(ev, l, x).replace(/^from /, ``) : ``].filter(Boolean).join(` · `);
+    return `<div class="day-row${done ? ` done` : got ? ` part` : ``}">
+      ${canEdit ? `<button type="button" class="tick" data-tick="${esc(l.id)}" ${who ? `data-who="${esc(who)}"` : ``} aria-label="${done ? `Not here` : `Here`}">${icon(`check`)}</button>` : `<span class="tick ro">${done ? icon(`check`) : ``}</span>`}
+      <div class="dr-main" ${canEdit ? `data-daycount="${esc(l.id)}"` : ``}><b>${esc(lineName(l, x))}${need > 1 ? ` <span class="qty">×${need}</span>` : ``}</b>${sub ? `<small>${esc(sub)}</small>` : ``}</div>
+      ${need > 1 && !who ? `<button type="button" class="dr-n" ${canEdit ? `data-daycount="${esc(l.id)}"` : `disabled`}>${got}/${need}</button>` : ``}
+    </div>`;
+  };
+  let groupsHtml;
+  if (st.dayBy === `person`) {
+    const ppl = peopleLists(ev);
+    const taken = new Set();
+    groupsHtml = ppl.map((p) => {
+      const ls = lines.filter((l) => shares(l).some((b) => (b.email && b.email === p.email) || b.name.toLowerCase() === p.name.toLowerCase()));
+      ls.forEach((l) => taken.add(l.id));
+      const rows = ls.map((l) => { const b = shares(l).find((y) => (y.email && y.email === p.email) || y.name.toLowerCase() === p.name.toLowerCase()); return row(l, b.name, b.qty); });
+      const allDone = ls.every((l) => { const b = shares(l).find((y) => (y.email && y.email === p.email) || y.name.toLowerCase() === p.name.toLowerCase()); return (repo.gotOf(l).find((g) => g.who.toLowerCase() === b.name.toLowerCase())?.n || 0) >= b.qty; });
+      return `<section class="ev-group"><div class="ev-ghead"><h2>${esc(p.name)}</h2><span>${ls.length} thing${ls.length === 1 ? `` : `s`}</span>
+        ${canEdit && !allDone ? `<button type="button" class="btn small ghost" data-personall="${esc(p.name)}">${icon(`check`)} All here</button>` : allDone ? `<span class="all-here">${icon(`check`)} All here</span>` : ``}</div>
+        <div class="day-rows">${rows.join(``)}</div></section>`;
+    }).join(``);
+    const rest = lines.filter((l) => !taken.has(l.id));
+    if (rest.length) groupsHtml += `<section class="ev-group"><div class="ev-ghead"><h2>Nobody assigned</h2><span>${rest.length}</span></div><div class="day-rows">${rest.map((l) => row(l)).join(``)}</div></section>`;
+  } else {
+    groupsHtml = bySection(lines.map((l) => ({ l, x: lineState(l) })), repo.sectionsOf(ev.id)).map((g) => {
+      const h = g.rows.filter(({ l }) => repo.gotTotal(l) >= needOf(l)).length;
+      return `<section class="ev-group"><div class="ev-ghead"><h2>${esc(g.label)}</h2><span>${h}/${g.rows.length} here</span></div><div class="day-rows">${g.rows.map(({ l }) => row(l)).join(``)}</div></section>`;
+    }).join(``);
+  }
+  const missing = lines.length - here;
+  return `<div class="readiness day"><div class="rd-head"><b>${here} of ${lines.length}</b><span>here</span>${part ? `<small>${part} partly</small>` : ``}</div>${bar}</div>
+    <div class="seg ev-by">
+      <button type="button" data-dayby="section" class="${st.dayBy === `section` ? `on` : ``}">${icon(`sheet`)} By section</button>
+      <button type="button" data-dayby="person" class="${st.dayBy === `person` ? `on` : ``}">${icon(`users`)} By person</button>
+    </div>
+    ${groupsHtml}
+    ${missing ? `<div class="row-actions left"><button type="button" class="btn ghost" data-ev="missingshare">${icon(`share`)} Share what’s not here yet (${missing})</button></div>`
+      : `<section class="needed-card done">${icon(`check`)}<div><b>Everything is here</b><small>All ${lines.length} on the list arrived.</small></div></section>`}`;
+}
+
+/** Tick a line (or one person's part of it) as here, or untick it. */
+function tickLine(lineId, who) {
+  const repo = R(); const l = repo.eventLines.find((x) => x.id === lineId); if (!l) return;
+  const need = needOf(l); let got = repo.gotOf(l);
+  if (who) {
+    const share = shares(l).find((b) => b.name.toLowerCase() === who.toLowerCase())?.qty || need;
+    const cur = got.find((g) => g.who.toLowerCase() === who.toLowerCase());
+    got = got.filter((g) => g !== cur);
+    if (!(cur && cur.n >= share)) got.push({ who, n: share });
+  } else if (repo.gotTotal(l) >= need) got = [];
+  else { const named = got.filter((g) => g.who); const n = named.reduce((a, g) => a + g.n, 0); got = [...named, ...(need - n > 0 ? [{ who: ``, n: need - n }] : [])]; }
+  repo.setGot(l, got);
+}
+function personAllHere(ev, name) {
+  const repo = R();
+  for (const l of repo.linesOf(ev.id)) {
+    const b = shares(l).find((y) => y.name.toLowerCase() === name.toLowerCase()); if (!b) continue;
+    const got = repo.gotOf(l).filter((g) => g.who.toLowerCase() !== name.toLowerCase());
+    repo.setGot(l, [...got, { who: b.name, n: b.qty }]);
+  }
+  toast(`Everything from ${name} is here`);
+}
+/** How many arrived, and from whom. */
+function countSheet(ev, line) {
+  const repo = R(); const need = needOf(line);
+  sheet(lineName(line, lineState(line)), (el, close) => {
+    const draw = () => {
+      const cur = repo.eventLines.find((x) => x.id === line.id) || line;
+      const got = repo.gotOf(cur); const total = repo.gotTotal(cur);
+      const people = shares(cur);
+      el.innerHTML = `<div class="need-row"><span>Here so far <small>of ${need}</small></span>
+          <span class="stepper sm"><button type="button" class="icon-btn" data-cs="-1">−</button><input type="number" min="0" inputmode="numeric" value="${total}" data-csn><button type="button" class="icon-btn" data-cs="1">+</button></span></div>
+        ${people.length ? `<div class="label-sm">Brought by</div><div class="who-rows">${people.map((b) => { const n = got.find((g) => g.who.toLowerCase() === b.name.toLowerCase())?.n || 0; return `<div class="who-row"><span class="who-name">${icon(n >= b.qty ? `check` : `users`)} <b>${esc(b.name)}</b><small>${n} of ${b.qty}</small></span>
+            <button type="button" class="btn small ${n >= b.qty ? `ghost` : `primary`}" data-csp="${esc(b.name)}">${n >= b.qty ? `Undo` : `All ${b.qty} here`}</button></div>`; }).join(``)}</div>` : ``}
+        <div class="row-actions"><button type="button" class="btn primary" data-csdone>Done</button></div>`;
+    };
+    const setTotal = (n) => { // keep what people brought; the rest is "not said"
+      const cur = repo.eventLines.find((x) => x.id === line.id) || line;
+      const named = repo.gotOf(cur).filter((g) => g.who); const nn = named.reduce((a, g) => a + g.n, 0);
+      repo.setGot(cur, n >= nn ? [...named, { who: ``, n: n - nn }] : [{ who: ``, n }]);
+      draw();
+    };
+    el.addEventListener(`click`, (e) => {
+      const st2 = e.target.closest(`[data-cs]`); if (st2) { setTotal(Math.max(0, Number($(`[data-csn]`, el).value) + Number(st2.dataset.cs))); return; }
+      const p = e.target.closest(`[data-csp]`); if (p) { tickLine(line.id, p.dataset.csp); draw(); return; }
+      if (e.target.closest(`[data-csdone]`)) close();
+    });
+    el.addEventListener(`change`, (e) => { if (e.target.matches(`[data-csn]`)) setTotal(Math.max(0, Number(e.target.value) || 0)); });
+    draw();
+  }, { onClose: () => setTimeout(() => ctx.redraw(), 0) });
+}
+function shareMissingToday(ev) {
+  const repo = R(); const out = [header(ev), `Not here yet:`, ``];
+  for (const l of repo.linesOf(ev.id)) {
+    const need = needOf(l); const got = repo.gotTotal(l); if (got >= need) continue;
+    const x = lineState(l); const who = bringersText(l);
+    out.push(`• ${lineName(l, x)}${need > 1 ? ` – ${got} of ${need} here` : ``}${who ? ` · ${who}` : ``}`);
+  }
+  out.push(``, ctx.shareSign);
+  return ctx.shareOut({ title: `${ev.name}: not here yet`, text: out.join(`\n`) });
+}
+
+// ---- After: where everything went
+/** Where a line went after the event (a 'keep it' still waiting for the item to be saved doesn't count yet). */
+const afterState = (l) => { const a = R().afterOf(l); return a && a.state !== `kept-pending` ? a : null; };
+const AFTER_LABEL = { back: `Back in its place`, moved: `Put somewhere else`, missing: `Missing`, damaged: `Damaged`, kept: `Added to the inventory`, gone: `Used up or returned` };
+function afterBody(ev, canEdit) {
+  const repo = R(); const lines = repo.linesOf(ev.id);
+  const sorted = lines.filter((l) => afterState(l)).length;
+  const issues = lines.filter((l) => [`missing`, `damaged`].includes(afterState(l)?.state)).length;
+  const row = (l) => {
+    const x = lineState(l); const a = afterState(l); const srcs = repo.sourcesOf(l).filter((s2) => !s2.off);
+    const elsewhere = srcs.filter((s2) => repo.srcInv(s2) !== repo.hereId);
+    const inInv = srcs.length > 0;
+    const btn = (k, label, cls = `ghost`) => `<button type="button" class="btn small ${cls}" data-after="${k}" data-line2="${esc(l.id)}">${label}</button>`;
+    return `<div class="after-row${a ? ` sorted st-${a.state}` : ``}">
+      <div class="ar-main"><b>${esc(lineName(l, x))}${needOf(l) > 1 ? ` <span class="qty">×${needOf(l)}</span>` : ``}</b>
+        <small>${a ? `${esc(AFTER_LABEL[a.state] || a.state)}${a.to ? `: ${esc(a.to)}` : ``}${a.note ? ` · ${esc(a.note)}` : ``}`
+          : inInv ? esc(x.parts?.length ? todoText(ev, l, x).replace(/^from /, `kept in `) : ``) : `Not in the inventory`}</small>
+        ${!a && elsewhere.length ? `<small class="fine">In ${esc([...new Set(elsewhere.map((s2) => invNameOf(repo.srcInv(s2))))].join(`, `))}: what you choose here is noted on the event; open that inventory to update the item itself.</small>` : ``}</div>
+      ${!canEdit ? `` : a ? `<div class="ar-actions">${btn(`undo`, `Change`, `text`)}</div>`
+        : inInv ? `<div class="ar-actions">${btn(`back`, `${icon(`check`)} Back in place`, `primary`)}${elsewhere.length < srcs.length ? btn(`moved`, `Somewhere else`) : ``}${btn(`missing`, `Missing`)}${btn(`damaged`, `Damaged`)}</div>`
+        : `<div class="ar-actions">${repo.readOnly ? `` : btn(`kept`, `${icon(`plus`)} Keep it: add to inventory`, `primary`)}${btn(`gone`, `Used up or returned`)}</div>`}
+    </div>`;
+  };
+  const groups = bySection(lines.map((l) => ({ l, x: lineState(l) })), repo.sectionsOf(ev.id));
+  return `<div class="readiness"><div class="rd-head"><b>${sorted} of ${lines.length}</b><span>sorted</span>${issues ? `<small class="warn">${issues} missing or damaged</small>` : ``}</div>
+      <div class="ready-bar">${sorted ? `<i class="st-ready" style="flex:${sorted}"></i>` : ``}${lines.length - sorted ? `<i class="st-unknown" style="flex:${lines.length - sorted}"></i>` : ``}</div></div>
+    ${groups.map((g) => `<section class="ev-group"><div class="ev-ghead"><h2>${esc(g.label)}</h2><span>${g.rows.filter(({ l }) => afterState(l)).length}/${g.rows.length} sorted</span></div>
+      <div class="after-rows">${g.rows.map(({ l }) => row(l)).join(``)}</div></section>`).join(``)}
+    ${sorted === lines.length ? `<section class="needed-card done">${icon(`check`)}<div class="grow"><b>All packed up</b><small>${issues ? `${issues} missing or damaged. ` : ``}Next year, start from this list.</small></div></section>` : ``}
+    <div class="row-actions left">
+      ${sorted ? `<button type="button" class="btn ghost" data-ev="aftershare">${icon(`share`)} Share where things went</button>` : ``}
+      ${canEdit ? `<button type="button" class="btn ${sorted === lines.length ? `primary` : `ghost`}" data-ev="copy">${icon(`calendar`)} Copy for next time</button>` : ``}
+    </div>`;
+}
+
+async function afterAction(ev, lineId, act) {
+  const repo = R(); const l = repo.eventLines.find((x) => x.id === lineId); if (!l) return;
+  const name = lineName(l, lineState(l));
+  const here = repo.sourcesOf(l).filter((s2) => !s2.off && repo.srcInv(s2) === repo.hereId)
+    .map((s2) => repo.items.find((i) => i.id === s2.id && !i.deleted)).filter(Boolean);
+  const release = async (it) => { // set aside for this event: free it again
+    if (it.status === `reserved` && Repo.personKey(it.lentTo) === Repo.personKey(ev.name)) await repo.cancelReservation(it);
+  };
+  if (act === `undo`) { repo.setAfter(l, null); return; }
+  if (act === `back`) { for (const it of here) await release(it); repo.setAfter(l, { state: `back` }); toast(`${name}: back in its place`); return; }
+  if (act === `moved`) {
+    const to = await ctx.pickLocation(here[0]?.locationId || ``, `Where did ${name} go?`); if (!to) return;
+    for (const it of here) { await release(it); await repo.moveItem(repo.items.find((i) => i.id === it.id), to); }
+    repo.setAfter(l, { state: `moved`, to: repo.pathText(to) }); toast(`${name} moved to ${repo.pathText(to)}`); return;
+  }
+  if (act === `missing`) {
+    for (const it of here) await repo.markMissing(it);
+    repo.setAfter(l, { state: `missing` }); toast(here.length ? `${name} marked missing in the inventory` : `${name}: missing`); return;
+  }
+  if (act === `damaged`) {
+    const note = await promptSheet(`What’s wrong with ${name}?`, { label: `Damage`, placeholder: `e.g. cracked leg, one bulb out`, okLabel: `Save` });
+    if (note === null) return;
+    const line = `Damaged at ${ev.name}${ev.date ? ` (${ev.date})` : ``}${note ? `: ${note}` : ``}`;
+    for (const it of here) { await release(it); await repo.saveItem({ id: it.id, notes: [it.notes, line].filter(Boolean).join(`\n`) }, { logAction: `edited`, info: line }); }
+    repo.setAfter(l, { state: `damaged`, note }); toast(`${name}: damage noted`); return;
+  }
+  if (act === `kept`) { // bought for the event and kept: log it, and the line points at it
+    repo.setAfter(l, { state: `kept-pending` });
+    location.hash = `#/add?name=${encodeURIComponent(name)}&qty=${encodeURIComponent(needOf(l))}&eline=${encodeURIComponent(l.id)}`; return;
+  }
+  if (act === `gone`) { repo.setAfter(l, { state: `gone` }); return; }
+}
+function shareAfter(ev) {
+  const repo = R(); const out = [header(ev), `Where things went:`, ``];
+  const by = {};
+  for (const l of repo.linesOf(ev.id)) { const a = repo.afterOf(l); if (!a) continue; (by[a.state] ||= []).push(`• ${lineName(l, lineState(l))}${a.to ? ` → ${a.to}` : ``}${a.note ? ` (${a.note})` : ``}`); }
+  for (const k of [`missing`, `damaged`, `moved`, `kept`, `back`, `gone`]) if (by[k]) out.push((AFTER_LABEL[k] || k).toUpperCase(), ...by[k], ``);
+  out.push(ctx.shareSign);
+  return ctx.shareOut({ title: `${ev.name}: after`, text: out.join(`\n`) });
+}
+
+/** Copy this event for next time. */
+async function copyFlow(ev) {
+  const repo = R(); const hasPeople = repo.linesOf(ev.id).some((l) => repo.bringersOf(l).length);
+  const f = await new Promise((resolve) => {
+    let answered = false;
+    sheet(`Copy ${ev.name}`, (el, close) => {
+      el.innerHTML = `<form class="stack">
+        <label class="field"><span>Name</span><input name="name" required value="${esc(ev.name)}"></label>
+        <label class="field"><span>Date</span><input name="date" type="date"></label>
+        ${hasPeople ? `<label class="check-row"><input type="checkbox" name="people" checked> Keep who brings what</label>` : ``}
+        <p class="fine">Copies the sections, items, quantities and notes. Nothing is ticked or sorted yet.</p>
+        <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">Copy</button></div></form>`;
+      const form = $(`form`, el);
+      $(`[data-no]`, el).onclick = () => { answered = true; resolve(null); close(); };
+      form.onsubmit = (e) => { e.preventDefault(); answered = true; resolve({ name: form.elements.name.value.trim(), date: form.elements.date.value, keepPeople: Boolean(form.elements.people?.checked) }); close(); };
+    }, { onClose: () => { if (!answered) resolve(null); } });
+  });
+  if (!f) return;
+  const copy = repo.copyEvent(ev, f); if (!copy) return;
+  toast(`Copied to ${copy.name}`);
+  location.hash = `#/event/${copy.id}`;
+}
+
+/** Reserve this inventory's items for the event, so nobody lends them out before the date. */
+async function reserveForEvent(ev) {
+  const repo = R(); const todo = []; const elsewhere = new Map(); let already = 0; let busy = 0;
+  for (const l of repo.linesOf(ev.id)) for (const s2 of repo.sourcesOf(l).filter((y) => !y.off)) {
+    const inv = repo.srcInv(s2);
+    if (inv !== repo.hereId) { elsewhere.set(inv, (elsewhere.get(inv) || 0) + 1); continue; }
+    const it = repo.items.find((i) => i.id === s2.id && !i.deleted); if (!it) continue;
+    if (it.status === `reserved` && Repo.personKey(it.lentTo) === Repo.personKey(ev.name)) already++;
+    else if (it.status === `home`) todo.push(it); else busy++;
+  }
+  const other = [...elsewhere].map(([id, n]) => `${n} in ${invNameOf(id)}`).join(`, `);
+  if (!todo.length) { toast(already ? `Already reserved for ${ev.name}${other ? `. Open ${other.replace(/^\d+ in /, ``)} to reserve those too` : ``}` : `Nothing here to reserve${other ? ` (${other}: open that inventory to reserve them)` : ``}`, { ms: 5000 }); return; }
+  const msg = `Reserves ${todo.length} item${todo.length === 1 ? `` : `s`} in ${ctx.invName()} for ${ev.name}${ev.date ? `, to be picked up by ${whenText(ev.date).main}` : ``}, so nobody lends them out. They count as ready, and "Back in place" afterwards frees them.${busy ? ` ${busy} already lent or reserved for someone else stay as they are.` : ``}${other ? ` Items in other inventories (${other}) are reserved from there.` : ``}`;
+  if (!(await confirmSheet(`Reserve for ${ev.name}?`, msg, `Reserve ${todo.length}`))) return;
+  for (const it of todo) await repo.reserveItem(it, ev.name, ev.date || ``);
+  toast(`Reserved ${todo.length} for ${ev.name}`);
 }
 
 function picOf(item, thumbs, cls = `thumb sm`) {
@@ -774,6 +1041,8 @@ function eventMenu(ev) {
     const secs = repo.sectionsOf(ev.id).filter(Boolean);
     el.innerHTML = `<div class="menu">
       <button data-m="edit">${icon(`edit`)} Rename, date, notes</button>
+      <button data-m="copy">${icon(`calendar`)} Copy for next time</button>
+      ${!repo.readOnly && repo.linesOf(ev.id).some((l) => repo.sourcesOf(l).some((y) => !y.off && repo.srcInv(y) === repo.hereId)) ? `<button data-m="reserve">${icon(`clock`)} Reserve ${esc(ctx.invName())}’s items for it</button>` : ``}
       ${secs.length ? `<button data-m="sections">${icon(`sheet`)} Rename a section</button>` : ``}
       <button data-m="delete" class="danger">${icon(`trash`)} Delete event</button></div>
       <p class="fine">Deleting the event only removes its list${ev._g ? ` for everyone in the group` : ``}. Nothing in any inventory changes.</p>`;
@@ -782,6 +1051,8 @@ function eventMenu(ev) {
       close();
       if (m === `edit`) { const f = await eventForm(ev); if (f) { repo.saveEvent(f); toast(`Saved`); } }
       if (m === `sections`) renameSectionSheet(ev, secs);
+      if (m === `copy`) copyFlow(ev);
+      if (m === `reserve`) reserveForEvent(ev);
       if (m === `delete` && await confirmSheet(`Delete ${ev.name}?`, `Its list of ${repo.linesOf(ev.id).length} item(s) goes too${ev._g ? `, for everyone in the group` : ``}. Nothing in any inventory changes.`, `Delete`, true)) {
         repo.deleteEvent(ev); location.hash = `#/events`;
         toast(`Deleted ${ev.name}`, { action: `Undo`, ms: 6000, onAction: () => { repo.saveEvent({ id: ev.id, deleted: `` }); location.hash = `#/event/${ev.id}`; } });
@@ -970,22 +1241,24 @@ function printNeeded(ev) {
 }
 
 /** One person's list, as a message to them. */
-function personText(ev, p) {
+function personText(ev, p, { reminder = false } = {}) {
   const first = p.name.split(/\s+/)[0];
-  const out = [header(ev), ``, `${first}, here’s what you’re bringing:`, ``];
+  const w = whenText(ev.date);
+  const out = reminder ? [`Reminder: ${ev.name} is ${w.rel === `today` || w.rel === `tomorrow` ? w.rel : `on ${w.main}${w.rel ? ` (${w.rel})` : ``}`}.`, ``, `${first}, here’s what you’re bringing:`, ``]
+    : [header(ev), ``, `${first}, here’s what you’re bringing:`, ``];
   for (const r of p.rows) out.push(`• ${r.name}${r.qty > 1 ? ` ×${r.qty}` : ``}${r.todo ? ` – ${r.todo}` : ``}`);
   out.push(``, `Thank you!`, ``, ctx.shareSign);
   return out.join(`\n`);
 }
 const findPerson = (ev, name) => peopleLists(ev).find((x) => x.name.toLowerCase() === name.toLowerCase() || (x.email && x.email === name.toLowerCase()));
-function sharePerson(ev, name) {
+function sharePerson(ev, name, opts = {}) {
   const p = findPerson(ev, name); if (!p) return;
-  return ctx.shareOut({ title: `${ev.name}: ${p.name}`, text: personText(ev, p) });
+  return ctx.shareOut({ title: `${ev.name}: ${p.name}`, text: personText(ev, p, opts) });
 }
 /** Email their list straight to their Google account (opens the mail app). */
-function emailPerson(ev, name) {
+function emailPerson(ev, name, opts = {}) {
   const p = findPerson(ev, name); if (!p?.email) return;
-  location.href = `mailto:${encodeURIComponent(p.email)}?subject=${encodeURIComponent(`${ev.name}: what you’re bringing`)}&body=${encodeURIComponent(personText(ev, p))}`;
+  location.href = `mailto:${encodeURIComponent(p.email)}?subject=${encodeURIComponent(`${opts.reminder ? `Reminder: ` : ``}${ev.name}: what you’re bringing`)}&body=${encodeURIComponent(personText(ev, p, opts))}`;
 }
 
 /** Everyone's lists on paper, one page per person, then what nobody is bringing yet. */
@@ -1023,8 +1296,8 @@ function shareMenu(ev) {
 }
 
 /** Pick a person to send their list to (one message each). */
-function peopleSheet(ev) {
-  sheet(`Send each person their list`, (el) => {
+function peopleSheet(ev, opts = {}) {
+  sheet(opts.reminder ? `Remind everyone` : `Send each person their list`, (el) => {
     const draw = () => {
       el.innerHTML = `<div class="person-list">${peopleLists(ev).map((p) => `<div class="pl-row">
           <div class="grow"><b>${esc(p.name)}</b><small>${esc(p.email ? `${p.email} · ` : ``)}${esc(p.rows.map((r) => r.name).join(`, `))}</small></div>
@@ -1033,8 +1306,8 @@ function peopleSheet(ev) {
         <p class="fine">Share opens your share sheet (WhatsApp, Messages). Email goes to their Google account.</p>`;
     };
     el.onclick = (e) => {
-      const b = e.target.closest(`[data-p]`); if (b) { b.classList.add(`sent`); sharePerson(ev, b.dataset.p); return; }
-      const m = e.target.closest(`[data-mail]`); if (m) { m.classList.add(`sent`); emailPerson(ev, m.dataset.mail); }
+      const b = e.target.closest(`[data-p]`); if (b) { b.classList.add(`sent`); sharePerson(ev, b.dataset.p, opts); return; }
+      const m = e.target.closest(`[data-mail]`); if (m) { m.classList.add(`sent`); emailPerson(ev, m.dataset.mail, opts); }
     };
     draw();
   });
@@ -1058,6 +1331,7 @@ export function linkLineToItem(lineId, itemId) {
   const src = { inv: line._g ? repo.hereId : ``, id: itemId, name: item?.name || line.name };
   const list = repo.sourcesOf(line).filter((x) => !(x.id === itemId && repo.srcInv(x) === repo.srcInv(src)));
   repo.setSources(line, [...list, src], list.length ? {} : { name: item?.name || line.name });
+  if (repo.afterOf(line)?.state === `kept-pending`) repo.setAfter(repo.eventLines.find((l) => l.id === line.id), { state: `kept` });
   return true;
 }
 

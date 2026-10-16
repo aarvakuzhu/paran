@@ -55,7 +55,7 @@ function registerServiceWorker() {
 async function boot() {
   registerServiceWorker();
   initEvents({
-    repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr, invName, switchTo,
+    repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr, invName, switchTo, pickLocation,
     openGroupInventories: (gid) => (gid ? openGroupInventories(gid) : Promise.resolve()),
     redraw: () => { // another inventory's items arrived: refresh whatever shows events
       if (document.querySelector(`.sheet-wrap.open`)) return redrawOpenAddSheet();
