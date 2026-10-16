@@ -468,7 +468,7 @@ function lineSheet(ev, line) {
         else { tried[x.invId] = 0; await xfetch(x.invId); }
         ctx.redraw(); return;
       }
-      if (a === `add`) { close(); location.hash = `#/add?name=${encodeURIComponent(name)}&eline=${encodeURIComponent(line.id)}`; return; }
+      if (a === `add`) { close(); location.hash = `#/add?name=${encodeURIComponent(name)}&qty=${encodeURIComponent(line.qty || 1)}&eline=${encodeURIComponent(line.id)}`; return; }
       if (a === `link`) {
         close();
         const pick = await pickItem(ev, `Which item is “${name}”?`, line.name || x.item?.name || ``);

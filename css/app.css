@@ -833,3 +833,10 @@ body.readonly .edit-only { display: none !important; }
 .ev-scope button { font-size: 0.88rem; }
 .ev-scope + .fine { margin-top: 2px; }
 .pool-note .fine { margin: 8px 2px 0; }
+/* quantity on the Add form: − 12 + */
+.stepper { display: flex; align-items: center; gap: 6px; }
+.stepper .icon-btn { width: 46px; height: 46px; border: 1px solid var(--line); background: var(--surface); font-size: 1.4rem; line-height: 1; color: var(--ink); }
+.stepper .icon-btn:active { background: var(--surface-2); }
+.stepper input { width: 84px; text-align: center; font-weight: 650; font-size: 1.05rem; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; min-height: 46px; outline: 0; -moz-appearance: textfield; }
+.stepper input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.stepper input::-webkit-outer-spin-button, .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }

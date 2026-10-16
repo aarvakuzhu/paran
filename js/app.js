@@ -1377,7 +1377,7 @@ function itemMenu(item) {
 function viewEdit(view, r) {
   const editing = r.name === `edit` ? repo.items.find((i) => i.id === r.id) : null;
   const item = editing || {
-    name: r.params.get(`name`) || ``, purpose: ``, category: ``, tags: ``, qty: 1, warranty: ``, expiry: ``, notes: ``,
+    name: r.params.get(`name`) || ``, purpose: ``, category: ``, tags: ``, qty: Number(r.params.get(`qty`)) || 1, warranty: ``, expiry: ``, notes: ``,
     locationId: r.params.get(`loc`) || recentLocs()[0] || ``,
   };
   let locationId = item.locationId;
@@ -1396,18 +1396,19 @@ function viewEdit(view, r) {
       <div id="xstrip"></div>
       <div id="aiRow"></div>
       <label class="field"><span>What is it?</span><input name="name" required value="${esc(item.name)}" placeholder="e.g. Stud finder"></label>
+      <div class="field qty-field"><span>How many?</span>
+        <div class="stepper"><button type="button" class="icon-btn" data-step="-1" aria-label="One fewer">−</button>
+          <input name="qty" type="number" min="1" inputmode="numeric" value="${esc(Math.max(1, Number(item.qty) || 1))}" aria-label="How many">
+          <button type="button" class="icon-btn" data-step="1" aria-label="One more">+</button></div></div>
       <label class="field"><span>What’s it for?</span><textarea name="purpose" rows="2" placeholder="e.g. Finding studs before hanging shelves or a TV">${esc(item.purpose)}</textarea></label>
       <div class="field"><span>Where is it?</span>
         <button type="button" class="loc-btn" id="loc">${icon(`place`)}<span id="locText"></span>${icon(`chevron`)}</button></div>
       <div class="field"><span>How big is it? <small>(optional)</small></span>
         <input type="hidden" name="size" value="${esc(item.size || ``)}">
         <div class="chips size-chips" id="sizes">${SIZES.map((z) => `<button type="button" class="chip${item.size === z ? ` on` : ``}" data-size="${esc(z)}">${esc(z)}<small>${esc(SIZE_HINT[z])}</small></button>`).join(``)}</div></div>
-      <details ${editing && (item.category || item.tags || Number(item.qty) > 1 || item.warranty || item.expiry || item.notes) ? `open` : ``}>
-        <summary>More details <small>category, qty, notes</small></summary>
-        <div class="two">
-          <label class="field"><span>Category</span><input name="category" list="cats" value="${esc(item.category)}" placeholder="Tools"></label>
-          <label class="field"><span>How many</span><input name="qty" type="number" min="0" inputmode="numeric" value="${esc(item.qty || 1)}"></label>
-        </div>
+      <details ${editing && (item.category || item.tags || item.warranty || item.expiry || item.notes) ? `open` : ``}>
+        <summary>More details <small>category, notes, dates</small></summary>
+        <label class="field"><span>Category</span><input name="category" list="cats" value="${esc(item.category)}" placeholder="Tools"></label>
         <datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join(``)}</datalist>
         <label class="field"><span>Search words <small>(optional)</small></span><input name="tags" value="${esc(item.tags)}" placeholder="e.g. plumbing, teflon"></label>
         <div class="two">
@@ -1423,6 +1424,12 @@ function viewEdit(view, r) {
     </form>`;
 
   $(`[data-cancel]`, view).onclick = () => goBack(editing ? `#/item/${editing.id}` : `#/`);
+  $(`.stepper`, view).addEventListener(`click`, (e) => { // − / + without opening the keyboard
+    const b = e.target.closest(`[data-step]`); if (!b) return;
+    const input = $(`.stepper input`, view);
+    input.value = Math.max(1, (Number(input.value) || 1) + Number(b.dataset.step));
+    input.dispatchEvent(new Event(`input`, { bubbles: true })); // same as typing: it's their number now, not AI's
+  });
   const setLocText = () => { $(`#locText`).innerHTML = locationId ? crumbs(locationId, { link: false }) : `<span class="muted">Choose a place</span>`; };
   setLocText();
   $(`#loc`).onclick = async () => { const id = await pickLocation(locationId); if (id) { locationId = id; setLocText(); } };
