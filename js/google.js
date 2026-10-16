@@ -195,6 +195,18 @@ export const sheets = {
       method: `POST`, ...jsonBody({ valueInputOption: `RAW`, data }),
     });
   },
+  /** Names of the tabs in a spreadsheet. */
+  async tabTitles(id) {
+    const r = await api(`${SHEETS}/${id}?fields=${encodeURIComponent(`sheets.properties.title`)}`);
+    return (r.sheets || []).map((s) => s.properties?.title).filter(Boolean);
+  },
+  /** Add empty tabs (header row frozen). */
+  addTabs(id, names) {
+    return api(`${SHEETS}/${id}:batchUpdate`, {
+      method: `POST`,
+      ...jsonBody({ requests: names.map((title) => ({ addSheet: { properties: { title, gridProperties: { frozenRowCount: 1 } } } })) }),
+    });
+  },
 };
 
 // ---------- Picker (join shared inventories or a group) ----------

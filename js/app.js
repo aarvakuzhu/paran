@@ -9,6 +9,7 @@ import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeI
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { scanLabel } from './qrscan.js';
+import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem } from './events.js';
 
 const MODE_KEY = `paran.mode`;
 const RECENT_LOC_KEY = `paran.recentLocs`;
@@ -52,6 +53,7 @@ function registerServiceWorker() {
 // ============================================================ boot
 async function boot() {
   registerServiceWorker();
+  initEvents({ repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr });
   window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
   installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
@@ -295,7 +297,7 @@ function render() {
     if (navStack[navStack.length - 1] !== location.hash) navStack.push(location.hash);
     if (navStack.length > 30) navStack.shift();
   }
-  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places`, group: `places` }[r.name] || `find`;
+  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places`, group: `places`, events: `more`, event: `more` }[r.name] || `find`;
   const nm = $(`#invname`); if (nm) nm.textContent = invName();
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
   document.body.classList.toggle(`readonly`, Boolean(repo.readOnly)); // "Can view": edit actions are hidden
@@ -306,7 +308,7 @@ function render() {
   const view = $(`#view`);
   const y = window.scrollY;
   view.onclick = null; view.onsubmit = null;
-  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup, group: viewGroup };
+  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup, group: viewGroup, events: viewEvents, event: viewEvent };
   (screens[r.name] || viewFind)(view, r);
   window.scrollTo(0, routeChanged ? 0 : y); // a background sync must not jump the page to the top
 }
@@ -1101,6 +1103,7 @@ function renderResults() {
     while (pick.length < 3) pick.push(null);
     return pick.map((i, k) => (i ? tileImg(i, `m${k}`) : `<div class="m${k} tint" style="--h:${tintOf(`${l.id}${k}`)}"></div>`)).join(``);
   };
+  const soon = splitEvents().upcoming.slice(0, 2);
   const quick = (i) => i.status === `lent` ? [`return`, `Got it back`] : i.status === `reserved` ? [`pickup`, `Picked up`] : i.status === `missing` ? [`found`, `Found it`] : null;
   const personLine = (p) => {
     const lateN = [...p.holding, ...p.saved].filter((i) => attentionReason(i)?.urgent).length;
@@ -1121,6 +1124,8 @@ function renderResults() {
         <div><b>${esc(i.name)}</b><small>${esc(r.text)}</small></div>
         ${a ? `<button type="button" class="btn small ghost" data-quick="${a[0]}" data-id="${esc(i.id)}">${a[1]}</button>` : ``}</a>`; }).join(``)}
       ${attention.length > 3 ? `<a class="link small" href="#/out">See all ${attention.length}</a>` : ``}</div>` : ``}
+    ${soon.length ? `<section class="dash"><div class="dash-head"><h2>Coming up</h2><a class="link small" href="#/events">All events</a></div>
+      <div class="cards">${soon.map(eventCard).join(``)}</div></section>` : ``}
     ${rooms.length ? `<section class="dash"><div class="dash-head"><h2>Places</h2><a class="link small" href="#/places">All places</a></div>
       <div class="place-tiles">${rooms.map(({ l, items }) => `<a class="place-tile" href="#/place/${esc(l.id)}">
         <div class="mosaic">${mosaic(items, l)}</div>
@@ -1257,6 +1262,7 @@ function viewItem(view, r) {
         <button class="btn ghost big" data-a="move">${icon(`move`)} Move</button>
         ${second}
       </div>
+      ${neededForHtml(item)}
       ${item.purpose ? `<div class="block"><div class="label-sm">What it’s for</div><p>${esc(item.purpose)}</p></div>` : ``}
       <div class="facts">
         ${item.size ? `<div><span>Size</span><b>${esc(item.size)}</b></div>` : ``}
@@ -1565,7 +1571,9 @@ function viewEdit(view, r) {
   $$(`button[type=submit]`, view).forEach((b) => b.addEventListener(`click`, () => { again = b.hasAttribute(`data-again`); }));
   let saving = false;
   const lock = (on) => { saving = on; $$(`button[type=submit]`, view).forEach((b) => { b.disabled = on; }); };
+  const eline = r.params.get(`eline`); // came from an event's "Add to the inventory": link that line to what gets saved
   const next = (id) => {
+    if (eline && !editing) { linkLineToItem(eline, id); return goBack(`#/events`); }
     if (again) { navStack.pop(); location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`; return; } // replace this form
     if (editing) return goBack(`#/item/${editing.id}`);
     if (id) { navStack.pop(); location.hash = `#/item/${id}`; return; }
@@ -1588,7 +1596,7 @@ function viewEdit(view, r) {
         if (dups.length) {
           const choice = await duplicatePrompt(fields, dups);
           if (!choice) { lock(false); return; } // back to the form
-          if (choice.action === `open`) { location.hash = `#/item/${choice.item.id}`; return; }
+          if (choice.action === `open`) { if (eline) return next(choice.item.id); location.hash = `#/item/${choice.item.id}`; return; }
           if (choice.action === `move` || choice.action === `more`) {
             const it = choice.item;
             const patch = { id: it.id };
@@ -1598,7 +1606,7 @@ function viewEdit(view, r) {
             await repo.saveItem(patch, { ...(attach ? { photo, thumb } : {}), logAction: choice.action === `move` ? `moved` : `qty+${fields.qty}` });
             rememberLoc(locationId);
             toast(choice.action === `move` ? `Moved ${it.name} to ${repo.pathText(locationId)}` : `${it.name} is now ×${patch.qty}`);
-            return next(again ? null : it.id);
+            return next(again && !eline ? null : it.id);
           }
           // choice.action === `new`: fall through and save as a separate item
         }
@@ -1609,7 +1617,7 @@ function viewEdit(view, r) {
       for (const x of pendingExtras) await repo.addExtraPhoto(saved.id, x, { log: false });
       rememberLoc(locationId);
       toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
-      next(editing ? saved.id : null);
+      next(editing || eline ? saved.id : null);
     } catch (err) {
       console.error(err); toast(`Couldn’t save: ${err.message || err}`); lock(false);
     }
@@ -2687,6 +2695,7 @@ function viewMore(view, r) {
         <div><b>${repo.activeItems().filter((i) => i.status === `lent`).length}</b><span>lent out</span></div></div>
       <div class="menu more-menu">
         ${g ? row(`#/more/inventory`, `box`, invName(), `Switch, rename, add${grp ? ` · ${grp.name}` : ``}`) : ``}
+        ${row(`#/events`, `calendar`, `Events`, (() => { const n = splitEvents().upcoming.length; return n ? `${n} coming up` : `What an event needs, and where it is`; })())}
         ${g ? row(`#/more/people`, `users`, `People & access`, `${members.length} ${members.length === 1 ? `person` : `people`} · you: ${myRole.toLowerCase()}`) : ``}
         ${row(`#/more/ai`, `spark`, `AI suggestions`, aiReady() ? `On` : `Off`)}
         ${row(`#/more/data`, `sheet`, `Your data`, g ? `Google Sheet, download, refresh` : `Download`)}

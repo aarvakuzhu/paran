@@ -21,12 +21,24 @@ export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`, `info`, `chan
 // on `added` it is { _ai: [fields AI suggested] } so AI may refine its own suggestions later but never what someone typed.
 export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `qty`, `warranty`, `expiry`, `notes`];
 
+// Events (graduation, Annual Day, a camping trip): what's needed, in sections, each line pointing at an item.
+// date is YYYY-MM-DD (optional). A line with no itemId is something needed that isn't in the inventory yet.
+// New columns go at the END of each list so older sheets stay aligned.
+export const EVENT_COLS = [`id`, `name`, `date`, `notes`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `deleted`];
+export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`];
+export const EVENT_TABS = [
+  { name: `Events`, cols: EVENT_COLS },
+  { name: `EventLines`, cols: ELINE_COLS },
+];
+
 export const TABS = [
   { name: `Items`, cols: ITEM_COLS },
   { name: `Locations`, cols: LOC_COLS },
   { name: `Members`, cols: MEMBER_COLS },
   { name: `Log`, cols: LOG_COLS },
+  ...EVENT_TABS,
 ];
+const ROW_TAB = { item: [`Items`, ITEM_COLS], location: [`Locations`, LOC_COLS], event: [`Events`, EVENT_COLS], eline: [`EventLines`, ELINE_COLS] };
 
 const colLetter = (n) => { let s = ``; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
 export const lastCol = (cols) => colLetter(cols.length - 1);
@@ -102,6 +114,7 @@ class GoogleBackend {
     }
     localStorage.setItem(this.prefKey(), this.sheetId);
     await this.ensureHeaders();
+    await this.ensureEventTabs().catch((e) => console.warn(`event tabs`, e)); // never blocks opening the inventory
     await this.ensurePhotoFolder();
     this.saveSession();
     return { user: this.user, label: this.label() };
@@ -143,7 +156,8 @@ class GoogleBackend {
       await this.inspectSheet(); this.legacy = false;
     }
     else { await this.inspectSheet(); this.fresh = false; } // each open: name, owner, and whether this person can still edit
-    await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession();
+    await this.ensureHeaders(); await this.ensureEventTabs().catch((e) => console.warn(`event tabs`, e));
+    await this.ensurePhotoFolder(); this.saveSession();
   }
 
   async inspectSheet() {
@@ -181,6 +195,35 @@ class GoogleBackend {
     localStorage.setItem(key, ver);
   }
 
+  /**
+   * Sheets made before Events existed: add the Events and EventLines tabs (and header cells for columns added since).
+   * Returns true when the tabs are there. Viewers can't add tabs; they simply see no events until the owner opens the app.
+   */
+  async ensureEventTabs() {
+    const key = `paran.evtabs.${this.sheetId}`;
+    const ver = EVENT_TABS.map((t) => t.cols.length).join(`.`);
+    if (localStorage.getItem(key) === ver) return true;
+    if (!this.canEdit) return false;
+    const have = await sheets.tabTitles(this.sheetId);
+    const missing = EVENT_TABS.filter((t) => !have.includes(t.name));
+    const present = EVENT_TABS.filter((t) => have.includes(t.name));
+    if (missing.length) {
+      await sheets.addTabs(this.sheetId, missing.map((t) => t.name));
+      await sheets.batchUpdateValues(this.sheetId, missing.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
+    }
+    if (present.length) {
+      const r = await sheets.batchGet(this.sheetId, present.map((t) => `${t.name}!1:1`));
+      const updates = [];
+      present.forEach((t, i) => {
+        const header = (r.valueRanges[i]?.values?.[0] || []).map(String);
+        if (header.length < t.cols.length && header.every((h, j) => h === t.cols[j])) updates.push({ range: `${t.name}!A1`, values: [t.cols] });
+      });
+      if (updates.length) await sheets.batchUpdateValues(this.sheetId, updates);
+    }
+    localStorage.setItem(key, ver);
+    return true;
+  }
+
   async ensurePhotoFolder() {
     if (!this.canEdit) return; // viewers don't add photos
     const key = `paran.photos.${this.user.email}.${this.sheetId}`;
@@ -209,7 +252,9 @@ class GoogleBackend {
     localStorage.setItem(key, this.photoFolderId);
   }
 
-  async fetchAll() {
+  async fetchAll({ events = true } = {}) {
+    // Events come in a separate request: older sheets opened by a viewer may not have those tabs yet (null = unknown, keep what's cached).
+    const ev = events ? sheets.batchGet(this.sheetId, EVENT_TABS.map((t) => `${t.name}!A1:${lastCol(t.cols)}`)).catch(() => null) : Promise.resolve(null);
     const r = await sheets.batchGet(this.sheetId, [
       `Items!A1:${BEFORE_THUMB}`, // everything except the (large) thumb column…
       `Locations!A1:${lastCol(LOC_COLS)}`,
@@ -220,7 +265,10 @@ class GoogleBackend {
     const [left, locs, members, log, right] = r.valueRanges.map((v) => v.values || []);
     const items = left.map((row, i) => [...row, ...Array(Math.max(0, ITEM_COLS.indexOf(`thumb`) - row.length)).fill(``), ``, ...(right[i] || [])]);
     if (items[0]) items[0].splice(ITEM_COLS.indexOf(`thumb`), 1, `thumb`);
+    const evr = await ev;
     return {
+      events: evr ? rowsToObjects(evr.valueRanges[0]?.values || [], EVENT_COLS) : null,
+      eventLines: evr ? rowsToObjects(evr.valueRanges[1]?.values || [], ELINE_COLS) : null,
       log: rowsToObjects(log, LOG_COLS).slice(-5000),
       items: rowsToObjects(items, ITEM_COLS.filter((c) => c !== `thumb`)),
       locations: rowsToObjects(locs, LOC_COLS),
@@ -251,8 +299,8 @@ class GoogleBackend {
     for (const op of ops) {
       if (op.kind === `log`) { await sheets.append(this.sheetId, `Log!A1`, [objectToRow(op.data, LOG_COLS)]); continue; }
       if (op.kind === `member`) { await sheets.append(this.sheetId, `Members!A1`, [objectToRow(op.data, MEMBER_COLS)]); continue; }
-      const tab = op.kind === `item` ? `Items` : `Locations`;
-      const cols = op.kind === `item` ? ITEM_COLS : LOC_COLS;
+      if ((op.kind === `event` || op.kind === `eline`) && !this.eventTabsOk) this.eventTabsOk = await this.ensureEventTabs();
+      const [tab, cols] = ROW_TAB[op.kind] || ROW_TAB.location;
       const m = await rowMap(tab);
       const row = objectToRow(op.data, cols);
       const r = m[op.data.id];
@@ -309,7 +357,7 @@ class GoogleBackend {
 /** Read another inventory's items and places (for search across inventories). Nothing is written. */
 export async function fetchInventory(sheetId) {
   const b = new GoogleBackend(); b.sheetId = sheetId;
-  const d = await b.fetchAll();
+  const d = await b.fetchAll({ events: false });
   return { items: d.items, locations: d.locations };
 }
 
@@ -323,7 +371,7 @@ function touchLru(photoId) {
 
 // ------------------------------------------------------------------ repository
 export class Repo extends EventTarget {
-  items = []; locations = []; members = []; log = []; thumbs = {};
+  items = []; locations = []; members = []; log = []; thumbs = {}; events = []; eventLines = [];
   outbox = []; syncing = false; status = `idle`; lastError = null;
 
   constructor(kind) {
@@ -358,7 +406,7 @@ export class Repo extends EventTarget {
   loadCache() {
     try {
       const c = JSON.parse(localStorage.getItem(this.key) || `null`);
-      if (c) Object.assign(this, { items: c.items || [], locations: c.locations || [], members: c.members || [], log: c.log || [], outbox: c.outbox || [] });
+      if (c) Object.assign(this, { items: c.items || [], locations: c.locations || [], members: c.members || [], log: c.log || [], outbox: c.outbox || [], events: c.events || [], eventLines: c.eventLines || [] });
     } catch { /* ignore */ }
     blobs.get(`thumbs:${this.backend.cacheKey}`).then((t) => { if (t) { this.thumbs = { ...t, ...this.thumbs }; this.emit(); } });
   }
@@ -366,7 +414,7 @@ export class Repo extends EventTarget {
   saveCache() {
     const strip = this.items.map(({ thumb, ...rest }) => rest);
     try {
-      localStorage.setItem(this.key, JSON.stringify({ items: strip, locations: this.locations, members: this.members, log: this.log.slice(-3000), outbox: this.outbox }));
+      localStorage.setItem(this.key, JSON.stringify({ items: strip, locations: this.locations, members: this.members, log: this.log.slice(-3000), outbox: this.outbox, events: this.events, eventLines: this.eventLines }));
     } catch (e) { console.warn(`cache save failed`, e); }
     blobs.put(`thumbs:${this.backend.cacheKey}`, this.thumbs).catch(() => {});
   }
@@ -389,6 +437,14 @@ export class Repo extends EventTarget {
         for (const [id, d] of pending) if (!this.locations.find((l) => l.id === id) && `kind` in d) this.locations.push(d);
         this.items.forEach((i) => this.absorbPhotoThumbs(i));
         this.members = data.members;
+        const withPending = (rows, kind) => { // rows from the sheet, with local changes still waiting to be sent on top
+          const p = new Map(this.outbox.filter((o) => o.kind === kind).map((o) => [o.data.id, o.data]));
+          const out = rows.map((x) => p.get(x.id) || x);
+          for (const [id, d] of p) if (!out.some((x) => x.id === id)) out.push(d);
+          return out;
+        };
+        if (data.events) this.events = withPending(data.events, `event`);
+        if (data.eventLines) this.eventLines = withPending(data.eventLines, `eline`);
         const pendingLog = this.outbox.filter((o) => o.kind === `log`).map((o) => o.data);
         this.log = [...(data.log || []), ...pendingLog];
         this.saveCache(); this.emit();
@@ -734,7 +790,99 @@ export class Repo extends EventTarget {
       .sort((a, b) => String(b.lentAt || b.savedAt).localeCompare(String(a.lentAt || a.savedAt)));
   }
 
+  // ---------------- events: what's needed, where it is now, who has it
+  liveEvents() { return this.events.filter((e) => e.id && !e.deleted); }
+  eventById(id) { return this.events.find((e) => e.id === id && !e.deleted); }
+  linesOf(eventId) {
+    return this.eventLines.filter((l) => l.eventId === eventId && !l.deleted)
+      .sort((a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0));
+  }
+  /** Sections in the order they first appear. Lines without a section come under `` (shown as "Other"). */
+  sectionsOf(eventId) { return [...new Set(this.linesOf(eventId).map((l) => l.section || ``))]; }
+
+  saveEvent(fields) {
+    if (this.readOnly) { this.emit(`readonly`); return null; }
+    const existing = fields.id && this.events.find((e) => e.id === fields.id);
+    const ev = existing ? { ...existing, ...fields } : {
+      id: uid(), name: ``, date: ``, notes: ``, createdBy: this.user.email, createdAt: now(), deleted: ``, ...fields,
+    };
+    ev.updatedAt = now(); ev.updatedBy = this.user.email;
+    if (existing) Object.assign(existing, ev); else this.events.push(ev);
+    this.queue({ kind: `event`, data: { ...ev } });
+    this.emit();
+    return ev;
+  }
+  deleteEvent(ev) { return this.saveEvent({ id: ev.id, deleted: now() }); }
+
+  saveLine(fields, { quiet = false } = {}) {
+    if (this.readOnly) { this.emit(`readonly`); return null; }
+    const existing = fields.id && this.eventLines.find((l) => l.id === fields.id);
+    const line = existing ? { ...existing, ...fields } : {
+      id: uid(), eventId: ``, section: ``, itemId: ``, name: ``, qty: 1, note: ``, sort: Date.now(), deleted: ``, ...fields,
+    };
+    line.updatedAt = now(); line.updatedBy = this.user.email;
+    if (existing) Object.assign(existing, line); else this.eventLines.push(line);
+    this.queue({ kind: `eline`, data: { ...line } });
+    if (!quiet) this.emit();
+    return line;
+  }
+  deleteLine(line) { return this.saveLine({ id: line.id, deleted: now() }); }
+
+  /** Add several lines to one section in one go. entries: [{ itemId?, name?, qty? }] */
+  addLines(eventId, section, entries) {
+    const base = Date.now();
+    const out = entries.map((e, i) => this.saveLine({ eventId, section, itemId: e.itemId || ``, name: e.name || ``, qty: e.qty || 1, sort: base + i }, { quiet: true }));
+    this.emit();
+    return out.filter(Boolean);
+  }
+
+  /** Rename a section: every line in it moves to the new name. */
+  renameSection(eventId, from, to) {
+    for (const l of this.linesOf(eventId)) if ((l.section || ``) === from) this.saveLine({ id: l.id, section: to }, { quiet: true });
+    this.emit();
+  }
+
+  /**
+   * Is this line ready for the event?
+   * key: ready (in its place) | short (fewer than needed) | out (lent or reserved) | missing | none (not in the inventory)
+   */
+  lineState(line) {
+    if (!line.itemId) return { key: `none`, text: `Not in inventory yet`, item: null };
+    const item = this.items.find((i) => i.id === line.itemId && !i.deleted);
+    if (!item) return { key: `none`, text: `No longer in the inventory`, item: null };
+    if (item.status === `missing`) return { key: `missing`, text: `Marked missing`, item };
+    if (item.status === `lent`) return { key: `out`, text: `With ${item.lentTo || `someone`}`, item, who: item.lentTo };
+    if (item.status === `reserved`) return { key: `out`, text: `Reserved for ${item.lentTo || `someone`}`, item, who: item.lentTo };
+    const need = Number(line.qty) || 1; const have = Number(item.qty) || 1;
+    const where = this.pathText(item.locationId);
+    if (need > have) return { key: `short`, text: `Need ${need}, have ${have}${where ? ` · ${where}` : ``}`, item, where };
+    return { key: `ready`, text: where || `Place not set`, item, where };
+  }
+
+  /** Counts for an event: { total, ready, short, out, missing, none } */
+  eventSummary(eventId) {
+    const s = { total: 0, ready: 0, short: 0, out: 0, missing: 0, none: 0 };
+    for (const l of this.linesOf(eventId)) { s.total++; s[this.lineState(l).key]++; }
+    return s;
+  }
+
+  /** Upcoming (or undated) events that need this item. */
+  eventsForItem(itemId, today = new Date().toISOString().slice(0, 10)) {
+    const ids = new Set(this.eventLines.filter((l) => l.itemId === itemId && !l.deleted).map((l) => l.eventId));
+    return this.liveEvents().filter((e) => ids.has(e.id) && (!e.date || String(e.date) >= today))
+      .sort((a, b) => String(a.date || `9999`).localeCompare(String(b.date || `9999`)));
+  }
+
   // ---------------- demo seed
+  seedDemoEvent() {
+    const find = (name) => this.items.find((i) => i.name === name)?.id || ``;
+    const d = new Date(Date.now() + 12 * 86400000);
+    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, `0`)}-${String(d.getDate()).padStart(2, `0`)}`;
+    const ev = this.saveEvent({ name: `Diwali party`, date, notes: `Backyard, about 30 people` });
+    this.addLines(ev.id, `Decor`, [{ itemId: find(`Christmas lights (warm white)`), qty: 4 }, { name: `Diyas (clay lamps)`, qty: 20 }]);
+    this.addLines(ev.id, `Setup`, [{ itemId: find(`Extension cord 25 ft`), qty: 2 }, { itemId: find(`Pressure washer`) }, { name: `Folding tables`, qty: 4 }]);
+  }
+
   seedDemo() {
     const L = (name, parentId, kind) => this.saveLocation({ name, parentId, kind });
     const home = L(`Home`, ``, `place`);
@@ -754,6 +902,7 @@ export class Repo extends EventTarget {
     S(`Christmas lights (warm white)`, `Front porch and tree`, `Holiday`, `christmas, decor, lights`, bigBox.id, { qty: 4 })
       .then((it) => this.reserveItem(it, `Kumar`, new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10)));
     S(`Pressure washer`, `Driveway and deck cleaning`, `Outdoor`, `cleaning, deck`, garage.id).then((pw) => this.lendItem(pw, `Ravi`));
+    this.seedDemoEvent();
     this.setStatus(`synced`);
   }
 }
