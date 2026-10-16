@@ -191,7 +191,7 @@ class GoogleBackend {
         this.isOwner ? `Photos` : `${CONFIG.APP_NAME} photos (shared inventory)`, this.isOwner ? this.rootFolderId : null, role);
       this.photoFolderId = f.id;
       if (!this.isOwner) {
-        // let everyone in the household open the full-size photos this member adds
+        // let everyone in this inventory open the full-size photos this member adds
         const r = await sheets.get(this.sheetId, `Members!A1:${lastCol(MEMBER_COLS)}`);
         const members = rowsToObjects(r.values, MEMBER_COLS);
         for (const m of members) {
@@ -447,7 +447,7 @@ export class Repo extends EventTarget {
     try { const a = typeof v === `string` ? JSON.parse(v || `[]`) : (v || []); return Array.isArray(a) ? a : []; } catch { return []; }
   }
   photosOf(item) { return Repo.parsePhotos(item?.photos); }
-  /** Sheet value: the list plus each photo's small preview, so every family member sees them. */
+  /** Sheet value: the list plus each photo's small preview, so everyone in the inventory sees them. */
   photosForSheet(v) {
     const list = Repo.parsePhotos(v);
     return list.length ? JSON.stringify(list.map((p) => ({ ...p, thumb: this.thumbs[`x:${p.pid}`] || `` }))) : ``;

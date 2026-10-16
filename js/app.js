@@ -184,7 +184,7 @@ function renderChoice(user) {
   app.innerHTML = `
   <main class="welcome">
     <h1>Hi ${esc((user.name || ``).split(` `)[0] || `there`)}</h1>
-    <p class="lead">Start a new inventory, or join one a family member shared with you.</p>
+    <p class="lead">Start a new inventory, or join one someone shared with you.</p>
     <div class="choice-grid">
       <button class="choice" id="create">${icon(`plus`)}<b>Start a new inventory</b><span>Creates a “${esc(CONFIG.ROOT_FOLDER_NAME)}” folder and sheet in your Drive.</span></button>
       <button class="choice" id="join" ${pickerConfigured() ? `` : `disabled`}>${icon(`users`)}<b>Join a shared inventory</b>
@@ -1737,7 +1737,7 @@ function viewPlace(view, r) {
       ${!loc ? (kids.length ? `<div class="label-sm">Your places</div>
         <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>
         <a class="link small setup-link" href="#/setup">${icon(`plus`)} Quick-add rooms and places</a>`
-        : `<div class="empty"><h3>No places yet</h3><p>Tell Paran where you keep things: your home and its rooms, a storage unit, the car…</p>
+        : `<div class="empty"><h3>No places yet</h3><p>Tell Paran where you keep things: a home or building and its rooms, a storage unit, a car…</p>
             <a class="btn primary" href="#/setup">${icon(`place`)} Set up your places</a></div>`) : ``}
       ${loc ? (() => {
         const open = openRooms(loc.id);
@@ -2095,7 +2095,7 @@ async function scanPlace(locId) {
   }
   let seen = false; try { seen = localStorage.getItem(`stash.scanNote`) === `1`; } catch { /* ignore */ }
   if (!seen) {
-    const ok = await confirmSheet(`Before you scan`, `Wide photos of a room show more of your home than a single item. They go from this phone to Google Gemini, and on the free tier Google may use them to improve its products. Keep papers, screens and people out of the shot.`, `Start scanning`);
+    const ok = await confirmSheet(`Before you scan`, `Wide photos of a room show more of your space than a single item. They go from this phone to Google Gemini, and on the free tier Google may use them to improve its products. Keep papers, screens and people out of the shot.`, `Start scanning`);
     if (!ok) return;
     try { localStorage.setItem(`stash.scanNote`, `1`); } catch { /* ignore */ }
   }
@@ -2241,11 +2241,11 @@ function viewMore(view, r) {
       <div class="stats"><div><b>${total}</b><span>items</span></div><div><b>${places}</b><span>places</span></div>
         <div><b>${repo.activeItems().filter((i) => i.status === `lent`).length}</b><span>lent out</span></div></div>
 
-      ${g ? `<div class="label-sm">Household</div>
+      ${g ? `<div class="label-sm">People</div>
       <div class="list">
-        ${repo.members.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${esc(m.role)}</small></div>`).join(``)}
+        ${repo.members.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${m.role === `owner` ? `Owner` : `Can edit`}</small></div>`).join(``)}
       </div>
-      ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Family member’s Google email" required><button class="btn primary">Invite</button></form>
+      ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Their Google email" required><button class="btn primary">Invite</button></form>
         <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, and choose “Join a shared inventory”.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
 
       <div class="label-sm" id="ai">AI suggestions</div>

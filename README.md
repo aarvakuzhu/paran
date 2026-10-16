@@ -9,7 +9,7 @@ My Drive/
     └── Photos/                ← full-size photos (≤1600px JPEG)
 ```
 
-The app only asks for the `drive.file` scope, so it can see **only the files it created** (or the one sheet a family member picks to join). It cannot read anything else in the user's Drive.
+The app only asks for the `drive.file` scope, so it can see **only the files it created** (or the one sheet someone picks to join). It cannot read anything else in the user's Drive.
 
 ## Screens
 
@@ -17,7 +17,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **Places**: your places and what's in them. Opening a place shows items kept **directly** in it, then each place inside it as a row with its item count (and how many places are inside it). Tap a row to **expand or collapse** its items in place; tap the **›** at the right to open that place. **Expand all / Collapse all** toggles every row; the open/closed state is remembered per place on the device. **Add item here** and **Scan many** are the main actions; Bring items here, Share, Move, Rename, QR label and Remove place are in the ⋯ menu (containers also show a **QR label** button).
 - **+**: add an item. Photo, name, what it's for, where; category, quantity, extra search words, dates and notes are under *More details*. The tab bar is hidden while you fill it in.
 - **Out**: everything lent or reserved, grouped by person, overdue pick-ups first. A red badge on the tab counts late pick-ups.
-- **More**: account, household sharing, AI suggestions, export.
+- **More**: account, people the inventory is shared with, AI suggestions, export.
 - **Item page**: where it is, then **Move** and **Lend or reserve** (or *Got it back* / *Picked up* / *Found it*). Edit is the pencil; *Mark as missing* and *Remove* are in ⋯. **Back** returns to wherever you came from.
 - **First run**: a new inventory opens **Where do you keep things?** Tap Home, Storage unit, Car… and rooms like Garage or Kitchen to create them in one go. It's also under Places → *Quick-add rooms and places*.
 
@@ -36,7 +36,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **More photos per item:** up to 6 (the main photo + 5), from any angle: other sides, labels, the item next to something for size. Add several at once from the camera or library. Tap any photo to swipe through them full screen; extra photos can be removed there.
 - **AI merges what it sees across all photos** (when AI is on): each time photos are added it looks at all of the item's photos together and fills in what's missing: what it's for, category, search words, **size**, and the **model/specs** read from labels (added to Notes). It never overwrites what you typed; on a saved item there's Undo.
 - **Size:** optional one-tap size on every item (Pocket, Hand-held, Shoebox, Carry-on, Large, Furniture), filled in by AI when it can tell from the photos. Shown on the item page and searchable ("hand-held", "small", "large").
-- **Photos open inside the app:** tap an item's photo for full screen. Full-size photos are cached on the phone (most recent 150), so they open instantly and offline. Photos another family member added show the preview, with a link to their Drive for the original.
+- **Photos open inside the app:** tap an item's photo for full screen. Full-size photos are cached on the phone (most recent 150), so they open instantly and offline. Photos another member added show the preview, with a link to their Drive for the original.
 - **Item history:** each item's page ends with a **History** list, newest first (last 5, then *Show all*): added, moved (from → to), edited (what changed, e.g. "Name: Stud finder → Zircon stud finder · Qty: 1 → 2"), saved for (with pick-up-by date), picked up, lent, returned, missing/found, with date, time and who did it when it wasn't you.
 - **Before / after in History, with Restore:** whenever details change, by a person or by AI from photos, the item's History shows each changed field as old (struck through) → new. **Restore** (or **Restore all**) opens Edit with the earlier text filled in and highlighted; tap **Save** to restore it, or Cancel to leave things as they are. Exact old/new values are kept in the Log's `changes` column.
 - **AI refines only its own work:** on a saved item, new photos can update fields AI filled earlier (recorded when the item was added), and fill empty ones, but never change text someone typed or restored.
@@ -44,7 +44,7 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **Duplicate check (on the phone, no AI):** saving a new item whose name matches an existing one (plurals, punctuation, small typos and word order ignored) asks first: *Open it*, *Same one, it's here now* (moves it), *I have another (+qty)*, or *Save as a new item*. Matches in the same place are flagged more readily. In the AI multi-item review, items already in the chosen place are labelled "Already here" and start unticked. Save locks after the first tap.
 - **Status:** Move, Lend (who has it), Got it back, Can't find / Found it. Every change is appended to the **Log** tab.
 - **QR labels:** print a label for any bin or shelf. Scanning it with the phone camera opens that place in the app.
-- **Family sharing:** the owner invites by email (edit access to the sheet, view access to photos). The family member signs in and picks "Join a shared inventory".
+- **Sharing with people:** the owner invites by email (edit access to the sheet, view access to photos). They sign in and picks "Join a shared inventory".
 - **Offline:** the app shell is cached and data is cached on the device. Changes made offline queue up and sync when the connection returns.
 - **Export:** CSV (opens in Excel), or just open the Google Sheet.
 - **Scan a QR label in the app:** the QR button in the Find search bar (and **Scan label** on Places) opens the camera inside Paran, so iPhone doesn't hand the link to Safari. Scanning a box or shelf label offers **See what's inside**, **Put items away here** (pick existing items to move in), **Add a new item here** and **Scan many into it**. Any place picker (Move, bulk Move, Add form) also has a QR button: scan the label on the box and the item goes there. Labels from another inventory or non-Paran codes are rejected with a message. Decoding uses the browser's BarcodeDetector where available (Android Chrome), otherwise the bundled jsQR (Apache-2.0, `js/vendor`).
@@ -74,7 +74,7 @@ It has to be served over http(s), not opened as a file, because it uses ES modul
 3. **APIs & Services → OAuth consent screen** (Google Auth Platform → Branding / Audience / Data access):
    - User type **External**, app name "Stash", your email as support contact.
    - Data access → add scope `.../auth/drive.file` (plus `openid`, `email`, `profile`).
-   - Audience → while in **Testing**, add each family member's Gmail under **Test users** (up to 100). Users not on the list can't sign in until you publish the app.
+   - Audience → while in **Testing**, add each person's Gmail under **Test users** (up to 100). Users not on the list can't sign in until you publish the app.
 4. **Credentials → Create credentials → OAuth client ID** → type **Web application**.
    - Authorized JavaScript origins: `http://localhost:8080` and your hosting origin, e.g. `https://aarvakuzhu.github.io`. Origins only, with no path and no trailing slash.
    - No redirect URIs are needed (the app uses the popup token flow).
@@ -96,9 +96,9 @@ After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on th
 ## How sharing works (and its limits)
 
 - The owner taps **More → Invite**. That shares the sheet (edit) and the root folder (view) with the email and adds a row to **Members**.
-- The family member opens Stash, signs in, and chooses **Join a shared inventory**. The Google Picker grants the app access to that one sheet.
+- The invited person opens Paran, signs in, and chooses **Join a shared inventory**. The Google Picker grants the app access to that one sheet.
 - Each item stores a small thumbnail (≈20 KB) inside the sheet, so **everyone always sees every photo thumbnail**. The full-size photo opens in Drive.
-- Photos a family member adds go to a "Stash photos (shared inventory)" folder in *their* Drive. It is shared with everyone on the Members list at the time they join; people invited later see the thumbnail, and need the photo shared to open the full size.
+- Photos a member adds go to a "Stash photos (shared inventory)" folder in *their* Drive. It is shared with everyone on the Members list at the time they join; people invited later see the thumbnail, and need the photo shared to open the full size.
 
 ## Data model (Google Sheet)
 
