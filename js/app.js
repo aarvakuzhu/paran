@@ -1,6 +1,6 @@
 import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSheets, AuthError } from './google.js';
-import { loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory } from './inventories.js';
+import { loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory, groupAccess } from './inventories.js';
 import { Repo, fetchInventory } from './store.js';
 import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
@@ -141,7 +141,7 @@ function onReadOnly() {
   renderStatus(); document.body.classList.add(`readonly`);
   if (Date.now() - roToastAt > 4000) { roToastAt = Date.now(); toast(`You can view ${invName()}, but not change it. Ask its owner for edit access.`, { ms: 5000 }); }
 }
-const roleLabel = (role) => (role === `owner` ? `Owner` : role === `viewer` ? `Can view` : `Can edit`);
+const roleLabel = (role) => (role === `owner` ? `Owner` : role === `viewer` ? `Can view` : role === `pending-owner` ? `Owner (waiting to accept)` : `Can edit`);
 const roleSelect = () => `<select name="role" aria-label="Access"><option value="writer">Can edit</option><option value="reader">Can view</option></select>`;
 
 function onRepoChange() {
@@ -2567,7 +2567,8 @@ function viewGroup(view, r) {
         ${g.owner && canAddCurrent ? `<button type="button" class="list-row link-row add-row" data-a="addcur">${icon(`move`)}<span>Add “${esc(invName())}” to this group</span></button>` : ``}
       </div>
       <div class="label-sm">People · ${people.length}</div>
-      <div class="list">${people.map((p) => `<div class="list-row">${icon(`users`)}<span>${esc(p.email)}</span><small>${roleLabel(p.role)}</small></div>`).join(``)}</div>
+      <div class="list">${people.filter((p) => p.role !== `removed`).map((p) => { const tap = g.owner && p.email !== user.email && p.role !== `owner`;
+        return `<${tap ? `button type="button" data-gaccess="${esc(p.email)}"` : `div`} class="list-row${tap ? ` tap` : ``}">${icon(`users`)}<span>${esc(p.email)}</span><small>${roleLabel(p.role)}</small>${tap ? icon(`chevron`) : ``}</${tap ? `button` : `div`}>`; }).join(``)}</div>
       ${g.owner ? `<form class="inline-new invite-form" id="ginvite"><input type="email" placeholder="Their Google email" required>${roleSelect()}<button class="btn primary">Invite</button></form>
         <p class="fine">They can open every inventory in ${esc(g.name)}, including ones added later: <b>Can edit</b> to change things, <b>Can view</b> to search and browse only. They sign in to ${esc(CONFIG.APP_NAME)}, choose “Open one shared with you” and pick “${esc(g.name)} – directory”.</p>`
         : `<p class="fine">The group’s owner can invite people.</p>`}
@@ -2585,6 +2586,8 @@ function viewGroup(view, r) {
       .forEach(([id]) => remoteCount(id).then((n) => { counts[id] = n; if (route().name === `group`) draw(); }).catch(() => {}));
   }).catch(() => {});
   view.onclick = async (e) => {
+    const ga = e.target.closest(`[data-gaccess]`);
+    if (ga) { accessSheet({ email: ga.dataset.gaccess, role: (k.groups[gid]?.people || []).find((p) => p.email === ga.dataset.gaccess)?.role, scope: `group`, groupId: gid }); return; }
     const row = e.target.closest(`[data-inv]`);
     if (row) {
       const id = row.dataset.inv; const inv = k.inv[id] || {};
@@ -2613,36 +2616,44 @@ function viewGroup(view, r) {
 }
 
 // ============================================================ More
+// ============================================================ More: a short menu, each topic on its own page
 function viewMore(view, r) {
   const g = repo.backend.kind === `google`;
-  const total = repo.activeItems().length;
-  const places = repo.locations.filter((l) => !l.deleted).length;
-  view.innerHTML = `
-    <div class="more">
-      <h1>More</h1>
-      <div class="account">
-        ${repo.user.picture ? `<img src="${esc(repo.user.picture)}" alt="" referrerpolicy="no-referrer">` : `<div class="avatar">${esc((repo.user.name || `?`)[0])}</div>`}
-        <div><b>${esc(repo.user.name)}</b><small>${esc(repo.user.email)}</small><small class="where-data">${icon(g ? `cloud` : `alert`)} ${esc(repo.label)}</small></div>
-      </div>
-      <div class="stats"><div><b>${total}</b><span>items</span></div><div><b>${places}</b><span>places</span></div>
-        <div><b>${repo.activeItems().filter((i) => i.status === `lent`).length}</b><span>lent out</span></div></div>
+  const page = r?.id || ``;
+  const head = (title) => `<div class="more-head"><a class="back" href="#/more">${icon(`back`)} More</a></div><h1>${esc(title)}</h1>`;
+  const members = repo.members.filter((m) => m.role !== `removed`);
+  const myRole = repo.backend.isOwner ? `Owner` : repo.readOnly ? `Can view` : `Can edit`;
+  const gid = g ? currentGroupId() : ``; const grp = gid && loadKnown(repo.user.email).groups[gid];
 
-      ${g ? (() => { const gid = currentGroupId(); const grp = gid && loadKnown(repo.user.email).groups[gid]; return `<div class="label-sm">Inventory</div>
+  if (page === `inventory` && g) {
+    view.innerHTML = `<div class="more">${head(`Inventory`)}
       <div class="menu">
-        <button data-m="switch">${icon(`box`)} ${esc(invName())}<small>Switch or add</small></button>
-        ${grp ? `<a href="#/group/${esc(gid)}">${icon(`users`)} In group: ${esc(grp.name)}</a>` : ``}
+        <div class="menu-info">${icon(`box`)}<div><b>${esc(invName())}</b><small>${esc(myRole)}${grp ? ` · in ${esc(grp.name)}` : ``}</small></div></div>
+        <button data-m="switch">${icon(`ret`)} Switch inventory</button>
         ${repo.backend.isOwner ? `<button data-m="rename">${icon(`edit`)} Rename this inventory</button>` : ``}
-      </div>`; })() : ``}
-
-      ${g ? `<div class="label-sm">People</div>
-      <div class="list">
-        ${repo.members.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${roleLabel(m.role)}</small></div>`).join(``)}
+        ${grp ? `<a href="#/group/${esc(gid)}">${icon(`users`)} Group: ${esc(grp.name)}</a>` : ``}
       </div>
-      ${repo.backend.canShare ? `<form class="inline-new invite-form" id="invite"><input type="email" placeholder="Their Google email" required>${roleSelect()}<button class="btn primary">Invite</button></form>
-        <p class="fine"><b>Can edit</b>: add, move, lend and change things. <b>Can view</b>: search and browse only; Google won’t let them change anything. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick “${esc(invName())}”.</p>
-        ${currentGroupId() ? `<p class="fine">Everyone in the group <a href="#/group/${esc(currentGroupId())}">${esc(loadKnown(repo.user.email).groups[currentGroupId()]?.name || ``)}</a> can open it too.</p>` : ``}` : repo.readOnly ? `<p class="fine">You can view this inventory. Ask its owner if you need to change things.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
-
-      <div class="label-sm" id="ai">AI suggestions</div>
+      <div class="label-sm">Add</div>
+      <div class="menu">
+        <button data-m="newinv">${icon(`plus`)} New inventory</button>
+        <button data-m="newgroup">${icon(`users`)} New group <small>an organization, or your homes</small></button>
+        <button data-m="join">${icon(`download`)} Open one shared with you</button>
+      </div></div>`;
+  } else if (page === `people` && g) {
+    const owner = repo.backend.canShare;
+    view.innerHTML = `<div class="more">${head(`People & access`)}
+      <p class="muted small">Who can open ${esc(invName())}. ${owner ? `Tap someone to change what they can do.` : ``}</p>
+      <div class="list">${members.map((m) => {
+        const tappable = owner && m.email !== repo.user.email && m.role !== `owner`;
+        return `<${tappable ? `button type="button" data-access="${esc(m.email)}"` : `div`} class="list-row${tappable ? ` tap` : ``}">${icon(`users`)}<span>${esc(m.email)}${m.email === repo.user.email ? ` <small>(you)</small>` : ``}</span><small>${roleLabel(m.role)}</small>${tappable ? icon(`chevron`) : ``}</${tappable ? `button` : `div`}>`;
+      }).join(``)}</div>
+      ${owner ? `<form class="inline-new invite-form" id="invite"><input type="email" placeholder="Their Google email" required>${roleSelect()}<button class="btn primary">Invite</button></form>
+        <p class="fine"><b>Can edit</b>: add, move, lend and change things. <b>Can view</b>: search and browse only; Google won’t let them change anything. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick “${esc(invName())}”. Only you can share it onward.</p>`
+        : repo.readOnly ? `<p class="fine">You can view this inventory. Ask its owner if you need to change things.</p>` : `<p class="fine">This inventory is shared with you. Its owner can invite others.</p>`}
+      ${grp ? `<p class="fine">Everyone in the group <a href="#/group/${esc(gid)}">${esc(grp.name)}</a> can open it too.</p>` : ``}
+    </div>`;
+  } else if (page === `ai`) {
+    view.innerHTML = `<div class="more">${head(`AI suggestions`)}
       ${aiReady() ? `<div class="menu">
           <div class="menu-info">${icon(`spark`)}<div><b>On</b><small>Model: ${esc(aiSettings().model)}</small><small>${aiUsageToday()} photo${aiUsageToday() === 1 ? `` : `s`} analyzed today on this device · resets 3 AM ET</small></div></div>
           <label class="menu-switch"><span>Suggest details from photos</span><span class="switch"><input type="checkbox" data-aiauto ${aiSettings().auto ? `checked` : ``}><i></i></span></label>
@@ -2651,40 +2662,61 @@ function viewMore(view, r) {
         </div>`
         : `<div class="ai-card">${icon(`spark`)}<div><b>AI suggestions</b><p>Gemini can name what’s in a photo, say what it’s for, and list several items from one shot of a bin or shelf. Off until you turn it on.</p>
           <button class="btn primary" data-m="aion">Set up AI suggestions</button></div></div>`}
-
-      <div class="label-sm">Your data</div>
+    </div>`;
+  } else if (page === `data`) {
+    view.innerHTML = `<div class="more">${head(`Your data`)}
       <div class="menu">
         ${g ? `<a href="${esc(repo.backend.sheetUrl)}" target="_blank" rel="noopener">${icon(`sheet`)} Open the Google Sheet</a>` : ``}
         <button data-m="csv">${icon(`download`)} Download spreadsheet (CSV)</button>
         <button data-m="sync">${icon(`cloud`)} Refresh now</button>
       </div>
-
-      <div class="label-sm">Account</div>
+      <p class="fine">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? driveWhere(repo.backend) : `In demo mode, everything stays in this browser.`}</p>
+    </div>`;
+  } else {
+    const total = repo.activeItems().length;
+    const places = repo.locations.filter((l) => !l.deleted).length;
+    const row = (href, ic, title, sub) => `<a href="${href}" class="more-row">${icon(ic)}<span><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ``}</span>${icon(`chevron`)}</a>`;
+    view.innerHTML = `
+    <div class="more">
+      <h1>More</h1>
+      <div class="account">
+        ${repo.user.picture ? `<img src="${esc(repo.user.picture)}" alt="" referrerpolicy="no-referrer">` : `<div class="avatar">${esc((repo.user.name || `?`)[0])}</div>`}
+        <div><b>${esc(repo.user.name)}</b><small>${esc(repo.user.email)}</small><small class="where-data">${icon(g ? `cloud` : `alert`)} ${esc(repo.label)}</small></div>
+      </div>
+      <div class="stats"><div><b>${total}</b><span>items</span></div><div><b>${places}</b><span>places</span></div>
+        <div><b>${repo.activeItems().filter((i) => i.status === `lent`).length}</b><span>lent out</span></div></div>
+      <div class="menu more-menu">
+        ${g ? row(`#/more/inventory`, `box`, invName(), `Switch, rename, add${grp ? ` · ${grp.name}` : ``}`) : ``}
+        ${g ? row(`#/more/people`, `users`, `People & access`, `${members.length} ${members.length === 1 ? `person` : `people`} · you: ${myRole.toLowerCase()}`) : ``}
+        ${row(`#/more/ai`, `spark`, `AI suggestions`, aiReady() ? `On` : `Off`)}
+        ${row(`#/more/data`, `sheet`, `Your data`, g ? `Google Sheet, download, refresh` : `Download`)}
+        <button data-m="about" class="more-row">${icon(`info`)}<span><b>About ${esc(CONFIG.APP_NAME)}</b></span>${icon(`chevron`)}</button>
+      </div>
       <div class="menu">
         ${g ? `<button data-m="signout">${icon(`out`)} Sign out</button>`
           : `${googleConfigured() ? `<button data-m="google">${googleG()} Sign in with Google</button>` : ``}
              <button data-m="reset" class="danger">${icon(`trash`)} Clear demo data</button>`}
       </div>
-      <div class="label-sm">About</div>
-      <div class="menu"><button data-m="about">${icon(`info`)} About ${esc(CONFIG.APP_NAME)}</button></div>
-
-      <p class="fine center">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? driveWhere(repo.backend) : ``}</p>
     </div>`;
+  }
 
-  $(`#invite`)?.addEventListener(`submit`, async (e) => {
+  view.onsubmit = async (e) => {
+    if (e.target.id !== `invite`) return;
     e.preventDefault();
     const input = e.target.querySelector(`input`); const role = e.target.querySelector(`select`)?.value || `writer`;
     const btn = e.target.querySelector(`button`); btn.disabled = true;
     try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} (${role === `reader` ? `can view` : `can edit`})`); input.value = ``; render(); }
     catch (err) { toast(`Couldn’t invite: ${err.message}`); }
     finally { btn.disabled = false; }
-  });
+  };
   $(`[data-aiauto]`, view)?.addEventListener(`change`, (e) => saveAiSettings({ auto: e.target.checked }));
   if (r?.params?.get(`ai`) === `1` && !aiReady()) setTimeout(() => aiConsent().then((ok) => ok && render()), 50);
 
   view.onclick = async (e) => {
     const who = e.target.closest(`[data-person]`);
     if (who) { personSheet(who.dataset.person); return; }
+    const acc = e.target.closest(`[data-access]`);
+    if (acc) { accessSheet({ email: acc.dataset.access, role: members.find((m) => m.email === acc.dataset.access)?.role, scope: `inventory` }); return; }
     const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
     if (m === `aion` || m === `aikey`) { if (await aiConsent(m === `aikey`)) render(); return; }
     if (m === `aioff`) {
@@ -2693,6 +2725,9 @@ function viewMore(view, r) {
     }
     if (m === `about`) { aboutSheet(); return; }
     if (m === `switch`) { inventoriesSheet(); return; }
+    if (m === `newinv`) { newInventoryFlow(); return; }
+    if (m === `newgroup`) { newGroupFlow(); return; }
+    if (m === `join`) { const first = await joinFlow(repo.user).catch((err) => { toast(err.message); return null; }); if (first) inventoriesSheet(); return; }
     if (m === `rename`) {
       const name = await promptSheet(`Rename inventory`, { label: `Name`, value: invName(), okLabel: `Rename` });
       if (!name || name === invName()) return;
@@ -2717,6 +2752,40 @@ function viewMore(view, r) {
       localStorage.removeItem(`paran.cache.demo`); localStorage.removeItem(MODE_KEY); location.hash = ``; location.reload();
     }
   };
+}
+
+/** Change what one person can do: in this inventory, or in a whole group. Owner only. */
+function accessSheet({ email, role, scope, groupId = `` }) {
+  const k = loadKnown(repo.user.email);
+  const where = scope === `group` ? k.groups[groupId]?.name || `the group` : invName();
+  sheet(email, (el, close) => {
+    const opt = (v, label, sub, on) => `<button data-set="${v}" class="${on ? `on` : ``}">${icon(on ? `check` : `users`)}<span><b>${esc(label)}</b><small>${esc(sub)}</small></span></button>`;
+    el.innerHTML = `<p class="muted small">Access to <b>${esc(where)}</b>${scope === `group` ? ` and every inventory in it` : ``}.</p>
+      <div class="menu access-menu">
+        ${opt(`writer`, `Can edit`, `Add, move, lend and change things`, role === `member` || role === `editor`)}
+        ${opt(`reader`, `Can view`, `Search and browse only`, role === `viewer`)}
+      </div>
+      <div class="menu">
+        ${scope === `inventory` && role !== `pending-owner` ? `<button data-set="owner">${icon(`out`)} Make them the owner…</button>` : ``}
+        <button data-set="remove" class="danger">${icon(`x`)} Remove from ${esc(where)}</button>
+      </div>`;
+    el.onclick = async (e) => {
+      const b = e.target.closest(`[data-set]`); if (!b) return;
+      const action = b.dataset.set;
+      if ((action === `writer` && (role === `member` || role === `editor`)) || (action === `reader` && role === `viewer`)) { close(); return; }
+      if (action === `remove` && !(await confirmSheet(`Remove ${email}?`, `They can’t open ${where} any more. What’s already on their phone isn’t erased, but they won’t get anything new.`, `Remove`, true))) return;
+      if (action === `owner` && !(await confirmSheet(`Make ${email} the owner?`,
+        `Google will email them to accept ownership of “${where}”. Until they accept, you stay the owner. After that, they manage people and you can still edit. Photos you added stay in your Google Drive.`, `Send request`))) return;
+      b.disabled = true;
+      try {
+        if (scope === `group`) await groupAccess(repo.user, groupId, email, action);
+        else await repo.setAccess(email, action);
+        close();
+        toast(action === `remove` ? `${email} removed` : action === `owner` ? `Ownership offered to ${email}. They accept it in Google Drive.` : `${email} can ${action === `reader` ? `view` : `edit`} now`, { ms: 5000 });
+        render();
+      } catch (err) { toast(`Couldn’t change access: ${err.message}`, { ms: 5000 }); b.disabled = false; }
+    };
+  });
 }
 
 function aboutSheet() {

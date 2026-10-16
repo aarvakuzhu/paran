@@ -132,6 +132,7 @@ export async function addToGroup(user, inv, groupId) {
 export async function inviteToGroup(user, groupId, email, role = `writer`) {
   const k = loadKnown(user.email); const group = k.groups[groupId];
   await drive.share(groupId, email, role === `reader` ? `reader` : `writer`, true);
+  drive.ownerOnlySharing(groupId).catch(() => {});
   const person = { email, role: role === `reader` ? `viewer` : `member`, invitedBy: user.email, joinedAt: now() };
   if (group?.dirId) await sheets.append(group.dirId, `People!A1`, [objectToRow(person, DIR_PEOPLE_COLS)]);
   if (group) { group.people = [...(group.people || []), person]; saveKnown(user.email, k); }
@@ -155,4 +156,46 @@ export async function identify(fileId) {
   const m = await drive.meta(fileId);
   const role = m.appProperties?.stash;
   return { id: fileId, name: m.name, role: role === `sheet` || role === `directory` ? role : ``, parents: m.parents || [], owner: m.owners?.[0]?.emailAddress };
+}
+
+// ---------------------------------------------------------------- changing someone's access
+/**
+ * action: `writer` (Can edit), `reader` (Can view), `remove`, or `owner` (offer ownership).
+ * files: [{ id, kind }] where kind is `sheet` (role follows the action) or `folder` (stays view-only
+ * for people, unless removed or offered ownership).
+ * Ownership on personal Google accounts is a two-step handover: the person gets an email and accepts it in Drive.
+ */
+export async function changeAccess(files, email, action) {
+  const lower = email.toLowerCase();
+  for (const f of files) {
+    if (!f.id) continue;
+    const perms = await drive.permissions(f.id).catch(() => []);
+    const p = perms.find((x) => (x.emailAddress || ``).toLowerCase() === lower && x.type === `user`);
+    if (action === `remove`) { if (p && p.role !== `owner`) await drive.removePermission(f.id, p.id); continue; }
+    if (action === `owner`) {
+      if (!p) { await drive.share(f.id, email, `writer`, false); const again = (await drive.permissions(f.id)).find((x) => (x.emailAddress || ``).toLowerCase() === lower); if (again) await drive.updatePermission(f.id, again.id, { role: `writer`, pendingOwner: true }); }
+      else await drive.updatePermission(f.id, p.id, { role: `writer`, pendingOwner: true });
+      continue;
+    }
+    if (f.kind !== `sheet`) continue; // folders: people keep view access to photos
+    if (p) { if (p.role !== action && p.role !== `owner`) await drive.updatePermission(f.id, p.id, { role: action }); }
+    else await drive.share(f.id, email, action, false);
+  }
+}
+
+/** Update a person's row (Members of an inventory, People of a group). role `removed` hides them. */
+export async function setRoleRow(sheetId, tab, email, role) {
+  const r = await sheets.get(sheetId, `${tab}!A:B`);
+  const rows = r.values || [];
+  const i = rows.findIndex((v, n) => n > 0 && String(v[0] || ``).toLowerCase() === email.toLowerCase());
+  if (i > 0) await sheets.update(sheetId, `${tab}!B${i + 1}`, [[role]]);
+  else if (role !== `removed`) await sheets.append(sheetId, `${tab}!A1`, [[email, role]]);
+}
+
+export async function groupAccess(user, groupId, email, action) {
+  const k = loadKnown(user.email); const g = k.groups[groupId];
+  await changeAccess([{ id: groupId, kind: `sheet` }], email, action === `owner` ? `owner` : action); // the folder carries the access
+  const role = action === `remove` ? `removed` : action === `reader` ? `viewer` : action === `owner` ? `pending-owner` : `member`;
+  if (g?.dirId) await setRoleRow(g.dirId, `People`, email, role);
+  if (g) { g.people = (g.people || []).map((p) => (p.email === email ? { ...p, role } : p)).filter((p) => p.role !== `removed`); saveKnown(user.email, k); }
 }

@@ -4,7 +4,7 @@
 import { CONFIG } from './config.js';
 import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
-import { createInventory as createInventoryFiles, readDirectory, rememberInventory } from './inventories.js';
+import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow } from './inventories.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
@@ -298,6 +298,8 @@ class GoogleBackend {
   async invite(email, role = `writer`) {
     await drive.share(this.sheetId, email, role === `reader` ? `reader` : `writer`, true);
     if (this.rootFolderId) await drive.share(this.rootFolderId, email, `reader`, false);
+    drive.ownerOnlySharing(this.sheetId).catch(() => {});
+    if (this.rootFolderId) drive.ownerOnlySharing(this.rootFolderId).catch(() => {});
     return { email, role: role === `reader` ? `viewer` : `member`, photoFolderId: ``, invitedBy: this.user.email, joinedAt: now() };
   }
 
@@ -633,6 +635,18 @@ export class Repo extends EventTarget {
     return loc;
   }
   deleteLocation(loc) { return this.saveLocation({ id: loc.id, deleted: now() }); }
+
+  /** Owner only. action: `writer` | `reader` | `remove` | `owner` (offer ownership; they accept in Google Drive). */
+  async setAccess(email, action) {
+    const b = this.backend;
+    const files = [{ id: b.sheetId, kind: `sheet` }, { id: b.rootFolderId, kind: `folder` }];
+    if (action === `owner`) files.push({ id: b.photoFolderId, kind: `folder` });
+    await changeAccess(files, email, action);
+    const role = action === `remove` ? `removed` : action === `reader` ? `viewer` : action === `owner` ? `pending-owner` : `member`;
+    await setRoleRow(b.sheetId, `Members`, email, role);
+    this.members = this.members.map((m) => (m.email === email ? { ...m, role } : m));
+    this.saveCache(); this.emit();
+  }
 
   async invite(email, role = `writer`) {
     const member = await this.backend.invite(email, role);

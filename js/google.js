@@ -138,6 +138,19 @@ export const drive = {
       method: `POST`, ...jsonBody({ type: `user`, role, emailAddress: email }),
     });
   },
+  permissions(fileId) {
+    return api(`${DRIVE}/files/${fileId}/permissions?fields=permissions(id,type,emailAddress,role,pendingOwner)`).then((r) => r.permissions || []);
+  },
+  updatePermission(fileId, permId, body) {
+    return api(`${DRIVE}/files/${fileId}/permissions/${permId}?fields=id,role,pendingOwner`, { method: `PATCH`, ...jsonBody(body) });
+  },
+  removePermission(fileId, permId) {
+    return api(`${DRIVE}/files/${fileId}/permissions/${permId}`, { method: `DELETE` });
+  },
+  /** Only the owner can share this file onward (editors can't add people behind the owner's back). */
+  ownerOnlySharing(fileId) {
+    return api(`${DRIVE}/files/${fileId}?fields=id`, { method: `PATCH`, ...jsonBody({ writersCanShare: false }) });
+  },
   rename(fileId, name) {
     return api(`${DRIVE}/files/${fileId}?fields=id,name`, { method: `PATCH`, ...jsonBody({ name }) });
   },
