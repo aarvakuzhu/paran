@@ -378,50 +378,58 @@ function searchPool(entries, q) {
   return out;
 }
 
+/**
+ * Add things to an event. Every tap adds straight away (tap again to take it back), so nothing is lost by closing the
+ * sheet; the button at the bottom is just Done. Typing something nobody has logged and tapping "Add" (or Enter) adds it too.
+ */
 function addItemsSheet(ev, startSection) {
   const repo = R();
   freshen(ev._g ? groupInventories().map((i) => i.id) : []);
   const sections = repo.sectionsOf(ev.id).filter(Boolean);
   let section = startSection || sections[sections.length - 1] || ``;
   const extra = new Set(section && !sections.includes(section) ? [section] : []); // sections typed in this sheet
-  const chosen = new Map(); const named = []; // key -> entry; free-text things not in any inventory yet
-  const already = new Set(repo.linesOf(ev.id).flatMap((l) => repo.sourcesOf(l).map(srcKey)));
+  const mine = new Map(); // key (inventory|item) -> line id, for lines added in this sheet (tap again to undo)
+  const named = []; // [{ name, lineId }] things not in any inventory, added in this sheet
+  const onList = () => new Set(repo.linesOf(ev.id).flatMap((l) => repo.sourcesOf(l).map(srcKey)));
+  let count = 0;
   sheet(`Add to ${ev.name}`, (el, close) => {
     el.innerHTML = `<div class="label-sm first">Section</div><div class="chips sec-chips"></div>
-      <label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search ${ev._g ? `the group’s items` : `your items`}, or type something new" autocomplete="off" enterkeyhint="search"></label>
+      <label class="search sm add-q">${icon(`search`)}<input data-q type="search" placeholder="Search ${ev._g ? `the group’s items` : `your items`}, or type something new" autocomplete="off" enterkeyhint="done"></label>
       <div class="named"></div>
       <div class="bring-list"></div>
       <div class="pool-note"></div>
-      <div class="row-actions sticky-actions"><button type="button" class="btn primary full" data-go disabled>Pick items</button></div>`;
-    const qEl = $(`[data-q]`, el); const listEl = $(`.bring-list`, el); const go = $(`[data-go]`, el);
+      <div class="row-actions sticky-actions"><button type="button" class="btn primary full" data-done>Done</button></div>`;
+    const qEl = $(`[data-q]`, el); const listEl = $(`.bring-list`, el); const done = $(`[data-done]`, el);
     const secEl = $(`.sec-chips`, el); const namedEl = $(`.named`, el); const noteEl = $(`.pool-note`, el);
     const drawSections = () => {
       const all = [...new Set([...sections, ...extra])];
       const sugg = all.length ? [] : SUGGESTED_SECTIONS;
-      secEl.innerHTML = [...all, ...sugg].map((s) => `<button type="button" class="chip${s === section ? ` on` : ``}" data-sec="${esc(s)}">${esc(s)}</button>`).join(``)
+      secEl.innerHTML = [...all, ...sugg].map((x) => `<button type="button" class="chip${x === section ? ` on` : ``}" data-sec="${esc(x)}">${esc(x)}</button>`).join(``)
         + `<button type="button" class="chip${section ? `` : ` on`}" data-sec="">No section</button>`
         + `<button type="button" class="chip add" data-newsec>${icon(`plus`)} New</button>`;
     };
     const upd = () => {
-      const n = chosen.size + named.length;
-      go.disabled = !n; go.textContent = n ? `Add ${n}${section ? ` to ${section}` : ``}` : `Pick items`;
-      namedEl.innerHTML = named.length ? `<div class="chips">${named.map((t, i) => `<button type="button" class="chip on" data-unname="${i}">${esc(t)} ${icon(`x`)}</button>`).join(``)}</div>` : ``;
+      done.textContent = count ? `Done · ${count} added${section ? ` to ${section}` : ``}` : `Done`;
+      namedEl.innerHTML = named.length ? `<div class="chips">${named.map((t, i) => `<button type="button" class="chip on added" data-unname="${i}">${icon(`check`)} ${esc(t.name)} <span class="un">${icon(`x`)}</span></button>`).join(``)}</div>` : ``;
     };
     const draw = () => {
       const { entries, missing } = pool(ev);
       const q = qEl.value.trim();
       const list = searchPool(entries, q);
-      const newRow = q && !named.some((t) => t.toLowerCase() === q.toLowerCase())
-        ? `<button type="button" class="bring-row new-need" data-name="${esc(q)}">${icon(`plus`)}<div><b>Add “${esc(q)}”</b><small>Not in ${ev._g ? `any inventory` : `the inventory`} yet, but needed</small></div></button>` : ``;
-      listEl.innerHTML = newRow + (list.slice(0, 100).map((e) => {
-        const k = keyOf(e.invId, e.item.id); const on = already.has(k);
+      const listed = onList();
+      const newRow = q && !named.some((t) => t.name.toLowerCase() === q.toLowerCase())
+        ? `<button type="button" class="bring-row new-need${list.length ? `` : ` only`}" data-name="${esc(q)}">${icon(`plus`)}<div><b>Add “${esc(q)}”</b><small>${list.length ? `Something else, not in ${ev._g ? `any inventory` : `the inventory`} yet` : `Not in ${ev._g ? `any inventory` : `the inventory`} yet. Tap to put it on the list`}</small></div></button>` : ``;
+      listEl.innerHTML = (list.slice(0, 100).map((e) => {
+        const k = keyOf(e.invId, e.item.id); const mineNow = mine.has(k); const other = !mineNow && listed.has(k);
         const where = withInv(e.invName, e.pathText(e.item.locationId)) || `No location`;
-        return `<label class="bring-row${on ? ` done` : ``}">
-          <input type="checkbox" data-k="${esc(k)}" ${chosen.has(k) ? `checked` : ``} ${on ? `disabled` : ``}>
+        return `<label class="bring-row${mineNow ? ` added` : ``}${other ? ` done` : ``}">
+          <input type="checkbox" data-k="${esc(k)}" ${mineNow ? `checked` : ``} ${other ? `disabled` : ``}>
           ${picOf(e.item, e.thumbs)}
-          <div><b>${esc(e.item.name)}${Number(e.item.qty) > 1 ? ` <span class="qty">×${esc(e.item.qty)}</span>` : ``}</b><small>${on ? `Already on the list` : esc(where)}${!on && e.item.status === `lent` ? ` · with ${esc(e.item.lentTo)}` : ``}</small></div>
+          <div><b>${esc(e.item.name)}${Number(e.item.qty) > 1 ? ` <span class="qty">×${esc(e.item.qty)}</span>` : ``}</b><small>${mineNow ? `Added` : other ? `Already on the list` : esc(where)}${!mineNow && !other && e.item.status === `lent` ? ` · with ${esc(e.item.lentTo)}` : ``}</small></div>
         </label>`;
-      }).join(``) || (q ? `` : `<p class="muted pad">Nothing logged yet. Type what’s needed above.</p>`));
+      }).join(``) || (q ? `` : `<p class="muted pad">Nothing logged yet. Type what’s needed above.</p>`)) + newRow;
+      // the "not logged" option goes first when nothing matches, last when there are matches
+      if (newRow && !list.length) listEl.prepend(listEl.lastElementChild);
       const unreachable = missing.filter((i) => !i.reachable); const loading = missing.filter((i) => i.reachable);
       noteEl.innerHTML = [
         loading.length ? `<p class="fine">${navigator.onLine ? `Getting` : `Offline: can’t show`} items from ${esc(loading.map((i) => i.name).join(`, `))}${navigator.onLine ? `…` : `.`}</p>` : ``,
@@ -429,6 +437,36 @@ function addItemsSheet(ev, startSection) {
       ].join(``);
       upd();
       el._entries = new Map(entries.map((e) => [keyOf(e.invId, e.item.id), e]));
+    };
+    const addNamed = (name) => {
+      const [line] = repo.addLines(ev.id, section, [{ name }]);
+      if (!line) return;
+      named.push({ name, lineId: line.id }); count++;
+      qEl.value = ``; draw(); qEl.focus(); // keep the keyboard up for the next one
+      toast(`Added ${name}`, { ms: 1800 });
+    };
+    /** One pick = one line, with same-named items elsewhere counted toward it (tablecloths in two places). */
+    const addItem = (k) => {
+      const e = el._entries.get(k); if (!e) return;
+      const used = onList(); used.add(k);
+      const more = matchesFor(ev, e.item.name, used);
+      const all = [e, ...more];
+      const total = all.reduce((n, m) => n + (Number(m.item.qty) || 1), 0);
+      const [line] = repo.addLines(ev.id, section, [{ name: e.item.name, sources: all.map((m) => srcOf(ev, m)), qty: all.length > 1 ? total : 1 }]);
+      if (!line) return;
+      for (const m of all) mine.set(keyOf(m.invId, m.item.id), line.id);
+      count++;
+      toast(more.length ? `Added ${e.item.name} · found ${more.length} more in other places` : `Added ${e.item.name}`, { ms: 2500 });
+      draw();
+    };
+    const undoItem = (k) => {
+      const lineId = mine.get(k); if (!lineId) return;
+      const line = repo.eventLines.find((l) => l.id === lineId);
+      if (line) repo.deleteLine(line);
+      for (const [key, id] of [...mine]) if (id === lineId) mine.delete(key);
+      count = Math.max(0, count - 1);
+      toast(`Removed ${line?.name || `it`}`, { ms: 1800 });
+      draw();
     };
     secEl.addEventListener(`click`, (e) => {
       const b = e.target.closest(`[data-sec]`);
@@ -440,45 +478,30 @@ function addItemsSheet(ev, startSection) {
         row.onsubmit = (ev2) => { ev2.preventDefault(); const v = input.value.trim(); if (v) { extra.add(v); section = v; } row.remove(); drawSections(); upd(); };
       }
     });
-    namedEl.addEventListener(`click`, (e) => { const b = e.target.closest(`[data-unname]`); if (b) { named.splice(Number(b.dataset.unname), 1); draw(); } });
-    listEl.addEventListener(`click`, (e) => {
-      const b = e.target.closest(`[data-name]`); if (!b) return;
-      named.push(b.dataset.name); qEl.value = ``; draw(); qEl.focus();
+    namedEl.addEventListener(`click`, (e) => {
+      const b = e.target.closest(`[data-unname]`); if (!b) return;
+      const [t] = named.splice(Number(b.dataset.unname), 1);
+      const line = repo.eventLines.find((l) => l.id === t.lineId); if (line) repo.deleteLine(line);
+      count = Math.max(0, count - 1); draw();
     });
+    listEl.addEventListener(`click`, (e) => { const b = e.target.closest(`[data-name]`); if (b) addNamed(b.dataset.name); });
     noteEl.addEventListener(`click`, async (e) => { if (e.target.closest(`[data-include]`)) { await ctx.openGroupInventories(R().group()?.id); draw(); } });
     listEl.addEventListener(`change`, (e) => {
       const k = e.target.dataset.k; if (!k) return;
-      if (e.target.checked) chosen.set(k, el._entries.get(k)); else chosen.delete(k);
-      upd();
+      if (e.target.checked) addItem(k); else undoItem(k);
     });
     qEl.addEventListener(`input`, draw);
-    qEl.addEventListener(`keydown`, (e) => { // Enter on a new name adds it to the list
+    qEl.addEventListener(`keydown`, (e) => { // Enter: nothing matches → add it as typed
       if (e.key !== `Enter`) return; e.preventDefault();
-      const q = qEl.value.trim(); if (!q) return;
-      if (!searchPool(pool(ev).entries, q).length) { named.push(q); qEl.value = ``; draw(); }
+      const q = qEl.value.trim(); if (!q) { qEl.blur(); return; }
+      if (!searchPool(pool(ev).entries, q).length) addNamed(q);
     });
-    go.onclick = () => {
-      // Each pick becomes one line, together with same-named items elsewhere (and other picks of the same thing):
-      // "Tablecloths" in the school closet and in the storage unit count toward one total.
-      const used = new Set(already); const lines = []; let found = 0;
-      for (const e of [...chosen.values()].filter(Boolean)) {
-        const k = keyOf(e.invId, e.item.id); if (used.has(k)) continue;
-        used.add(k);
-        const more = matchesFor(ev, e.item.name, used);
-        more.forEach((m) => used.add(keyOf(m.invId, m.item.id)));
-        found += more.filter((m) => !chosen.has(keyOf(m.invId, m.item.id))).length;
-        const all = [e, ...more];
-        const total = all.reduce((n, m) => n + (Number(m.item.qty) || 1), 0);
-        lines.push({ name: e.item.name, sources: all.map((m) => srcOf(ev, m)), qty: all.length > 1 ? total : 1 });
-      }
-      const entries = [...lines, ...named.map((name) => ({ name }))];
-      close(); // first, so the event page redraws with the new lines
-      const added = repo.addLines(ev.id, section, entries);
-      if (added.length) toast(`Added ${added.length} to ${section || ev.name}${found ? ` · found ${found} more in other places` : ``}`, { ms: 4500 });
-    };
+    // keep the search box at the top of what's visible above the keyboard
+    qEl.addEventListener(`focus`, () => setTimeout(() => $(`.add-q`, el)?.scrollIntoView({ block: `start`, behavior: `smooth` }), 320));
+    done.onclick = () => close();
     el._redraw = draw; // other inventories arriving in the background
     drawSections(); draw();
-  });
+  }, { onClose: () => setTimeout(() => { ctx.redraw(); if (count) toast(`${count} added to ${ev.name}`); }, 0) });
 }
 
 // ------------------------------------------------------------ One line: quantity, items it draws on, note, section

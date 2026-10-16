@@ -28,7 +28,18 @@ export function sheet(title, render, { onClose } = {}) {
   document.body.appendChild(wrap);
   document.querySelectorAll(`#toasts .toast`).forEach((t) => t.remove()); // don't cover the sheet with an old message
   requestAnimationFrame(() => wrap.classList.add(`open`));
+  // On phones the keyboard covers the bottom of the screen without resizing the page, so the sheet sat behind it.
+  // Keep the sheet inside the part of the screen that's still visible.
+  const vv = window.visualViewport;
+  const fit = () => {
+    if (!vv) return;
+    const kb = window.innerHeight - vv.height > 120;
+    wrap.style.top = `${vv.offsetTop}px`; wrap.style.height = `${vv.height}px`; wrap.style.bottom = `auto`;
+    wrap.classList.toggle(`kb`, kb);
+  };
+  vv?.addEventListener(`resize`, fit); vv?.addEventListener(`scroll`, fit); fit();
   const close = () => {
+    vv?.removeEventListener(`resize`, fit); vv?.removeEventListener(`scroll`, fit);
     wrap.classList.remove(`open`);
     setTimeout(() => wrap.remove(), 220);
     onClose?.();
