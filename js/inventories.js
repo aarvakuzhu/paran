@@ -15,6 +15,7 @@ import { TABS, MEMBER_COLS, rowsToObjects, objectToRow, lastCol, now } from './s
 export const DIR_INV_COLS = [`id`, `name`, `folderId`, `addedBy`, `addedAt`, `removed`];
 export const DIR_PEOPLE_COLS = [`email`, `role`, `invitedBy`, `joinedAt`];
 const DIR_TABS = [{ name: `Inventories`, cols: DIR_INV_COLS }, { name: `People`, cols: DIR_PEOPLE_COLS }];
+const removed = (v) => v === true || (typeof v === `string` && v !== `` && v.toUpperCase() !== `FALSE`); // removal stores a date
 const DELETED_COL = `S`; // Items column of `deleted` (ITEM_COLS index 18)
 
 // ---------------------------------------------------------------- what this device knows about
@@ -33,7 +34,7 @@ export function rememberInventory(email, sheetId, info) {
 export function cachedCount(sheetId) {
   try {
     const c = JSON.parse(localStorage.getItem(`paran.cache.${sheetId}`) || `null`);
-    return c ? (c.items || []).filter((i) => i.deleted !== true && i.deleted !== `TRUE`).length : null;
+    return c ? (c.items || []).filter((i) => !removed(i.deleted)).length : null;
   } catch { return null; }
 }
 
@@ -42,7 +43,7 @@ export async function remoteCount(sheetId) {
   const r = await sheets.batchGet(sheetId, [`Items!A:A`, `Items!${DELETED_COL}:${DELETED_COL}`]);
   const ids = r.valueRanges[0].values || []; const del = r.valueRanges[1].values || [];
   let n = 0;
-  for (let i = 1; i < ids.length; i++) if (ids[i]?.[0] && !(del[i]?.[0] === true || del[i]?.[0] === `TRUE`)) n++;
+  for (let i = 1; i < ids.length; i++) if (ids[i]?.[0] && !removed(del[i]?.[0])) n++;
   return n;
 }
 

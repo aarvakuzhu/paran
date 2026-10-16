@@ -33,7 +33,8 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **Out**: everything lent or reserved, grouped by person, overdue pick-ups first. A red badge on the tab counts late pick-ups.
 - **More**: account, people the inventory is shared with, AI suggestions, export.
 - **Item page**: where it is, then **Move** and **Lend or reserve** (or *Got it back* / *Picked up* / *Found it*). Edit is the pencil; *Mark as missing* and *Remove* are in ⋯. **Back** returns to wherever you came from.
-- **Events** (More → Events; the next two also show on Find under *Coming up*): an event has a name, an optional date and notes, and a list of what it needs in **sections** (Stage, Decor, AV, Food…). Each line points at an inventory item with how many are needed and a note; things not logged yet can go on the list too ("Not in inventory yet") and get linked when you tap *Add to the inventory* or *It's already in the inventory*. The event page shows **readiness**: "12 of 18 ready", a coloured bar, and filter chips for **Ready** (in its place), **Short** (need more than you have), **With someone** (lent or reserved), **Missing**, **Not in inventory**. **By section** lists the plan; **Where to get it** groups the same lines by place and by person, for collecting things. Share sends the list as text, section by section, with where each thing is. An item's page shows **Needed for** with the upcoming events that use it. Removing a line or deleting an event has Undo and never changes the inventory.
+- **Events** (More → Events; the next two also show on Find under *Coming up*): an event has a name, an optional date and notes, and a list of what it needs in **sections** (Stage, Decor, AV, Food…). Each line points at an item, with how many are needed and a note; things nobody has logged yet can go on the list too ("Not in inventory yet") and get linked later with *Add to the inventory* or *It's already in an inventory*. The event page shows **readiness**: "12 of 18 ready", a coloured bar, and filter chips for **Ready** (in its place), **Short** (need more than there are), **With someone** (lent or reserved), **Missing**, **Not in inventory** and **Not checked**. **By section** lists the plan; **Where to get it** groups the same lines by place (and inventory) and by person, for whoever is collecting. Share sends the list as text. An item's page shows **Needed for** with the upcoming events that use it. Removing a line or deleting an event has Undo and never changes any inventory.
+  - **In a group, events belong to the group.** They're kept in the group's directory sheet, so everyone in the group sees the same events from whichever of its inventories they have open, and a line can point at an item in **any** of the group's inventories (the school, the storage unit, a volunteer's garage). Other inventories are read from this phone's copy and refreshed in the background (at most every 10 minutes each), like search across inventories. An inventory the group has that isn't on this phone yet shows its lines as **Not checked**, with *Include …* (one tap through the picker). New events in a group default to the whole group; *Only <this inventory>* keeps one to the inventory. People who can only view the group see its events but can't change them. An inventory that isn't in a group keeps its own events in its own sheet.
 - **First run**: a new inventory opens **Where do you keep things?** Tap Home, Storage unit, Car… and rooms like Garage or Kitchen to create them in one go. It's also under Places → *Quick-add rooms and places*.
 
 ## What's in v1
@@ -124,9 +125,9 @@ After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on th
 | Members | email, role, photoFolderId, invitedBy, joinedAt |
 | Log | ts, itemId, action, detail, by, info (what changed / moved from / pick-up date), changes (exact before/after per field, or which fields AI suggested when added) |
 | Events | id, name, date (YYYY-MM-DD, optional), notes, createdBy, createdAt, updatedAt, updatedBy, deleted |
-| EventLines | id, eventId, section, itemId (empty = not in the inventory yet), name (for those), qty (how many needed), note, sort, updatedAt, updatedBy, deleted |
+| EventLines | id, eventId, section, itemId (empty = not in an inventory yet), name (the item's name when added, or the needed thing's name), qty (how many needed), note, sort, updatedAt, updatedBy, deleted, invId (which inventory the item is in; set on group events) |
 
-The Events and EventLines tabs are added automatically to older sheets the first time someone who can edit opens the app (or saves an event).
+An inventory's own events are in its sheet; a group's events are in the same two tabs of the group's **directory** sheet. The tabs are added automatically the first time an event is saved there (and to older inventory sheets when someone who can edit opens the app).
 
 Rules for editing the sheet by hand: it's fine to edit cell values and to sort or filter **in a filter view**. Don't delete rows or rename the header row, because the app matches rows by `id` and columns by header name. Removing an item in the app sets `deleted`; it never deletes rows.
 
@@ -148,7 +149,8 @@ js/config.js            ← your Client ID, API key, project number
 js/google.js            sign-in, Drive, Sheets, Picker wrappers
 js/store.js             data layer: cache, offline outbox, Google + demo backends
 js/search.js            purpose-aware search
-js/events.js            events: list, readiness view, add items, share
+js/events.js            events: list, readiness view, add items, share (group-wide or per inventory)
+js/xinv.js              other inventories, read-only (this phone's copy + background refresh), for search and events
 js/ai.js                optional Gemini suggestions (consent, key check, pacing, quota errors)
 js/image.js             on-device photo resize + thumbnail
 js/ui.js                sheets, toasts, icons

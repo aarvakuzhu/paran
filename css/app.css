@@ -764,7 +764,7 @@ body.readonly .edit-only { display: none !important; }
 .st-missing { --st: var(--red); } .st-none { --st: var(--ink-3); }
 .ready-bar { display: flex; gap: 2px; height: 8px; border-radius: 99px; overflow: hidden; background: var(--surface-2); margin: 6px 0 4px; }
 .ready-bar i { display: block; background: var(--st); min-width: 6px; }
-.ready-bar.empty { opacity: 0.6; }
+.ready-bar.is-empty { opacity: 0.6; }
 
 .event-card { display: flex; gap: 12px; align-items: center; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 .event-card:active { background: var(--surface-2); }
@@ -825,3 +825,11 @@ body.readonly .edit-only { display: none !important; }
 .needed-for .chips { margin-top: 0; }
 .ev-chip { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .ev-chip .ic { width: 16px; height: 16px; }
+.st-unknown { --st: color-mix(in srgb, var(--ink-3) 45%, var(--surface)); }
+.eline.st-unknown .el-state { color: var(--ink-3); }
+.ev-scope-line { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 0.9rem; margin-top: -2px; }
+.ev-scope-line .ic { width: 16px; height: 16px; }
+.event > .xtap, .pool-note .xtap { margin: 10px 0 0; }
+.ev-scope button { font-size: 0.88rem; }
+.ev-scope + .fine { margin-top: 2px; }
+.pool-note .fine { margin: 8px 2px 0; }

@@ -1,7 +1,8 @@
 import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSheets, AuthError } from './google.js';
 import { loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory, groupAccess } from './inventories.js';
-import { Repo, fetchInventory } from './store.js';
+import { Repo } from './store.js';
+import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
@@ -9,7 +10,7 @@ import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeI
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { scanLabel } from './qrscan.js';
-import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem } from './events.js';
+import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet } from './events.js';
 
 const MODE_KEY = `paran.mode`;
 const RECENT_LOC_KEY = `paran.recentLocs`;
@@ -53,7 +54,15 @@ function registerServiceWorker() {
 // ============================================================ boot
 async function boot() {
   registerServiceWorker();
-  initEvents({ repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr });
+  initEvents({
+    repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr, invName, switchTo,
+    openGroupInventories: (gid) => (gid ? openGroupInventories(gid) : Promise.resolve()),
+    redraw: () => { // another inventory's items arrived: refresh whatever shows events
+      if (document.querySelector(`.sheet-wrap.open`)) return redrawOpenAddSheet();
+      const n = route().name;
+      if (n === `find`) { if (!findState.q.trim() && !findState.filter) renderResults(); } else if (n === `events` || n === `event`) render();
+    },
+  });
   window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
   installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
@@ -81,6 +90,7 @@ async function start(kind, { interactive = false, choice } = {}) {
     repo.addEventListener(`change`, onRepoChange);
     repo.addEventListener(`status`, renderStatus);
   repo.addEventListener(`readonly`, onReadOnly);
+    repo.addEventListener(`groupdenied`, onGroupDenied);
     renderShell();
     if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
@@ -99,6 +109,7 @@ function resumeGoogle() {
   repo.addEventListener(`change`, onRepoChange);
   repo.addEventListener(`status`, renderStatus);
   repo.addEventListener(`readonly`, onReadOnly);
+  repo.addEventListener(`groupdenied`, onGroupDenied);
   renderShell(); render();
   if (hasValidToken()) repo.refresh();
   else repo.setStatus(navigator.onLine ? `auth` : `offline`);
@@ -142,6 +153,10 @@ let roToastAt = 0;
 function onReadOnly() {
   renderStatus(); document.body.classList.add(`readonly`);
   if (Date.now() - roToastAt > 4000) { roToastAt = Date.now(); toast(`You can view ${invName()}, but not change it. Ask its owner for edit access.`, { ms: 5000 }); }
+}
+function onGroupDenied() {
+  toast(`Google didn’t let you change ${repo.group()?.name || `the group`}’s events. Ask the group’s owner for edit access.`, { ms: 6000 });
+  repo.refresh();
 }
 const roleLabel = (role) => (role === `owner` ? `Owner` : role === `viewer` ? `Can view` : role === `pending-owner` ? `Owner (waiting to accept)` : `Can edit`);
 const roleSelect = () => `<select name="role" aria-label="Access"><option value="writer">Can edit</option><option value="reader">Can view</option></select>`;
@@ -2281,53 +2296,9 @@ function aiConsent(keyOnly = false) {
 // ============================================================ Search across inventories
 // Inventories with a copy on this phone are searched at once; the rest are fetched in the background
 // (online) and kept on the phone for next time. Offline, a banner says what wasn't checked.
-const XFRESH_MS = 10 * 60_000;
-const xmem = {}; // sheetId -> { items, locations, thumbs, at, loading, failed }
 const xdrop = new Set(); // inventories dropped from this search with their chip (cleared with the search)
 let xrun = 0;
 const crossReady = () => repo?.backend.kind === `google` && Object.keys(loadKnown(repo.user.email).inv).filter((id) => id !== repo.backend.sheetId).length > 0;
-
-function xlocal(id) {
-  if (xmem[id]?.items) return xmem[id];
-  try {
-    const c = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`);
-    if (c) {
-      xmem[id] = { ...(xmem[id] || {}), items: (c.items || []).filter((i) => !(i.deleted === true || i.deleted === `TRUE`)), locations: c.locations || [], at: Number(localStorage.getItem(`paran.xat.${id}`) || 0) };
-      blobs.get(`thumbs:${id}`).then((t) => { if (t) xmem[id].thumbs = t; }).catch(() => {});
-      return xmem[id];
-    }
-  } catch { /* ignore */ }
-  return null;
-}
-
-async function xfetch(id) {
-  const m = (xmem[id] ||= {});
-  if (m.loading) return m.loading;
-  m.loading = (async () => {
-    try {
-      const d = await fetchInventory(id);
-      const live = d.items.filter((i) => !(i.deleted === true || i.deleted === `TRUE`));
-      Object.assign(m, { items: live, locations: d.locations, at: Date.now(), failed: false });
-      // keep it on the phone; never touch changes still waiting to be saved there
-      let old = null; try { old = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`); } catch { /* ignore */ }
-      if (!old?.outbox?.length) {
-        try {
-          localStorage.setItem(`paran.cache.${id}`, JSON.stringify({ items: d.items, locations: d.locations, members: old?.members || [], log: old?.log || [], outbox: [] }));
-          localStorage.setItem(`paran.xat.${id}`, String(m.at));
-        } catch { /* storage full: still searchable this session */ }
-      }
-    } catch { m.failed = true; }
-    finally { m.loading = null; }
-  })();
-  return m.loading;
-}
-
-function xpath(locations, locId) {
-  const byId = new Map(locations.map((l) => [l.id, l])); const parts = [];
-  let l = byId.get(locId); let guard = 0;
-  while (l && guard++ < 20) { parts.unshift(l.name); l = byId.get(l.parentId); }
-  return parts;
-}
 
 function xcard(invId, item, locations, thumbs) {
   const parts = xpath(locations, item.locationId);

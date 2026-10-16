@@ -4,7 +4,7 @@
 import { CONFIG } from './config.js';
 import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
-import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow } from './inventories.js';
+import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow, loadKnown } from './inventories.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
@@ -25,7 +25,9 @@ export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `q
 // date is YYYY-MM-DD (optional). A line with no itemId is something needed that isn't in the inventory yet.
 // New columns go at the END of each list so older sheets stay aligned.
 export const EVENT_COLS = [`id`, `name`, `date`, `notes`, `createdBy`, `createdAt`, `updatedAt`, `updatedBy`, `deleted`];
-export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`];
+export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, `note`, `sort`, `updatedAt`, `updatedBy`, `deleted`, `invId`];
+// invId: which inventory (spreadsheet id) the item is in. Group events (kept in the group's directory sheet) draw on every
+// inventory in the group; an inventory's own events leave it empty (= this inventory).
 export const EVENT_TABS = [
   { name: `Events`, cols: EVENT_COLS },
   { name: `EventLines`, cols: ELINE_COLS },
@@ -199,26 +201,26 @@ class GoogleBackend {
    * Sheets made before Events existed: add the Events and EventLines tabs (and header cells for columns added since).
    * Returns true when the tabs are there. Viewers can't add tabs; they simply see no events until the owner opens the app.
    */
-  async ensureEventTabs() {
-    const key = `paran.evtabs.${this.sheetId}`;
+  async ensureEventTabs(sheetId = this.sheetId) {
+    const key = `paran.evtabs.${sheetId}`;
     const ver = EVENT_TABS.map((t) => t.cols.length).join(`.`);
     if (localStorage.getItem(key) === ver) return true;
-    if (!this.canEdit) return false;
-    const have = await sheets.tabTitles(this.sheetId);
+    if (sheetId === this.sheetId && !this.canEdit) return false;
+    const have = await sheets.tabTitles(sheetId);
     const missing = EVENT_TABS.filter((t) => !have.includes(t.name));
     const present = EVENT_TABS.filter((t) => have.includes(t.name));
     if (missing.length) {
-      await sheets.addTabs(this.sheetId, missing.map((t) => t.name));
-      await sheets.batchUpdateValues(this.sheetId, missing.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
+      await sheets.addTabs(sheetId, missing.map((t) => t.name));
+      await sheets.batchUpdateValues(sheetId, missing.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
     }
     if (present.length) {
-      const r = await sheets.batchGet(this.sheetId, present.map((t) => `${t.name}!1:1`));
+      const r = await sheets.batchGet(sheetId, present.map((t) => `${t.name}!1:1`));
       const updates = [];
       present.forEach((t, i) => {
         const header = (r.valueRanges[i]?.values?.[0] || []).map(String);
         if (header.length < t.cols.length && header.every((h, j) => h === t.cols[j])) updates.push({ range: `${t.name}!A1`, values: [t.cols] });
       });
-      if (updates.length) await sheets.batchUpdateValues(this.sheetId, updates);
+      if (updates.length) await sheets.batchUpdateValues(sheetId, updates);
     }
     localStorage.setItem(key, ver);
     return true;
@@ -254,7 +256,9 @@ class GoogleBackend {
 
   async fetchAll({ events = true } = {}) {
     // Events come in a separate request: older sheets opened by a viewer may not have those tabs yet (null = unknown, keep what's cached).
-    const ev = events ? sheets.batchGet(this.sheetId, EVENT_TABS.map((t) => `${t.name}!A1:${lastCol(t.cols)}`)).catch(() => null) : Promise.resolve(null);
+    const evRanges = EVENT_TABS.map((t) => `${t.name}!A1:${lastCol(t.cols)}`);
+    const ev = events ? sheets.batchGet(this.sheetId, evRanges).catch(() => null) : Promise.resolve(null);
+    const gev = events && this.groupDirId ? sheets.batchGet(this.groupDirId, evRanges).catch(() => null) : Promise.resolve(null);
     const r = await sheets.batchGet(this.sheetId, [
       `Items!A1:${BEFORE_THUMB}`, // everything except the (large) thumb column…
       `Locations!A1:${lastCol(LOC_COLS)}`,
@@ -265,8 +269,10 @@ class GoogleBackend {
     const [left, locs, members, log, right] = r.valueRanges.map((v) => v.values || []);
     const items = left.map((row, i) => [...row, ...Array(Math.max(0, ITEM_COLS.indexOf(`thumb`) - row.length)).fill(``), ``, ...(right[i] || [])]);
     if (items[0]) items[0].splice(ITEM_COLS.indexOf(`thumb`), 1, `thumb`);
-    const evr = await ev;
+    const evr = await ev; const gevr = await gev;
     return {
+      groupEvents: gevr ? rowsToObjects(gevr.valueRanges[0]?.values || [], EVENT_COLS) : null,
+      groupLines: gevr ? rowsToObjects(gevr.valueRanges[1]?.values || [], ELINE_COLS) : null,
       events: evr ? rowsToObjects(evr.valueRanges[0]?.values || [], EVENT_COLS) : null,
       eventLines: evr ? rowsToObjects(evr.valueRanges[1]?.values || [], ELINE_COLS) : null,
       log: rowsToObjects(log, LOG_COLS).slice(-5000),
@@ -288,25 +294,28 @@ class GoogleBackend {
 
   async writeOps(ops) {
     const rowMaps = {};
-    const rowMap = async (tab) => {
-      if (!rowMaps[tab]) {
-        const r = await sheets.get(this.sheetId, `${tab}!A:A`);
+    const rowMap = async (sheetId, tab) => {
+      const k = `${sheetId}|${tab}`;
+      if (!rowMaps[k]) {
+        const r = await sheets.get(sheetId, `${tab}!A:A`);
         const m = {}; (r.values || []).forEach((row, i) => { if (i > 0 && row[0]) m[row[0]] = i + 1; });
-        rowMaps[tab] = m;
+        rowMaps[k] = m;
       }
-      return rowMaps[tab];
+      return rowMaps[k];
     };
+    this.tabsOk ||= new Set();
     for (const op of ops) {
       if (op.kind === `log`) { await sheets.append(this.sheetId, `Log!A1`, [objectToRow(op.data, LOG_COLS)]); continue; }
       if (op.kind === `member`) { await sheets.append(this.sheetId, `Members!A1`, [objectToRow(op.data, MEMBER_COLS)]); continue; }
-      if ((op.kind === `event` || op.kind === `eline`) && !this.eventTabsOk) this.eventTabsOk = await this.ensureEventTabs();
+      const target = op.sheet || this.sheetId; // group events go to the group's directory sheet
+      if ((op.kind === `event` || op.kind === `eline`) && !this.tabsOk.has(target)) { if (await this.ensureEventTabs(target)) this.tabsOk.add(target); }
       const [tab, cols] = ROW_TAB[op.kind] || ROW_TAB.location;
-      const m = await rowMap(tab);
+      const m = await rowMap(target, tab);
       const row = objectToRow(op.data, cols);
       const r = m[op.data.id];
-      if (r) await sheets.update(this.sheetId, `${tab}!A${r}:${lastCol(cols)}${r}`, [row]);
+      if (r) await sheets.update(target, `${tab}!A${r}:${lastCol(cols)}${r}`, [row]);
       else {
-        const res = await sheets.append(this.sheetId, `${tab}!A1`, [row]);
+        const res = await sheets.append(target, `${tab}!A1`, [row]);
         const match = /![A-Z]+(\d+)/.exec(res.updates?.updatedRange || ``);
         if (match) m[op.data.id] = Number(match[1]);
       }
@@ -437,14 +446,23 @@ export class Repo extends EventTarget {
         for (const [id, d] of pending) if (!this.locations.find((l) => l.id === id) && `kind` in d) this.locations.push(d);
         this.items.forEach((i) => this.absorbPhotoThumbs(i));
         this.members = data.members;
-        const withPending = (rows, kind) => { // rows from the sheet, with local changes still waiting to be sent on top
-          const p = new Map(this.outbox.filter((o) => o.kind === kind).map((o) => [o.data.id, o.data]));
+        // rows from a sheet, with local changes still waiting to be sent on top. Group rows are marked _g.
+        const withPending = (rows, kind, group) => {
+          const p = new Map(this.outbox.filter((o) => o.kind === kind && Boolean(o.sheet) === group).map((o) => [o.data.id, o.data]));
           const out = rows.map((x) => p.get(x.id) || x);
           for (const [id, d] of p) if (!out.some((x) => x.id === id)) out.push(d);
-          return out;
+          return group ? out.map((x) => ({ ...x, _g: 1 })) : out.map(({ _g, ...x }) => x);
         };
-        if (data.events) this.events = withPending(data.events, `event`);
-        if (data.eventLines) this.eventLines = withPending(data.eventLines, `eline`);
+        const mine = (list, g) => list.filter((x) => Boolean(x._g) === g);
+        const inGroup = Boolean(this.backend.groupDirId);
+        this.events = [
+          ...(data.events ? withPending(data.events, `event`, false) : mine(this.events, false)),
+          ...(!inGroup ? [] : data.groupEvents ? withPending(data.groupEvents, `event`, true) : mine(this.events, true)),
+        ];
+        this.eventLines = [
+          ...(data.eventLines ? withPending(data.eventLines, `eline`, false) : mine(this.eventLines, false)),
+          ...(!inGroup ? [] : data.groupLines ? withPending(data.groupLines, `eline`, true) : mine(this.eventLines, true)),
+        ];
         const pendingLog = this.outbox.filter((o) => o.kind === `log`).map((o) => o.data);
         this.log = [...(data.log || []), ...pendingLog];
         this.saveCache(); this.emit();
@@ -490,7 +508,14 @@ export class Repo extends EventTarget {
         const op = this.outbox[0];
         if (op.kind === `photo`) await this.flushPhoto(op);
         else if (op.kind === `xphoto`) await this.flushExtraPhoto(op);
-        else {
+        else if (op.sheet) { // a group event row, in the group's directory sheet
+          try { await this.backend.writeOps([op]); }
+          catch (e) {
+            if (e instanceof AuthError || !/permission|forbidden|not found|caller does not have/i.test(e?.message || ``)) throw e;
+            // Google refused (no edit access to the group): drop it so this inventory's own changes still go through
+            console.warn(`group event not saved`, e); this.emit(`groupdenied`);
+          }
+        } else {
           const data = op.kind === `item` ? { ...op.data, thumb: this.thumbs[op.data.id] || ``, photos: this.photosForSheet(op.data.photos) } : op.data;
           await this.backend.writeOps([{ ...op, data }]);
         }
@@ -791,6 +816,25 @@ export class Repo extends EventTarget {
   }
 
   // ---------------- events: what's needed, where it is now, who has it
+  // Two kinds: a group's events (in the group's directory sheet, marked _g, lines may point into any inventory of the group)
+  // and an inventory's own events (in its sheet; lines point into this inventory).
+  get hereId() { return this.backend.kind === `google` ? this.backend.sheetId : `demo`; }
+  get groupDirId() { return this.backend.kind === `google` ? this.backend.groupDirId || `` : ``; }
+  /** The group this inventory belongs to: { id, name, dirId, owner, people } or null. */
+  group() {
+    if (!this.groupDirId) return null;
+    const k = loadKnown(this.user.email); const gid = k.inv[this.hereId]?.groupId;
+    return gid && k.groups[gid] ? { id: gid, ...k.groups[gid] } : null;
+  }
+  /** Can this person change the group's events? Group viewers can't. */
+  get groupReadOnly() {
+    const g = this.group(); if (!g) return true;
+    if (g.owner) return false;
+    const me = (g.people || []).find((p) => String(p.email).toLowerCase() === String(this.user.email).toLowerCase());
+    return me ? me.role === `viewer` : this.readOnly;
+  }
+  canEditEvent(ev) { return ev?._g ? !this.groupReadOnly : !this.readOnly; }
+
   liveEvents() { return this.events.filter((e) => e.id && !e.deleted); }
   eventById(id) { return this.events.find((e) => e.id === id && !e.deleted); }
   linesOf(eventId) {
@@ -799,39 +843,54 @@ export class Repo extends EventTarget {
   }
   /** Sections in the order they first appear. Lines without a section come under `` (shown as "Other"). */
   sectionsOf(eventId) { return [...new Set(this.linesOf(eventId).map((l) => l.section || ``))]; }
+  /** Which inventory a line's item is in. */
+  lineInv(line) { return line.invId || this.hereId; }
 
-  saveEvent(fields) {
-    if (this.readOnly) { this.emit(`readonly`); return null; }
+  /** opts.group: a new event for the whole group (needs a group). Existing events keep where they live. */
+  saveEvent(fields, { group = false } = {}) {
     const existing = fields.id && this.events.find((e) => e.id === fields.id);
+    const isGroup = existing ? Boolean(existing._g) : group && Boolean(this.groupDirId);
+    if (isGroup ? this.groupReadOnly : this.readOnly) { this.emit(`readonly`); return null; }
     const ev = existing ? { ...existing, ...fields } : {
-      id: uid(), name: ``, date: ``, notes: ``, createdBy: this.user.email, createdAt: now(), deleted: ``, ...fields,
+      id: uid(), name: ``, date: ``, notes: ``, createdBy: this.user.email, createdAt: now(), deleted: ``, ...fields, ...(isGroup ? { _g: 1 } : {}),
     };
     ev.updatedAt = now(); ev.updatedBy = this.user.email;
     if (existing) Object.assign(existing, ev); else this.events.push(ev);
-    this.queue({ kind: `event`, data: { ...ev } });
+    this.writeEventRow(`event`, ev);
     this.emit();
     return ev;
   }
   deleteEvent(ev) { return this.saveEvent({ id: ev.id, deleted: now() }); }
 
+  /** Queue an event or line row for the sheet it belongs to (group rows go to the directory). */
+  writeEventRow(kind, row) {
+    const { _g, ...data } = row;
+    if (_g) { this.outbox.push({ kind, data, sheet: this.groupDirId }); this.saveCache(); this.flush(); }
+    else this.queue({ kind, data });
+  }
+
   saveLine(fields, { quiet = false } = {}) {
-    if (this.readOnly) { this.emit(`readonly`); return null; }
     const existing = fields.id && this.eventLines.find((l) => l.id === fields.id);
+    const ev = this.events.find((e) => e.id === (existing?.eventId || fields.eventId));
+    if (!this.canEditEvent(ev)) { this.emit(`readonly`); return null; }
     const line = existing ? { ...existing, ...fields } : {
-      id: uid(), eventId: ``, section: ``, itemId: ``, name: ``, qty: 1, note: ``, sort: Date.now(), deleted: ``, ...fields,
+      id: uid(), eventId: ``, section: ``, itemId: ``, invId: ``, name: ``, qty: 1, note: ``, sort: Date.now(), deleted: ``, ...fields, ...(ev?._g ? { _g: 1 } : {}),
     };
     line.updatedAt = now(); line.updatedBy = this.user.email;
     if (existing) Object.assign(existing, line); else this.eventLines.push(line);
-    this.queue({ kind: `eline`, data: { ...line } });
+    this.writeEventRow(`eline`, line);
     if (!quiet) this.emit();
     return line;
   }
   deleteLine(line) { return this.saveLine({ id: line.id, deleted: now() }); }
 
-  /** Add several lines to one section in one go. entries: [{ itemId?, name?, qty? }] */
+  /** Add several lines to one section in one go. entries: [{ itemId?, invId?, name?, qty? }] */
   addLines(eventId, section, entries) {
+    const ev = this.eventById(eventId);
     const base = Date.now();
-    const out = entries.map((e, i) => this.saveLine({ eventId, section, itemId: e.itemId || ``, name: e.name || ``, qty: e.qty || 1, sort: base + i }, { quiet: true }));
+    const out = entries.map((e, i) => this.saveLine({
+      eventId, section, itemId: e.itemId || ``, invId: ev?._g && e.itemId ? (e.invId || this.hereId) : ``, name: e.name || ``, qty: e.qty || 1, sort: base + i,
+    }, { quiet: true }));
     this.emit();
     return out.filter(Boolean);
   }
@@ -842,33 +901,42 @@ export class Repo extends EventTarget {
     this.emit();
   }
 
+  /** This inventory's data, in the shape lineState expects of any inventory. */
+  hereData() { return { items: this.items, pathText: (id) => this.pathText(id), thumbs: this.thumbs }; }
+
   /**
    * Is this line ready for the event?
-   * key: ready (in its place) | short (fewer than needed) | out (lent or reserved) | missing | none (not in the inventory)
+   * key: ready (in its place) | short (fewer than needed) | out (lent or reserved) | missing | none (not in an inventory)
+   *      | unknown (its inventory isn't on this phone yet)
+   * data(invId): { items, pathText(locId), thumbs } for an inventory, or null when there's no copy on this phone.
    */
-  lineState(line) {
+  lineState(line, data = (id) => (id === this.hereId ? this.hereData() : null)) {
     if (!line.itemId) return { key: `none`, text: `Not in inventory yet`, item: null };
-    const item = this.items.find((i) => i.id === line.itemId && !i.deleted);
-    if (!item) return { key: `none`, text: `No longer in the inventory`, item: null };
-    if (item.status === `missing`) return { key: `missing`, text: `Marked missing`, item };
-    if (item.status === `lent`) return { key: `out`, text: `With ${item.lentTo || `someone`}`, item, who: item.lentTo };
-    if (item.status === `reserved`) return { key: `out`, text: `Reserved for ${item.lentTo || `someone`}`, item, who: item.lentTo };
+    const invId = this.lineInv(line);
+    const d = data(invId);
+    if (!d) return { key: `unknown`, text: `Not checked yet`, item: null, invId };
+    const item = d.items.find((i) => i.id === line.itemId && !(i.deleted === true || (i.deleted && i.deleted !== `FALSE`)));
+    if (!item) return { key: `none`, text: `No longer in the inventory`, item: null, invId };
+    const base = { item, invId, thumbs: d.thumbs };
+    if (item.status === `missing`) return { ...base, key: `missing`, text: `Marked missing` };
+    if (item.status === `lent`) return { ...base, key: `out`, text: `With ${item.lentTo || `someone`}`, who: item.lentTo };
+    if (item.status === `reserved`) return { ...base, key: `out`, text: `Reserved for ${item.lentTo || `someone`}`, who: item.lentTo };
     const need = Number(line.qty) || 1; const have = Number(item.qty) || 1;
-    const where = this.pathText(item.locationId);
-    if (need > have) return { key: `short`, text: `Need ${need}, have ${have}${where ? ` · ${where}` : ``}`, item, where };
-    return { key: `ready`, text: where || `Place not set`, item, where };
+    const where = d.pathText(item.locationId);
+    if (need > have) return { ...base, key: `short`, text: `Need ${need}, have ${have}${where ? ` · ${where}` : ``}`, where };
+    return { ...base, key: `ready`, text: where || `Place not set`, where };
   }
 
-  /** Counts for an event: { total, ready, short, out, missing, none } */
-  eventSummary(eventId) {
-    const s = { total: 0, ready: 0, short: 0, out: 0, missing: 0, none: 0 };
-    for (const l of this.linesOf(eventId)) { s.total++; s[this.lineState(l).key]++; }
+  /** Counts for an event: { total, ready, short, out, missing, none, unknown } */
+  eventSummary(eventId, data) {
+    const s = { total: 0, ready: 0, short: 0, out: 0, missing: 0, none: 0, unknown: 0 };
+    for (const l of this.linesOf(eventId)) { s.total++; s[this.lineState(l, data).key]++; }
     return s;
   }
 
-  /** Upcoming (or undated) events that need this item. */
+  /** Upcoming (or undated) events that need this item (of this inventory). */
   eventsForItem(itemId, today = new Date().toISOString().slice(0, 10)) {
-    const ids = new Set(this.eventLines.filter((l) => l.itemId === itemId && !l.deleted).map((l) => l.eventId));
+    const ids = new Set(this.eventLines.filter((l) => l.itemId === itemId && !l.deleted && this.lineInv(l) === this.hereId).map((l) => l.eventId));
     return this.liveEvents().filter((e) => ids.has(e.id) && (!e.date || String(e.date) >= today))
       .sort((a, b) => String(a.date || `9999`).localeCompare(String(b.date || `9999`)));
   }
