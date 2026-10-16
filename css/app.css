@@ -688,3 +688,18 @@ body.scanning { overflow: hidden; }
 .qrscan .qr-frame i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; }
 .qrscan .qr-frame i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; }
 .qrscan .qr-hint { position: absolute; left: 16px; right: 16px; bottom: calc(40px + env(safe-area-inset-bottom)); margin: 0 auto; }
+
+/* ---------- Several inventories ---------- */
+.inv-switch { border: 0; background: none; padding: 6px 8px 6px 0; cursor: pointer; color: var(--ink); font: inherit; font-weight: 700; min-width: 0; max-width: 62vw; }
+.inv-switch span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inv-switch .ic.down { width: 16px; height: 16px; transform: rotate(90deg); color: var(--ink-3); flex: none; }
+.inv-group { margin-bottom: 14px; }
+.inv-group-head { display: flex; justify-content: space-between; align-items: center; margin: 4px 2px 6px; font-weight: 600; color: var(--ink-2); font-size: 0.9rem; }
+.inv-group-head span { display: inline-flex; align-items: center; gap: 6px; }
+.inv-row { width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; color: var(--ink); font: inherit; padding-top: 8px; padding-bottom: 8px; }
+.inv-row:last-child { border-bottom: 0; }
+.inv-row > span { display: flex; flex-direction: column; }
+.inv-row small { color: var(--ink-2); }
+.inv-row.current > .ic:first-child { color: var(--accent); }
+.inv-actions { margin-top: 6px; }
+.group .list + .label-sm { margin-top: 22px; }

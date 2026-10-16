@@ -102,7 +102,7 @@ export const drive = {
   /** Find files this app created, tagged with appProperties.stash = role */
   async findTagged(role) {
     const q = `appProperties has { key='stash' and value='${role}' } and trashed = false`;
-    const r = await api(`${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,owners(emailAddress))&spaces=drive`);
+    const r = await api(`${DRIVE}/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,parents,owners(emailAddress))&spaces=drive&pageSize=200`);
     return r.files || [];
   },
   createFolder(name, parentId, role) {
@@ -137,6 +137,12 @@ export const drive = {
     return api(`${DRIVE}/files/${fileId}/permissions?sendNotificationEmail=${notify}&fields=id`, {
       method: `POST`, ...jsonBody({ type: `user`, role, emailAddress: email }),
     });
+  },
+  rename(fileId, name) {
+    return api(`${DRIVE}/files/${fileId}?fields=id,name`, { method: `PATCH`, ...jsonBody({ name }) });
+  },
+  move(fileId, toParent, fromParents) {
+    return api(`${DRIVE}/files/${fileId}?addParents=${toParent}&removeParents=${fromParents}&fields=id,parents`, { method: `PATCH`, ...jsonBody({}) });
   },
   meta(fileId) {
     return api(`${DRIVE}/files/${fileId}?fields=id,name,owners(emailAddress),parents,appProperties,webViewLink`);
@@ -178,25 +184,29 @@ export const sheets = {
   },
 };
 
-// ---------- Picker (join a shared inventory) ----------
-export async function pickSpreadsheet() {
+// ---------- Picker (join shared inventories or a group) ----------
+/**
+ * Let the user pick sheets someone shared (inventories, or a group's directory).
+ * parentId: open inside one folder (a group), so its inventories can be ticked all at once.
+ * Resolves with an array of file ids ([] if cancelled).
+ */
+export async function pickSheets({ parentId = ``, title = `Pick what was shared with you` } = {}) {
   if (!pickerConfigured()) throw new Error(`Picker is not configured (API_KEY and APP_ID in js/config.js).`);
   await loadScript(`https://apis.google.com/js/api.js`);
   await new Promise((r) => gapi.load(`picker`, r));
   return new Promise((resolve) => {
-    const view = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS)
-      .setMode(google.picker.DocsViewMode.LIST)
-      .setQuery(`Inventory`) // matches both “Paran Inventory” and older “Stash Inventory”
-      .setOwnedByMe(false);
+    const view = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS).setMode(google.picker.DocsViewMode.LIST);
+    if (parentId) view.setParent(parentId); else view.setOwnedByMe(false);
     const picker = new google.picker.PickerBuilder()
       .addView(view)
+      .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
       .setOAuthToken(token.access_token)
       .setDeveloperKey(CONFIG.API_KEY)
       .setAppId(CONFIG.APP_ID)
-      .setTitle(`Pick the shared inventory sheet`)
+      .setTitle(title)
       .setCallback((data) => {
-        if (data.action === google.picker.Action.PICKED) resolve(data.docs[0].id);
-        else if (data.action === google.picker.Action.CANCEL) resolve(null);
+        if (data.action === google.picker.Action.PICKED) resolve((data.docs || []).map((d) => d.id));
+        else if (data.action === google.picker.Action.CANCEL) resolve([]);
       })
       .build();
     picker.setVisible(true);

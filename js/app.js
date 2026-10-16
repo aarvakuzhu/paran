@@ -1,5 +1,6 @@
 import { CONFIG } from './config.js';
-import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSpreadsheet, AuthError } from './google.js';
+import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSheets, AuthError } from './google.js';
+import { loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory } from './inventories.js';
 import { Repo } from './store.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
@@ -76,7 +77,7 @@ async function start(kind, { interactive = false, choice } = {}) {
     repo.addEventListener(`change`, onRepoChange);
     repo.addEventListener(`status`, renderStatus);
     renderShell();
-    if (choice === `create`) location.hash = `#/setup`; // brand-new inventory: start by naming your places
+    if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
     if (kind === `google`) installQuietRenew();
   } catch (e) {
@@ -186,16 +187,19 @@ function renderChoice(user) {
     <h1>Hi ${esc((user.name || ``).split(` `)[0] || `there`)}</h1>
     <p class="lead">Start a new inventory, or join one someone shared with you.</p>
     <div class="choice-grid">
-      <button class="choice" id="create">${icon(`plus`)}<b>Start a new inventory</b><span>Creates a “${esc(CONFIG.ROOT_FOLDER_NAME)}” folder and sheet in your Drive.</span></button>
-      <button class="choice" id="join" ${pickerConfigured() ? `` : `disabled`}>${icon(`users`)}<b>Join a shared inventory</b>
-        <span>${pickerConfigured() ? `Pick the “${esc(CONFIG.SHEET_NAME)}” (or older “${esc(CONFIG.LEGACY_SHEET_NAME)}”) sheet someone shared with you.` : `Needs API_KEY and APP_ID in js/config.js.`}</span></button>
+      <button class="choice" id="create">${icon(`plus`)}<b>Start a new inventory</b><span>Creates a folder and sheet in your Drive. You can add more inventories, or a group, later.</span></button>
+      <button class="choice" id="join" ${pickerConfigured() ? `` : `disabled`}>${icon(`users`)}<b>Open one shared with you</b>
+        <span>${pickerConfigured() ? `Pick the inventory sheet, or a group’s “directory” sheet, someone shared with you.` : `Needs API_KEY and APP_ID in js/config.js.`}</span></button>
     </div>
   </main>`;
-  $(`#create`).onclick = () => start(`google`, { choice: `create` });
+  $(`#create`).onclick = async () => {
+    const name = await promptSheet(`Name your inventory`, { label: `Name`, value: `My home`, placeholder: `e.g. My home, Lake house, Tamil School`, okLabel: `Create` });
+    if (name) start(`google`, { choice: { create: true, name } });
+  };
   $(`#join`).onclick = async () => {
     try {
-      const id = await pickSpreadsheet();
-      if (id) start(`google`, { choice: id });
+      const first = await joinFlow(user);
+      if (first) start(`google`, { choice: first });
     } catch (e) { toast(e.message); }
   };
 }
@@ -212,7 +216,9 @@ function renderShell() {
   window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
   app.innerHTML = `
     <header class="topbar">
-      <a href="#/" class="logo">${icon(`box`)}<span>${esc(CONFIG.APP_NAME)}</span></a>
+      ${repo.backend.kind === `google`
+        ? `<button type="button" class="logo inv-switch" id="invsw" aria-label="Switch inventory">${icon(`box`)}<span id="invname"></span>${icon(`chevron`, `down`)}</button>`
+        : `<a href="#/" class="logo">${icon(`box`)}<span>${esc(CONFIG.APP_NAME)}</span></a>`}
       <button class="status" id="status" type="button"></button>
     </header>
     <main id="view" class="view"></main>
@@ -224,6 +230,7 @@ function renderShell() {
       <a href="#/more" data-tab="more">${icon(`more`)}<span>More</span></a>
     </nav>`;
   $(`#status`).onclick = onStatusClick;
+  $(`#invsw`)?.addEventListener(`click`, inventoriesSheet);
   renderStatus();
 }
 
@@ -275,15 +282,16 @@ function render() {
     if (navStack[navStack.length - 1] !== location.hash) navStack.push(location.hash);
     if (navStack.length > 30) navStack.shift();
   }
-  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places` }[r.name] || `find`;
+  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places`, group: `places` }[r.name] || `find`;
+  const nm = $(`#invname`); if (nm) nm.textContent = invName();
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
   document.body.classList.toggle(`focus-mode`, r.name === `add` || r.name === `edit` || r.name === `setup`); // no tab bar while filling a form
   if (routeChanged && (r.name === `add` || r.name === `edit`)) $$(`#toasts .toast`).forEach((t) => t.remove()); // an Undo from another screen doesn't belong here
   updateOutBadge();
   const view = $(`#view`);
   const y = window.scrollY;
-  view.onclick = null;
-  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup };
+  view.onclick = null; view.onsubmit = null;
+  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup, group: viewGroup };
   (screens[r.name] || viewFind)(view, r);
   window.scrollTo(0, routeChanged ? 0 : y); // a background sync must not jump the page to the top
 }
@@ -2226,6 +2234,236 @@ function aiConsent(keyOnly = false) {
   });
 }
 
+// ============================================================ Several inventories, and groups of them
+const invName = () => (repo?.backend.kind === `google` ? repo.backend.sheetName || `Inventory` : CONFIG.APP_NAME);
+const currentGroupId = () => { const k = loadKnown(repo.user.email); return k.inv[repo.backend.sheetId]?.groupId || ``; };
+
+/** Open another inventory: the app reopens straight into it (from this phone's copy if it has one). */
+async function switchTo(sheetId, { hash = `#/` } = {}) {
+  if (sheetId === repo.backend.sheetId) { location.hash = hash; return; }
+  if (repo.outbox.length) {
+    await repo.flush();
+    if (repo.outbox.length && !(await confirmSheet(`Some changes aren’t saved yet`,
+      `${repo.outbox.length} change(s) in ${invName()} haven’t reached Google. They stay on this phone and are saved next time you open ${invName()}.`, `Switch anyway`))) return;
+  }
+  const k = loadKnown(repo.user.email); const inv = k.inv[sheetId] || {};
+  const g = inv.groupId && k.groups[inv.groupId];
+  localStorage.setItem(`paran.session`, JSON.stringify({
+    user: repo.user, sheetId, sheetName: inv.name || ``, isOwner: Boolean(inv.owner), rootFolderId: null, photoFolderId: null,
+    sheetUrl: `https://docs.google.com/spreadsheets/d/${sheetId}/edit`, groupDirId: g?.dirId || null, fresh: true,
+  }));
+  localStorage.setItem(`paran.sheet.${repo.user.email}`, sheetId);
+  location.hash = hash; location.reload();
+}
+
+/** A sheet of choices; resolves with the chosen value, or null if closed. */
+function chooseSheet(title, options, note = ``) {
+  return new Promise((resolve) => {
+    let done = false;
+    sheet(title, (el, close) => {
+      el.innerHTML = `${note ? `<p class="muted small">${esc(note)}</p>` : ``}<div class="menu">${options.map(([v, label, sub], i) =>
+        `<button data-i="${i}">${esc(label)}${sub ? `<small>${esc(sub)}</small>` : ``}</button>`).join(``)}</div>`;
+      el.onclick = (e) => { const b = e.target.closest(`[data-i]`); if (!b) return; done = true; resolve(options[Number(b.dataset.i)][0]); close(); };
+    }, { onClose: () => { if (!done) resolve(null); } });
+  });
+}
+
+function invRow(id, inv, count) {
+  const cur = id === repo?.backend.sheetId;
+  const n = count ?? cachedCount(id);
+  const sub = inv.reachable === false ? `Tap to open it on this phone` : n == null ? `` : itemsWord(n);
+  return `<button type="button" class="list-row inv-row${cur ? ` current` : ``}" data-inv="${esc(id)}">${icon(cur ? `check` : `box`)}
+    <span><b>${esc(inv.name || `Inventory`)}</b>${sub ? `<small>${esc(sub)}${cur ? ` · open now` : ``}</small>` : cur ? `<small>Open now</small>` : ``}</span>${icon(`chevron`)}</button>`;
+}
+
+function inventoriesSheet() {
+  const user = repo.user;
+  sheet(`Your inventories`, (el, close) => {
+    let k = loadKnown(user.email); let loading = true; const counts = {};
+    if (!k.inv[repo.backend.sheetId]) k = rememberInventory(user.email, repo.backend.sheetId, { name: repo.backend.sheetName, owner: repo.backend.isOwner, reachable: true });
+    const draw = () => {
+      const groups = Object.entries(k.groups);
+      const inGroup = (gid) => Object.entries(k.inv).filter(([, i]) => i.groupId === gid);
+      const loose = Object.entries(k.inv).filter(([, i]) => !i.groupId || !k.groups[i.groupId]);
+      el.innerHTML = `
+        ${groups.map(([gid, g]) => `<div class="inv-group">
+          <div class="inv-group-head"><span>${icon(`users`)} ${esc(g.name)}</span><button type="button" class="link small" data-group="${esc(gid)}">Group page</button></div>
+          <div class="list">${inGroup(gid).map(([id, i]) => invRow(id, i, counts[id])).join(``) || `<p class="muted pad">No inventories in this group yet.</p>`}</div></div>`).join(``)}
+        ${loose.length ? `<div class="inv-group">${groups.length ? `<div class="inv-group-head"><span>Not in a group</span></div>` : ``}
+          <div class="list">${loose.map(([id, i]) => invRow(id, i, counts[id])).join(``)}</div></div>` : ``}
+        ${loading ? `<p class="fine">${icon(`cloud`)} Checking your Google Drive…</p>` : ``}
+        <div class="menu inv-actions">
+          <button data-m="newinv">${icon(`plus`)} New inventory</button>
+          <button data-m="newgroup">${icon(`users`)} New group <small>an organization, or your homes</small></button>
+          <button data-m="join">${icon(`download`)} Open one shared with you</button>
+        </div>`;
+    };
+    draw();
+    discover(user).then((nk) => {
+      k = nk; loading = false; draw();
+      Object.entries(k.inv).filter(([id, i]) => cachedCount(id) == null && i.reachable !== false).slice(0, 8)
+        .forEach(([id]) => remoteCount(id).then((n) => { counts[id] = n; draw(); }).catch(() => {}));
+    }).catch(() => { loading = false; draw(); });
+    el.onclick = async (e) => {
+      const g = e.target.closest(`[data-group]`); if (g) { close(); location.hash = `#/group/${g.dataset.group}`; return; }
+      const r = e.target.closest(`[data-inv]`);
+      if (r) {
+        const id = r.dataset.inv; const inv = k.inv[id] || {};
+        close();
+        if (inv.reachable === false) { const ok = await openGroupInventories(inv.groupId); if (ok.includes(id)) switchTo(id); return; }
+        switchTo(id); return;
+      }
+      const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
+      close();
+      if (m === `newinv`) newInventoryFlow();
+      if (m === `newgroup`) newGroupFlow();
+      if (m === `join`) { const first = await joinFlow(user).catch((err) => { toast(err.message); return null; }); if (first) inventoriesSheet(); }
+    };
+  });
+}
+
+async function newInventoryFlow({ groupId } = {}) {
+  const user = repo.user; const k = loadKnown(user.email);
+  const name = await promptSheet(`New inventory`, { label: `Name`, placeholder: `e.g. Lake house, Office, School storage`, okLabel: `Next` });
+  if (!name) return;
+  let gid = groupId;
+  const groups = Object.entries(k.groups);
+  if (gid === undefined && groups.length) {
+    gid = await chooseSheet(`Put “${name}” in a group?`, [[``, `No group`, `Only you, until you share it`], ...groups.map(([id, g]) => [id, g.name, `Everyone in the group can open it`])]);
+    if (gid === null) return;
+  }
+  toast(`Creating ${name}…`, { ms: 8000 });
+  try {
+    const inv = await createInventory(user, name, gid || ``);
+    switchTo(inv.sheetId, { hash: `#/setup` });
+  } catch (e) {
+    toast(gid && !k.groups[gid]?.owner ? `Only the group’s owner can add inventories to it for now.` : `Couldn’t create it: ${e.message}`, { ms: 6000 });
+  }
+}
+
+async function newGroupFlow() {
+  const user = repo.user;
+  const name = await promptSheet(`New group`, { label: `Group name`, placeholder: `e.g. Our homes, Tamil School`, okLabel: `Create` });
+  if (!name) return;
+  toast(`Creating ${name}…`, { ms: 8000 });
+  let g;
+  try { g = await createGroup(user, name); } catch (e) { toast(`Couldn’t create the group: ${e.message}`); return; }
+  if (repo.backend.isOwner && !currentGroupId() && await confirmSheet(`Add “${invName()}” to ${name}?`,
+    `Its folder moves into the group’s folder in your Drive. People you invite to the group can then open it.`, `Add it`)) {
+    try {
+      await addToGroup(user, { sheetId: repo.backend.sheetId, folderId: repo.backend.rootFolderId, name: invName() }, g.id);
+      repo.backend.groupDirId = g.dirId; repo.backend.saveSession();
+    } catch (e) { toast(`Couldn’t move it: ${e.message}`); }
+  }
+  location.hash = `#/group/${g.id}`;
+}
+
+/** Pick what someone shared (inventories and/or group directories). Resolves with the first inventory id, or null. */
+async function joinFlow(user) {
+  const ids = await pickSheets({ title: `Pick the inventory or group directory shared with you` });
+  if (!ids.length) return null;
+  const k = loadKnown(user.email); let first = null; const groupsToOpen = []; let skipped = 0;
+  for (const id of ids) {
+    let f; try { f = await identify(id); } catch { skipped++; continue; }
+    if (f.role === `sheet`) {
+      k.inv[id] = { ...(k.inv[id] || {}), name: f.name, owner: f.owner === user.email, reachable: true };
+      first ||= id;
+    } else if (f.role === `directory`) {
+      const gid = f.parents[0]; if (!gid) { skipped++; continue; }
+      const dir = await readDirectory(id);
+      k.groups[gid] = { ...(k.groups[gid] || {}), name: f.name.replace(/ – directory$/, ``), dirId: id, owner: f.owner === user.email, people: dir.people };
+      for (const inv of dir.inventories) k.inv[inv.id] = { reachable: false, ...(k.inv[inv.id] || {}), name: inv.name, groupId: gid };
+      groupsToOpen.push(gid);
+    } else skipped++;
+  }
+  saveKnown(user.email, k);
+  if (skipped) toast(`${skipped} file${skipped > 1 ? `s weren’t` : ` wasn’t`} a ${CONFIG.APP_NAME} inventory`);
+  for (const gid of groupsToOpen) {
+    const opened = await openGroupInventories(gid, { user });
+    first ||= opened[0] || null;
+  }
+  return first;
+}
+
+/** Google only lets the app open files the person picks, so for a group they tick its inventories once. */
+async function openGroupInventories(gid, { user = repo.user } = {}) {
+  const k = loadKnown(user.email); const g = k.groups[gid];
+  const waiting = Object.entries(k.inv).filter(([, i]) => i.groupId === gid && i.reachable === false);
+  if (!waiting.length) return [];
+  if (!(await confirmSheet(`Open the inventories in ${g?.name || `this group`}`,
+    `${waiting.length} inventor${waiting.length > 1 ? `ies need` : `y needs`} one tap to open on this phone. Google will show them: tick ${waiting.length > 1 ? `all of them` : `it`} and tap Select.`, `Continue`))) return [];
+  const ids = await pickSheets({ parentId: gid, title: `Tick the inventories in ${g?.name || `this group`}` });
+  const k2 = loadKnown(user.email); const ok = [];
+  for (const id of ids) { if (k2.inv[id]) { k2.inv[id].reachable = true; ok.push(id); } else { try { const f = await identify(id); if (f.role === `sheet`) { k2.inv[id] = { name: f.name, groupId: gid, reachable: true }; ok.push(id); } } catch { /* skip */ } } }
+  saveKnown(user.email, k2);
+  return ok;
+}
+
+function viewGroup(view, r) {
+  const user = repo.user;
+  let k = loadKnown(user.email); const gid = r.id;
+  const counts = {};
+  const draw = () => {
+    const g = k.groups[gid];
+    if (!g) { view.innerHTML = `<div class="empty"><h3>Group not found</h3><button class="btn ghost" data-a="list">Your inventories</button></div>`; return; }
+    const invs = Object.entries(k.inv).filter(([, i]) => i.groupId === gid);
+    const cur = repo.backend.sheetId;
+    const canAddCurrent = repo.backend.isOwner && !k.inv[cur]?.groupId;
+    const people = g.people || [];
+    view.innerHTML = `<div class="place group">
+      <div class="crumbs top"><button type="button" class="link" data-a="list">Your inventories</button></div>
+      <div class="place-head"><h1>${icon(`users`)} ${esc(g.name)}</h1></div>
+      <p class="muted small">A group keeps several inventories together, like an organization’s, or your homes. Sharing the group shares all of them.</p>
+      <div class="label-sm">Inventories · ${invs.length}</div>
+      <div class="list">${invs.map(([id, i]) => invRow(id, i, counts[id])).join(``) || `<p class="muted pad">None yet.</p>`}
+        ${g.owner ? `<button type="button" class="list-row link-row add-row" data-a="newinv">${icon(`plus`)}<span>New inventory in ${esc(g.name)}</span></button>` : ``}
+        ${g.owner && canAddCurrent ? `<button type="button" class="list-row link-row add-row" data-a="addcur">${icon(`move`)}<span>Add “${esc(invName())}” to this group</span></button>` : ``}
+      </div>
+      <div class="label-sm">People · ${people.length}</div>
+      <div class="list">${people.map((p) => `<div class="list-row">${icon(`users`)}<span>${esc(p.email)}</span><small>${p.role === `owner` ? `Owner` : `Can edit`}</small></div>`).join(``)}</div>
+      ${g.owner ? `<form class="inline-new" id="ginvite"><input type="email" placeholder="Their Google email" required><button class="btn primary">Invite</button></form>
+        <p class="fine">They can open and edit every inventory in ${esc(g.name)}, including ones added later. They sign in to ${esc(CONFIG.APP_NAME)}, choose “Open one shared with you” and pick “${esc(g.name)} – directory”.</p>`
+        : `<p class="fine">The group’s owner can invite people.</p>`}
+    </div>`;
+  };
+  draw();
+  const g0 = k.groups[gid];
+  if (g0?.dirId) readDirectory(g0.dirId).then((dir) => {
+    k = loadKnown(user.email); const g = k.groups[gid]; if (!g) return;
+    g.people = dir.people;
+    for (const inv of dir.inventories) k.inv[inv.id] = { reachable: false, ...(k.inv[inv.id] || {}), name: k.inv[inv.id]?.name || inv.name, groupId: gid };
+    saveKnown(user.email, k);
+    if (route().name === `group`) draw();
+    Object.entries(k.inv).filter(([id, i]) => i.groupId === gid && cachedCount(id) == null && i.reachable !== false)
+      .forEach(([id]) => remoteCount(id).then((n) => { counts[id] = n; if (route().name === `group`) draw(); }).catch(() => {}));
+  }).catch(() => {});
+  view.onclick = async (e) => {
+    const row = e.target.closest(`[data-inv]`);
+    if (row) {
+      const id = row.dataset.inv; const inv = k.inv[id] || {};
+      if (inv.reachable === false) { const ok = await openGroupInventories(gid); k = loadKnown(user.email); draw(); if (ok.includes(id)) switchTo(id); return; }
+      switchTo(id); return;
+    }
+    const a = e.target.closest(`[data-a]`)?.dataset.a; if (!a) return;
+    if (a === `list`) inventoriesSheet();
+    if (a === `newinv`) newInventoryFlow({ groupId: gid });
+    if (a === `addcur`) {
+      try {
+        await addToGroup(user, { sheetId: repo.backend.sheetId, folderId: repo.backend.rootFolderId, name: invName() }, gid);
+        repo.backend.groupDirId = k.groups[gid]?.dirId || null; repo.backend.saveSession();
+        k = loadKnown(user.email); draw(); toast(`${invName()} is now in ${k.groups[gid].name}`);
+      } catch (err) { toast(`Couldn’t move it: ${err.message}`); }
+    }
+  };
+  view.onsubmit = async (e) => { // delegated: the page redraws when the directory arrives
+    if (e.target.id !== `ginvite`) return;
+    e.preventDefault();
+    const input = e.target.querySelector(`input`); const btn = e.target.querySelector(`button`); btn.disabled = true;
+    try { await inviteToGroup(user, gid, input.value.trim()); toast(`Invited ${input.value.trim()} to ${k.groups[gid].name}`); k = loadKnown(user.email); draw(); }
+    catch (err) { toast(`Couldn’t invite: ${err.message}`); btn.disabled = false; }
+  };
+}
+
 // ============================================================ More
 function viewMore(view, r) {
   const g = repo.backend.kind === `google`;
@@ -2241,12 +2479,20 @@ function viewMore(view, r) {
       <div class="stats"><div><b>${total}</b><span>items</span></div><div><b>${places}</b><span>places</span></div>
         <div><b>${repo.activeItems().filter((i) => i.status === `lent`).length}</b><span>lent out</span></div></div>
 
+      ${g ? (() => { const gid = currentGroupId(); const grp = gid && loadKnown(repo.user.email).groups[gid]; return `<div class="label-sm">Inventory</div>
+      <div class="menu">
+        <button data-m="switch">${icon(`box`)} ${esc(invName())}<small>Switch or add</small></button>
+        ${grp ? `<a href="#/group/${esc(gid)}">${icon(`users`)} In group: ${esc(grp.name)}</a>` : ``}
+        ${repo.backend.isOwner ? `<button data-m="rename">${icon(`edit`)} Rename this inventory</button>` : ``}
+      </div>`; })() : ``}
+
       ${g ? `<div class="label-sm">People</div>
       <div class="list">
         ${repo.members.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${m.role === `owner` ? `Owner` : `Can edit`}</small></div>`).join(``)}
       </div>
       ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Their Google email" required><button class="btn primary">Invite</button></form>
-        <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, and choose “Join a shared inventory”.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
+        <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick “${esc(invName())}”.</p>
+        ${currentGroupId() ? `<p class="fine">Everyone in the group <a href="#/group/${esc(currentGroupId())}">${esc(loadKnown(repo.user.email).groups[currentGroupId()]?.name || ``)}</a> can open it too.</p>` : ``}` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
 
       <div class="label-sm" id="ai">AI suggestions</div>
       ${aiReady() ? `<div class="menu">
@@ -2298,6 +2544,16 @@ function viewMore(view, r) {
       return;
     }
     if (m === `about`) { aboutSheet(); return; }
+    if (m === `switch`) { inventoriesSheet(); return; }
+    if (m === `rename`) {
+      const name = await promptSheet(`Rename inventory`, { label: `Name`, value: invName(), okLabel: `Rename` });
+      if (!name || name === invName()) return;
+      try {
+        await renameInventory(repo.user, { sheetId: repo.backend.sheetId, folderId: repo.backend.rootFolderId }, name);
+        repo.backend.sheetName = name; repo.backend.saveSession(); render(); toast(`Renamed to ${name}`);
+      } catch (err) { toast(`Couldn’t rename: ${err.message}`); }
+      return;
+    }
     if (m === `csv`) {
       const a = document.createElement(`a`);
       a.href = URL.createObjectURL(repo.exportCsv());

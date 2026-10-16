@@ -4,6 +4,7 @@
 import { CONFIG } from './config.js';
 import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
+import { createInventory as createInventoryFiles, readDirectory, rememberInventory } from './inventories.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
@@ -20,7 +21,7 @@ export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`, `info`, `chan
 // on `added` it is { _ai: [fields AI suggested] } so AI may refine its own suggestions later but never what someone typed.
 export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `qty`, `warranty`, `expiry`, `notes`];
 
-const TABS = [
+export const TABS = [
   { name: `Items`, cols: ITEM_COLS },
   { name: `Locations`, cols: LOC_COLS },
   { name: `Members`, cols: MEMBER_COLS },
@@ -28,11 +29,11 @@ const TABS = [
 ];
 
 const colLetter = (n) => { let s = ``; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
-const lastCol = (cols) => colLetter(cols.length - 1);
+export const lastCol = (cols) => colLetter(cols.length - 1);
 export const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, ``).slice(0, 10);
 export const now = () => new Date().toISOString();
 
-function rowsToObjects(values, cols) {
+export function rowsToObjects(values, cols) {
   if (!values || values.length < 2) return [];
   const header = values[0].map(String);
   const idx = cols.map((c) => header.indexOf(c));
@@ -42,7 +43,7 @@ function rowsToObjects(values, cols) {
     return o;
   }).filter((o) => o.id || o.email || o.ts);
 }
-const objectToRow = (o, cols) => cols.map((c) => (o[c] === undefined || o[c] === null ? `` : o[c]));
+export const objectToRow = (o, cols) => cols.map((c) => (o[c] === undefined || o[c] === null ? `` : o[c]));
 
 // ------------------------------------------------------------------ backends
 class DemoBackend {
@@ -74,26 +75,28 @@ const PHOTO_CACHE_MAX = 150;
 class GoogleBackend {
   kind = `google`;
   user = null; sheetId = null; sheetName = null; photoFolderId = null; rootFolderId = null; isOwner = true;
+  groupDirId = null; // set when this inventory belongs to a group (its directory sheet)
 
   get cacheKey() { return this.sheetId; }
   get canShare() { return this.isOwner; }
   prefKey() { return `paran.sheet.${this.user.email}`; }
 
-  /** choice: undefined (auto), `create` (start a new inventory), or a spreadsheet id picked to join */
+  /** choice: undefined (auto), `create` / { create: true, name } (start a new inventory), or a spreadsheet id picked to join */
   async connect(choice) {
+    const create = choice === `create` || choice?.create;
     if (!this.user) {
       const u = await userinfo();
       this.user = { email: u.email, name: u.name || u.email, picture: u.picture };
     }
-    this.sheetId = choice && choice !== `create` ? choice : localStorage.getItem(this.prefKey());
+    this.sheetId = choice && !create ? choice : create ? null : localStorage.getItem(this.prefKey());
     if (this.sheetId) {
       try { await this.inspectSheet(); }
       catch (e) { if (e instanceof AuthError || choice) throw e; this.sheetId = null; }
     }
     if (!this.sheetId) {
       const found = await drive.findTagged(`sheet`);
-      if (found.length) { this.sheetId = found[0].id; await this.inspectSheet(); }
-      else if (choice === `create`) await this.createInventory();
+      if (found.length && !create) { this.sheetId = found[0].id; await this.inspectSheet(); }
+      else if (create) await this.createInventory(choice?.name);
       else return { user: this.user, needsChoice: true };
     }
     localStorage.setItem(this.prefKey(), this.sheetId);
@@ -108,8 +111,8 @@ class GoogleBackend {
   // Remember enough to reopen straight into the cached inventory, even before Google has re-issued a token.
   saveSession() {
     if (this.legacy) return;
-    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl } = this;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl }));
+    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId } = this;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId }));
   }
   static savedSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || `null`); } catch { return null; } }
   resume() {
@@ -138,7 +141,7 @@ class GoogleBackend {
       this.user = { email: u.email, name: u.name || u.email, picture: u.picture };
       await this.inspectSheet(); this.legacy = false;
     }
-    else if (!this.sheetName) await this.inspectSheet().catch(() => {}); // sessions saved before sheet names were kept
+    else if (!this.sheetName || this.fresh) { await this.inspectSheet(); this.fresh = false; } // just switched here, or an old session
     await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession();
   }
 
@@ -149,17 +152,13 @@ class GoogleBackend {
     this.isOwner = !owner || owner === this.user.email;
     this.rootFolderId = this.isOwner ? (m.parents?.[0] || null) : null;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
+    const k = rememberInventory(this.user.email, this.sheetId, { name: this.sheetName, owner: this.isOwner, reachable: true });
+    const g = k.inv[this.sheetId]?.groupId; this.groupDirId = (g && k.groups[g]?.dirId) || this.groupDirId || null;
   }
 
-  async createInventory() {
-    const root = await drive.createFolder(CONFIG.ROOT_FOLDER_NAME, null, `root`);
-    const ss = await sheets.create(CONFIG.SHEET_NAME, TABS);
-    const m = await drive.meta(ss.spreadsheetId);
-    await drive.tagAndMove(ss.spreadsheetId, root.id, (m.parents || []).join(`,`), `sheet`);
-    await sheets.batchUpdateValues(ss.spreadsheetId, TABS.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
-    await sheets.append(ss.spreadsheetId, `Members!A1`, [objectToRow(
-      { email: this.user.email, role: `owner`, invitedBy: ``, joinedAt: now() }, MEMBER_COLS)]);
-    this.sheetId = ss.spreadsheetId; this.sheetName = CONFIG.SHEET_NAME; this.rootFolderId = root.id; this.isOwner = true;
+  async createInventory(name = CONFIG.SHEET_NAME) {
+    const inv = await createInventoryFiles(this.user, name);
+    this.sheetId = inv.sheetId; this.sheetName = inv.name; this.rootFolderId = inv.folderId; this.isOwner = true;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
   }
 
@@ -194,8 +193,12 @@ class GoogleBackend {
         // let everyone in this inventory open the full-size photos this member adds
         const r = await sheets.get(this.sheetId, `Members!A1:${lastCol(MEMBER_COLS)}`);
         const members = rowsToObjects(r.values, MEMBER_COLS);
-        for (const m of members) {
-          if (m.email && m.email !== this.user.email) await drive.share(f.id, m.email, `reader`, false).catch(() => {});
+        const people = new Set(members.map((m) => m.email));
+        if (this.groupDirId) { // a group's inventory: everyone in the group, too
+          try { (await readDirectory(this.groupDirId)).people.forEach((p) => people.add(p.email)); } catch { /* ignore */ }
+        }
+        for (const email of people) {
+          if (email && email !== this.user.email) await drive.share(f.id, email, `reader`, false).catch(() => {});
         }
       }
     }
