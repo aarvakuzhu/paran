@@ -422,9 +422,9 @@ function afterBody(ev, canEdit) {
       <div class="ar-main"><b>${esc(lineName(l, x))}${needOf(l) > 1 ? ` <span class="qty">×${needOf(l)}</span>` : ``}</b>
         <small>${a ? `${esc(AFTER_LABEL[a.state] || a.state)}${a.to ? `: ${esc(a.to)}` : ``}${a.note ? ` · ${esc(a.note)}` : ``}`
           : inInv ? esc(x.parts?.length ? todoText(ev, l, x).replace(/^from /, `kept in `) : ``) : `Not in the inventory`}</small>
-        ${!a && elsewhere.length ? `<small class="fine">In ${esc([...new Set(elsewhere.map((s2) => invNameOf(repo.srcInv(s2))))].join(`, `))}: what you choose here is noted on the event; open that inventory to update the item itself.</small>` : ``}</div>
+        ${!a && elsewhere.length && ev._g ? `<small class="fine">${esc([...new Set(elsewhere.map((s2) => invNameOf(repo.srcInv(s2))))].join(`, `))}</small>` : ``}</div>
       ${!canEdit ? `` : a ? `<div class="ar-actions">${btn(`undo`, `Change`, `text`)}</div>`
-        : inInv ? `<div class="ar-actions">${btn(`back`, `${icon(`check`)} Back in place`, `primary`)}${elsewhere.length < srcs.length ? btn(`moved`, `Somewhere else`) : ``}${btn(`missing`, `Missing`)}${btn(`damaged`, `Damaged`)}</div>`
+        : inInv ? `<div class="ar-actions">${btn(`back`, `${icon(`check`)} Back in place`, `primary`)}${btn(`moved`, `Somewhere else`)}${btn(`missing`, `Missing`)}${btn(`damaged`, `Damaged`)}</div>`
         : `<div class="ar-actions">${repo.readOnly ? `` : btn(`kept`, `${icon(`plus`)} Keep it: add to inventory`, `primary`)}${btn(`gone`, `Used up or returned`)}</div>`}
     </div>`;
   };
@@ -440,31 +440,93 @@ function afterBody(ev, canEdit) {
     </div>`;
 }
 
+/**
+ * Every item a line uses (not marked "not for this event"), in whichever of the group's inventories it lives:
+ * { list: [{ inv, item, here }], notOnPhone: [inventory ids not on this phone yet] }.
+ */
+function itemsOfLine(l) {
+  const repo = R(); const list = []; const notOnPhone = new Set();
+  for (const s2 of repo.sourcesOf(l).filter((y) => !y.off)) {
+    const inv = repo.srcInv(s2); const d = dataOf(inv);
+    if (!d) { notOnPhone.add(inv); continue; }
+    const item = d.items.find((i) => i.id === s2.id && !i.deleted);
+    if (item) list.push({ inv, item, here: inv === repo.hereId });
+  }
+  return { list, notOnPhone: [...notOnPhone] };
+}
+/** Change an item wherever it lives: this inventory as a normal edit, another inventory of the group through its sheet. */
+async function changeItem(h, fields, log) {
+  const repo = R();
+  if (h.here) return repo.saveItem({ id: h.item.id, ...fields }, { logAction: log.action, detail: log.detail, ...(log.info !== undefined ? { info: log.info } : {}) });
+  repo.updateElsewhere(h.inv, h.item, fields, log);
+}
+const heldFor = (h, ev) => h.item.status === `reserved` && Repo.personKey(h.item.lentTo) === Repo.personKey(ev.name);
+const pathIn = (inv, locId) => (inv === R().hereId ? R().pathText(locId) : xpath(xlocal(inv)?.locations || [], locId).join(` › `));
+/** Set aside for this event: free it again. */
+async function release(h, ev) { if (heldFor(h, ev)) await changeItem(h, { status: `home`, lentTo: ``, dueAt: `` }, { action: `unreserved`, detail: h.item.lentTo }); }
+
+/** Pick a place in another inventory of the group (its own places). Resolves a location id, or null. */
+function pickPlaceIn(inv, title) {
+  const locs = (xlocal(inv)?.locations || []).filter((l) => !l.deleted);
+  return new Promise((resolve) => {
+    let done = false;
+    sheet(title, (el, close) => {
+      el.innerHTML = `<p class="fine">Places in ${esc(invNameOf(inv))}</p><label class="search sm">${icon(`search`)}<input data-q type="search" placeholder="Search places" autocomplete="off"></label><div class="list pk-list"></div>`;
+      const q = $(`[data-q]`, el); const list = $(`.pk-list`, el);
+      const all = locs.map((l) => ({ id: l.id, path: xpath(locs, l.id).join(` › `) })).sort((a, b) => a.path.localeCompare(b.path));
+      const draw = () => {
+        const terms = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        list.innerHTML = all.filter((x) => terms.every((t) => x.path.toLowerCase().includes(t))).slice(0, 60)
+          .map((x) => `<div class="list-row"><button type="button" class="list-main" data-pick="${esc(x.id)}">${icon(`place`)}<span>${esc(x.path)}</span></button></div>`).join(``)
+          || `<p class="muted pad">No place matches.</p>`;
+      };
+      q.addEventListener(`input`, draw);
+      list.addEventListener(`click`, (e) => { const b = e.target.closest(`[data-pick]`); if (b) { done = true; close(); resolve(b.dataset.pick); } });
+      draw();
+    }, { onClose: () => { if (!done) resolve(null); } });
+  });
+}
+
 async function afterAction(ev, lineId, act) {
   const repo = R(); const l = repo.eventLines.find((x) => x.id === lineId); if (!l) return;
   const name = lineName(l, lineState(l));
-  const here = repo.sourcesOf(l).filter((s2) => !s2.off && repo.srcInv(s2) === repo.hereId)
-    .map((s2) => repo.items.find((i) => i.id === s2.id && !i.deleted)).filter(Boolean);
-  const release = async (it) => { // set aside for this event: free it again
-    if (it.status === `reserved` && Repo.personKey(it.lentTo) === Repo.personKey(ev.name)) await repo.cancelReservation(it);
-  };
+  const { list, notOnPhone } = itemsOfLine(l);
+  const later = notOnPhone.length ? ` ${notOnPhone.map(invNameOf).join(`, `)} isn’t on this phone yet: include it to update its items too.` : ``;
   if (act === `undo`) { repo.setAfter(l, null); return; }
-  if (act === `back`) { for (const it of here) await release(it); repo.setAfter(l, { state: `back` }); toast(`${name}: back in its place`); return; }
-  if (act === `moved`) {
-    const to = await ctx.pickLocation(here[0]?.locationId || ``, `Where did ${name} go?`); if (!to) return;
-    for (const it of here) { await release(it); await repo.moveItem(repo.items.find((i) => i.id === it.id), to); }
-    repo.setAfter(l, { state: `moved`, to: repo.pathText(to) }); toast(`${name} moved to ${repo.pathText(to)}`); return;
+  if (act === `back`) {
+    for (const h of list) await release(h, ev);
+    repo.setAfter(l, { state: `back` }); toast(`${name}: back in its place.${later}`, later ? { ms: 5000 } : {}); return;
+  }
+  if (act === `moved`) { // one place per inventory the line draws on
+    const byInv = new Map(); for (const h of list) { if (!byInv.has(h.inv)) byInv.set(h.inv, []); byInv.get(h.inv).push(h); }
+    const where = [];
+    for (const [inv, hs] of byInv) {
+      const title = byInv.size > 1 ? `Where did ${name} in ${invNameOf(inv)} go?` : `Where did ${name} go?`;
+      const to = inv === repo.hereId ? await ctx.pickLocation(hs[0].item.locationId || ``, title) : await pickPlaceIn(inv, title);
+      if (!to) return;
+      for (const h of hs) {
+        if (h.here) { await release(h, ev); await repo.moveItem(repo.items.find((i) => i.id === h.item.id), to); continue; }
+        const from = pathIn(inv, h.item.locationId);
+        const keep = h.item.status === `reserved` && !heldFor(h, ev); // still reserved for someone else
+        await changeItem(h, { locationId: to, ...(keep ? {} : { status: `home`, lentTo: ``, dueAt: `` }) }, { action: `moved`, detail: pathIn(inv, to), info: from ? `from ${from}` : `` });
+      }
+      where.push(byInv.size > 1 ? `${invNameOf(inv)} › ${pathIn(inv, to)}` : pathIn(inv, to));
+    }
+    repo.setAfter(l, { state: `moved`, to: where.join(` + `) }); toast(`${name} moved to ${where.join(` + `)}.${later}`, { ms: 4500 }); return;
   }
   if (act === `missing`) {
-    for (const it of here) await repo.markMissing(it);
-    repo.setAfter(l, { state: `missing` }); toast(here.length ? `${name} marked missing in the inventory` : `${name}: missing`); return;
+    for (const h of list) await changeItem(h, { status: `missing`, ...(heldFor(h, ev) ? { lentTo: ``, dueAt: `` } : {}) }, { action: `missing` });
+    repo.setAfter(l, { state: `missing` }); toast(list.length ? `${name} marked missing in the inventory.${later}` : `${name}: missing`); return;
   }
   if (act === `damaged`) {
     const note = await promptSheet(`What’s wrong with ${name}?`, { label: `Damage`, placeholder: `e.g. cracked leg, one bulb out`, okLabel: `Save` });
     if (note === null) return;
-    const line = `Damaged at ${ev.name}${ev.date ? ` (${ev.date})` : ``}${note ? `: ${note}` : ``}`;
-    for (const it of here) { await release(it); await repo.saveItem({ id: it.id, notes: [it.notes, line].filter(Boolean).join(`\n`) }, { logAction: `edited`, info: line }); }
-    repo.setAfter(l, { state: `damaged`, note }); toast(`${name}: damage noted`); return;
+    const text = `Damaged at ${ev.name}${ev.date ? ` (${ev.date})` : ``}${note ? `: ${note}` : ``}`;
+    for (const h of list) {
+      await release(h, ev);
+      await changeItem(h, { notes: [h.item.notes, text].filter(Boolean).join(`\n`) }, { action: `edited`, info: text });
+    }
+    repo.setAfter(l, { state: `damaged`, note }); toast(`${name}: damage noted.${later}`); return;
   }
   if (act === `kept`) { // bought for the event and kept: log it, and the line points at it
     repo.setAfter(l, { state: `kept-pending` });
@@ -472,6 +534,7 @@ async function afterAction(ev, lineId, act) {
   }
   if (act === `gone`) { repo.setAfter(l, { state: `gone` }); return; }
 }
+
 function shareAfter(ev) {
   const repo = R(); const out = [header(ev), `Where things went:`, ``];
   const by = {};
@@ -504,21 +567,22 @@ async function copyFlow(ev) {
   location.hash = `#/event/${copy.id}`;
 }
 
-/** Reserve this inventory's items for the event, so nobody lends them out before the date. */
+/** Reserve the event's items (in every inventory of the group on this phone), so nobody lends them out before the date. */
 async function reserveForEvent(ev) {
-  const repo = R(); const todo = []; const elsewhere = new Map(); let already = 0; let busy = 0;
-  for (const l of repo.linesOf(ev.id)) for (const s2 of repo.sourcesOf(l).filter((y) => !y.off)) {
-    const inv = repo.srcInv(s2);
-    if (inv !== repo.hereId) { elsewhere.set(inv, (elsewhere.get(inv) || 0) + 1); continue; }
-    const it = repo.items.find((i) => i.id === s2.id && !i.deleted); if (!it) continue;
-    if (it.status === `reserved` && Repo.personKey(it.lentTo) === Repo.personKey(ev.name)) already++;
-    else if (it.status === `home`) todo.push(it); else busy++;
+  const repo = R(); const todo = []; let already = 0; let busy = 0; const notOnPhone = new Set(); const perInv = new Map();
+  for (const l of repo.linesOf(ev.id)) {
+    const { list, notOnPhone: np } = itemsOfLine(l); np.forEach((x) => notOnPhone.add(x));
+    for (const h of list) {
+      if (heldFor(h, ev)) already++;
+      else if (h.item.status === `home`) { todo.push(h); perInv.set(h.inv, (perInv.get(h.inv) || 0) + 1); } else busy++;
+    }
   }
-  const other = [...elsewhere].map(([id, n]) => `${n} in ${invNameOf(id)}`).join(`, `);
-  if (!todo.length) { toast(already ? `Already reserved for ${ev.name}${other ? `. Open ${other.replace(/^\d+ in /, ``)} to reserve those too` : ``}` : `Nothing here to reserve${other ? ` (${other}: open that inventory to reserve them)` : ``}`, { ms: 5000 }); return; }
-  const msg = `Reserves ${todo.length} item${todo.length === 1 ? `` : `s`} in ${ctx.invName()} for ${ev.name}${ev.date ? `, to be picked up by ${whenText(ev.date).main}` : ``}, so nobody lends them out. They count as ready, and "Back in place" afterwards frees them.${busy ? ` ${busy} already lent or reserved for someone else stay as they are.` : ``}${other ? ` Items in other inventories (${other}) are reserved from there.` : ``}`;
+  const skipped = notOnPhone.size ? ` ${[...notOnPhone].map(invNameOf).join(`, `)} isn’t on this phone yet, so its items aren’t included (include it first).` : ``;
+  if (!todo.length) { toast(already ? `Everything is already reserved for ${ev.name}.${skipped}` : `Nothing to reserve.${skipped}`, { ms: 5000 }); return; }
+  const where = perInv.size > 1 || ![...perInv.keys()].includes(repo.hereId) ? ` (${[...perInv].map(([inv, n]) => `${n} in ${invNameOf(inv)}`).join(`, `)})` : ``;
+  const msg = `Reserves ${todo.length} item${todo.length === 1 ? `` : `s`}${where} for ${ev.name}${ev.date ? `, to be picked up by ${whenText(ev.date).main}` : ``}, so nobody lends them out. They count as ready, and "Back in place" afterwards frees them.${busy ? ` ${busy} already lent or reserved for someone else stay as they are.` : ``}${skipped}`;
   if (!(await confirmSheet(`Reserve for ${ev.name}?`, msg, `Reserve ${todo.length}`))) return;
-  for (const it of todo) await repo.reserveItem(it, ev.name, ev.date || ``);
+  for (const h of todo) await changeItem(h, { status: `reserved`, lentTo: ev.name, dueAt: ev.date || `` }, { action: `reserved`, detail: ev.name, info: ev.date ? `due ${ev.date}` : `` });
   toast(`Reserved ${todo.length} for ${ev.name}`);
 }
 
@@ -1042,7 +1106,7 @@ function eventMenu(ev) {
     el.innerHTML = `<div class="menu">
       <button data-m="edit">${icon(`edit`)} Rename, date, notes</button>
       <button data-m="copy">${icon(`calendar`)} Copy for next time</button>
-      ${!repo.readOnly && repo.linesOf(ev.id).some((l) => repo.sourcesOf(l).some((y) => !y.off && repo.srcInv(y) === repo.hereId)) ? `<button data-m="reserve">${icon(`clock`)} Reserve ${esc(ctx.invName())}’s items for it</button>` : ``}
+      ${repo.linesOf(ev.id).some((l) => repo.sourcesOf(l).some((y) => !y.off)) ? `<button data-m="reserve">${icon(`clock`)} Reserve its items</button>` : ``}
       ${secs.length ? `<button data-m="sections">${icon(`sheet`)} Rename a section</button>` : ``}
       <button data-m="delete" class="danger">${icon(`trash`)} Delete event</button></div>
       <p class="fine">Deleting the event only removes its list${ev._g ? ` for everyone in the group` : ``}. Nothing in any inventory changes.</p>`;

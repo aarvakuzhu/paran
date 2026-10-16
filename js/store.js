@@ -310,7 +310,14 @@ class GoogleBackend {
     };
     this.tabsOk ||= new Set();
     for (const op of ops) {
-      if (op.kind === `log`) { await sheets.append(this.sheetId, `Log!A1`, [objectToRow(op.data, LOG_COLS)]); continue; }
+      if (op.kind === `log`) { await sheets.append(op.sheet || this.sheetId, `Log!A1`, [objectToRow(op.data, LOG_COLS)]); continue; }
+      if (op.kind === `xitem`) { // a few fields of an item in another inventory of the group: only those cells, so its photo preview stays
+        const m = await rowMap(op.sheet, `Items`); const r = m[op.data.id];
+        if (!r) continue; // removed there meanwhile
+        await sheets.batchUpdateValues(op.sheet, Object.entries(op.data.fields)
+          .filter(([f]) => ITEM_COLS.includes(f)).map(([f, v]) => ({ range: `Items!${colLetterOf(ITEM_COLS.indexOf(f))}${r}`, values: [[v ?? ``]] })));
+        continue;
+      }
       if (op.kind === `member`) { await sheets.append(this.sheetId, `Members!A1`, [objectToRow(op.data, MEMBER_COLS)]); continue; }
       const target = op.sheet || this.sheetId; // group events go to the group's directory sheet
       if ((op.kind === `event` || op.kind === `eline`) && !this.tabsOk.has(target)) { if (await this.ensureEventTabs(target)) this.tabsOk.add(target); }
@@ -468,7 +475,7 @@ export class Repo extends EventTarget {
           ...(data.eventLines ? withPending(data.eventLines, `eline`, false) : mine(this.eventLines, false)),
           ...(!inGroup ? [] : data.groupLines ? withPending(data.groupLines, `eline`, true) : mine(this.eventLines, true)),
         ];
-        const pendingLog = this.outbox.filter((o) => o.kind === `log`).map((o) => o.data);
+        const pendingLog = this.outbox.filter((o) => o.kind === `log` && !o.sheet).map((o) => o.data); // not other inventories' entries
         this.log = [...(data.log || []), ...pendingLog];
         this.saveCache(); this.emit();
         const t = await this.backend.fetchThumbs();
@@ -513,7 +520,7 @@ export class Repo extends EventTarget {
         const op = this.outbox[0];
         if (op.kind === `photo`) await this.flushPhoto(op);
         else if (op.kind === `xphoto`) await this.flushExtraPhoto(op);
-        else if (op.sheet) { // a group event row, in the group's directory sheet
+        else if (op.sheet) { // a group event row (the group's directory sheet), or an item change in another inventory of the group
           try { await this.backend.writeOps([op]); }
           catch (e) {
             if (e instanceof AuthError || !/permission|forbidden|not found|caller does not have/i.test(e?.message || ``)) throw e;
@@ -927,6 +934,26 @@ export class Repo extends EventTarget {
   afterOf(line) { try { const o = JSON.parse(line.after || `null`); return o && o.state ? o : null; } catch { return null; } }
   setAfter(line, obj) {
     return this.saveLine({ id: line.id, after: obj ? JSON.stringify({ ...obj, at: now(), by: this.user.email }) : `` });
+  }
+
+  /**
+   * Change an item that lives in another inventory of the group (reserve it for an event, put it back, move it, mark it missing).
+   * item: that inventory's item object on this phone (it's updated in place, so screens show the change at once).
+   * The change goes to that inventory's sheet (only the changed cells) with a History entry there, like any other edit.
+   */
+  updateElsewhere(invId, item, fields, log = null) {
+    if (!invId || invId === this.hereId) throw new Error(`updateElsewhere is for other inventories`);
+    const ts = now();
+    const patch = { ...fields, updatedAt: ts, updatedBy: this.user.email };
+    Object.assign(item, patch);
+    try { // that inventory's copy on this phone, so it reads right before the next fetch (and offline)
+      const key = `paran.cache.${invId}`; const c = JSON.parse(localStorage.getItem(key) || `null`);
+      const it = c?.items?.find((i) => i.id === item.id);
+      if (it) { Object.assign(it, patch); localStorage.setItem(key, JSON.stringify(c)); }
+    } catch { /* storage full: the sheet still gets it */ }
+    this.outbox.push({ kind: `xitem`, sheet: invId, data: { id: item.id, fields: patch } });
+    if (log) this.outbox.push({ kind: `log`, sheet: invId, data: { ts, itemId: item.id, action: log.action, detail: log.detail || ``, by: this.user.email, info: log.info || ``, changes: `` } });
+    this.saveCache(); this.flush(); this.emit();
   }
 
   /** Copy an event for next time: same sections, items, quantities and notes (and, if asked, who brings what). */
