@@ -716,3 +716,9 @@ body.scanning { overflow: hidden; }
 .xhead .label-sm small { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .xtap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-top: 14px; padding: 12px 14px; border-radius: 14px; border: 1px dashed var(--line); background: none; color: var(--accent); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .xtap small { color: var(--ink-3); font-weight: 400; }
+.chips.scopes { margin: 10px 0 2px; }
+.chip.scope { display: inline-flex; align-items: center; gap: 6px; background: var(--accent-soft); border-color: transparent; color: var(--accent); font-weight: 600; }
+.chip.scope b { font-weight: 700; background: var(--surface); border-radius: 999px; padding: 0 6px; font-size: 0.78rem; line-height: 18px; }
+.chip.scope .ic { width: 14px; height: 14px; opacity: 0.7; }
+.chip.scope.off { background: var(--surface); border: 1px dashed var(--line); color: var(--ink-3); font-weight: 500; text-decoration: line-through; }
+.chip.scope.off .ic { opacity: 1; }

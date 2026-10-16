@@ -971,6 +971,7 @@ function viewFind(view) {
         <label class="search">${icon(`search`)}<input id="q" type="search" placeholder="Search, e.g. fix a leak" value="${esc(findState.q)}" autocomplete="off" enterkeyhint="search">
           <button type="button" class="icon-btn search-qr" id="scanlabel" aria-label="Scan a box or shelf label">${icon(`qr`)}</button></label>
       </div>
+      <div class="chips scroll scopes" id="scopes"></div>
       ${cats.length ? `<div class="chips scroll" id="filters">${cats.map((c) => `<button class="chip" data-f="cat:${esc(c)}">${esc(c)}</button>`).join(``)}</div>` : `<div id="filters"></div>`}
     </div>
     <div id="results"></div>`;
@@ -979,7 +980,12 @@ function viewFind(view) {
   const searching = () => top.classList.toggle(`searching`, document.activeElement === q || Boolean(findState.q.trim() || findState.filter.startsWith(`cat:`)));
   q.addEventListener(`focus`, searching);
   q.addEventListener(`blur`, () => setTimeout(searching, 250)); // let a chip tap land first
-  q.addEventListener(`input`, () => { findState.q = q.value; renderResults(); });
+  q.addEventListener(`input`, () => { findState.q = q.value; if (!q.value.trim()) xdrop.clear(); renderResults(); });
+  $(`#scopes`).addEventListener(`click`, (e) => {
+    const c = e.target.closest(`[data-scope]`); if (!c) return;
+    const id = c.dataset.scope; if (xdrop.has(id)) xdrop.delete(id); else xdrop.add(id);
+    renderResults();
+  });
   $(`#scanlabel`).addEventListener(`click`, (e) => { e.preventDefault(); scanLabelFlow(); });
   $(`#results`).addEventListener(`click`, async (e) => {
     const xc = e.target.closest(`[data-xinv]`);
@@ -1050,13 +1056,15 @@ function renderResults() {
       return;
     }
     if (cross) { // every inventory: this one first, then the rest as they come in
+      const hereOff = xdrop.has(repo.backend.sheetId);
       box.innerHTML = `<div id="xstatus"></div>
-        <div class="list-head"><div class="label-sm">${esc(invName())} · ${list.length ? `${list.length} found` : `no match`}</div>${list.length ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
-        ${list.length ? `<div class="cards">${list.slice(0, 300).map((i) => itemCard(i)).join(``)}</div>` : ``}
+        ${hereOff ? `` : `<div class="list-head"><div class="label-sm">${esc(invName())} · ${list.length ? `${list.length} found` : `no match`}</div>${list.length ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
+        ${list.length ? `<div class="cards">${list.slice(0, 300).map((i) => itemCard(i)).join(``)}</div>` : ``}`}
         <div id="xresults"></div>`;
-      crossSearch(q, list.length);
+      crossSearch(q, hereOff ? 0 : list.length, list.length);
       return;
     }
+    if ($(`#scopes`)) $(`#scopes`).innerHTML = ``;
     const title = !q && f === `all` ? `All items · ${list.length}` : !q && f === `recent` ? `Recently added` : `${list.length} found`;
     const back = !q && (f === `all` || f === `recent`) ? `<button type="button" class="link small" data-show="">${icon(`back`)} Home</button>` : ``;
     box.innerHTML = `<div class="list-head"><div class="label-sm">${back}${esc(title)}</div><button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button></div>
@@ -2254,6 +2262,7 @@ function aiConsent(keyOnly = false) {
 // (online) and kept on the phone for next time. Offline, a banner says what wasn't checked.
 const XFRESH_MS = 10 * 60_000;
 const xmem = {}; // sheetId -> { items, locations, thumbs, at, loading, failed }
+const xdrop = new Set(); // inventories dropped from this search with their chip (cleared with the search)
 let xrun = 0;
 const crossReady = () => repo?.backend.kind === `google` && Object.keys(loadKnown(repo.user.email).inv).filter((id) => id !== repo.backend.sheetId).length > 0;
 
@@ -2313,7 +2322,7 @@ function xcard(invId, item, locations, thumbs) {
     </div></a>`;
 }
 
-async function crossSearch(q, hereCount) {
+async function crossSearch(q, hereCount, hereHits = hereCount) {
   const run = ++xrun;
   const k = loadKnown(repo.user.email);
   const ids = Object.keys(k.inv).filter((id) => id !== repo.backend.sheetId);
@@ -2322,6 +2331,7 @@ async function crossSearch(q, hereCount) {
   const draw = () => {
     if (run !== xrun || !$(`#xresults`)) return;
     const sections = []; const unchecked = []; const loading = []; const needTap = []; let total = 0;
+    const chips = [[repo.backend.sheetId, invName(), hereHits]];
     for (const id of ids) {
       const inv = k.inv[id];
       if (inv.reachable === false) { needTap.push(id); continue; }
@@ -2329,10 +2339,18 @@ async function crossSearch(q, hereCount) {
       if (!m?.items) { (online && !xmem[id]?.failed ? loading : unchecked).push(id); continue; }
       if (xmem[id]?.loading && online) loading.push(id);
       const hits = search(m.items, q, (locId) => xpath(m.locations, locId).join(` › `));
+      chips.push([id, inv.name || `Inventory`, hits.length]);
+      if (xdrop.has(id)) continue;
       total += hits.length;
       if (hits.length) sections.push(`<div class="list-head xhead"><div class="label-sm">${esc(inv.name || `Inventory`)}${groupName(id) ? ` <small>· ${esc(groupName(id))}</small>` : ``} · ${hits.length} found</div></div>
         <div class="cards">${hits.slice(0, 50).map((i) => xcard(id, i, m.locations, m.thumbs)).join(``)}</div>`);
     }
+    // one chip per inventory with matches: tap to drop it from the results, tap again to bring it back
+    const shown = chips.filter(([id, , n]) => n || xdrop.has(id));
+    const sc = $(`#scopes`);
+    if (sc) sc.innerHTML = shown.length > 1 || xdrop.size ? shown.map(([id, name, n]) => xdrop.has(id)
+      ? `<button type="button" class="chip scope off" data-scope="${esc(id)}" aria-pressed="false">${icon(`plus`)}${esc(name)}</button>`
+      : `<button type="button" class="chip scope" data-scope="${esc(id)}" aria-pressed="true">${esc(name)} <b>${n}</b>${icon(`x`)}</button>`).join(``) : ``;
     const st = $(`#xstatus`);
     if (st) st.innerHTML = !online
       ? `<div class="offline-banner">${icon(`alert`)}<div><b>You’re offline</b><span>Showing what’s on this phone.${unchecked.length ? ` Not checked: ${esc(unchecked.map((id) => k.inv[id].name || `Inventory`).join(`, `))}.` : ``}</span></div></div>`
@@ -2340,7 +2358,8 @@ async function crossSearch(q, hereCount) {
       : unchecked.length ? `<div class="xloading warn">${icon(`alert`)} Couldn’t check ${esc(unchecked.map((id) => k.inv[id].name || `Inventory`).join(`, `))} right now.</div>` : ``;
     $(`#xresults`).innerHTML = `${sections.length ? `<div class="label-sm xother">In your other inventories</div>${sections.join(``)}` : ``}
       ${needTap.length ? `<button type="button" class="xtap" data-xopen="${esc(k.inv[needTap[0]].groupId || ``)}">${icon(`plus`)} Include ${esc(needTap.map((id) => k.inv[id].name || `Inventory`).join(`, `))} <small>one tap to open on this phone</small></button>` : ``}
-      ${!hereCount && !total && !loading.length ? `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Not in any of your inventories${unchecked.length ? ` on this phone` : ``}.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>` : ``}`;
+      ${!hereCount && !total && !loading.length && xdrop.size && shown.some(([id, , n]) => n && xdrop.has(id)) ? `<p class="muted pad center">Matches are in the inventories you hid. Tap a chip above to bring one back.</p>`
+        : !hereCount && !total && !loading.length ? `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Not in any of your inventories${unchecked.length ? ` on this phone` : ``}.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>` : ``}`;
   };
   draw();
   if (!online) return;
