@@ -145,7 +145,7 @@ export const drive = {
     return api(`${DRIVE}/files/${fileId}?addParents=${toParent}&removeParents=${fromParents}&fields=id,parents`, { method: `PATCH`, ...jsonBody({}) });
   },
   meta(fileId) {
-    return api(`${DRIVE}/files/${fileId}?fields=id,name,owners(emailAddress),parents,appProperties,webViewLink`);
+    return api(`${DRIVE}/files/${fileId}?fields=id,name,owners(emailAddress),parents,appProperties,webViewLink,capabilities(canEdit)`);
   },
 };
 

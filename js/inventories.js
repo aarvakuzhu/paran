@@ -129,10 +129,10 @@ export async function addToGroup(user, inv, groupId) {
 }
 
 /** Everyone invited here can open every inventory in the group (Drive passes folder access down). */
-export async function inviteToGroup(user, groupId, email) {
+export async function inviteToGroup(user, groupId, email, role = `writer`) {
   const k = loadKnown(user.email); const group = k.groups[groupId];
-  await drive.share(groupId, email, `writer`, true);
-  const person = { email, role: `member`, invitedBy: user.email, joinedAt: now() };
+  await drive.share(groupId, email, role === `reader` ? `reader` : `writer`, true);
+  const person = { email, role: role === `reader` ? `viewer` : `member`, invitedBy: user.email, joinedAt: now() };
   if (group?.dirId) await sheets.append(group.dirId, `People!A1`, [objectToRow(person, DIR_PEOPLE_COLS)]);
   if (group) { group.people = [...(group.people || []), person]; saveKnown(user.email, k); }
   return person;

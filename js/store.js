@@ -76,6 +76,7 @@ class GoogleBackend {
   kind = `google`;
   user = null; sheetId = null; sheetName = null; photoFolderId = null; rootFolderId = null; isOwner = true;
   groupDirId = null; // set when this inventory belongs to a group (its directory sheet)
+  canEdit = true;    // false when shared as "Can view" (Google enforces it; the app hides edit actions)
 
   get cacheKey() { return this.sheetId; }
   get canShare() { return this.isOwner; }
@@ -111,8 +112,8 @@ class GoogleBackend {
   // Remember enough to reopen straight into the cached inventory, even before Google has re-issued a token.
   saveSession() {
     if (this.legacy) return;
-    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId } = this;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId }));
+    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId, canEdit } = this;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId, canEdit }));
   }
   static savedSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || `null`); } catch { return null; } }
   resume() {
@@ -141,7 +142,7 @@ class GoogleBackend {
       this.user = { email: u.email, name: u.name || u.email, picture: u.picture };
       await this.inspectSheet(); this.legacy = false;
     }
-    else if (!this.sheetName || this.fresh) { await this.inspectSheet(); this.fresh = false; } // just switched here, or an old session
+    else { await this.inspectSheet(); this.fresh = false; } // each open: name, owner, and whether this person can still edit
     await this.ensureHeaders(); await this.ensurePhotoFolder(); this.saveSession();
   }
 
@@ -150,6 +151,7 @@ class GoogleBackend {
     this.sheetName = m.name || null;
     const owner = m.owners?.[0]?.emailAddress;
     this.isOwner = !owner || owner === this.user.email;
+    this.canEdit = this.isOwner || m.capabilities?.canEdit !== false;
     this.rootFolderId = this.isOwner ? (m.parents?.[0] || null) : null;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
     const k = rememberInventory(this.user.email, this.sheetId, { name: this.sheetName, owner: this.isOwner, reachable: true });
@@ -164,6 +166,7 @@ class GoogleBackend {
 
   /** Older sheets: add header cells for columns introduced since (they're always appended at the end). */
   async ensureHeaders() {
+    if (!this.canEdit) return;
     const key = `paran.hdr.${this.sheetId}`;
     const ver = `${ITEM_COLS.length}.${LOG_COLS.length}`;
     if (localStorage.getItem(key) === ver) return;
@@ -179,6 +182,7 @@ class GoogleBackend {
   }
 
   async ensurePhotoFolder() {
+    if (!this.canEdit) return; // viewers don't add photos
     const key = `paran.photos.${this.user.email}.${this.sheetId}`;
     this.photoFolderId = localStorage.getItem(key);
     if (this.photoFolderId) return;
@@ -290,10 +294,11 @@ class GoogleBackend {
     return blob;
   }
 
-  async invite(email) {
-    await drive.share(this.sheetId, email, `writer`, true);
+  /** role: `writer` (Can edit) or `reader` (Can view: Google won't let them change anything). */
+  async invite(email, role = `writer`) {
+    await drive.share(this.sheetId, email, role === `reader` ? `reader` : `writer`, true);
     if (this.rootFolderId) await drive.share(this.rootFolderId, email, `reader`, false);
-    return { email, role: `member`, photoFolderId: ``, invitedBy: this.user.email, joinedAt: now() };
+    return { email, role: role === `reader` ? `viewer` : `member`, photoFolderId: ``, invitedBy: this.user.email, joinedAt: now() };
   }
 
   forgetSheet() { localStorage.removeItem(this.prefKey()); }
@@ -396,14 +401,30 @@ export class Repo extends EventTarget {
 
   handleError(e) {
     console.error(e);
+    if (this.backend.kind === `google` && /permission|forbidden/i.test(e?.message || ``) && !this.checkingAccess) {
+      // maybe access was changed to "Can view": ask Drive, then switch to view-only if so
+      this.checkingAccess = true;
+      this.backend.inspectSheet().then(() => {
+        this.backend.saveSession();
+        if (this.readOnly) { this.setStatus(`synced`); this.emit(`readonly`); this.emit(); }
+        else this.setStatus(`error`, e);
+      }).catch(() => this.setStatus(`error`, e)).finally(() => { this.checkingAccess = false; });
+      return;
+    }
     if (e instanceof AuthError) this.setStatus(`auth`, e);
     else this.setStatus(navigator.onLine ? `error` : `offline`, e);
   }
 
-  queue(op) { this.outbox.push(op); this.saveCache(); this.flush(); }
+  /** Shared with this person as "Can view". */
+  get readOnly() { return this.backend.kind === `google` && this.backend.canEdit === false; }
+
+  queue(op) {
+    if (this.readOnly) { this.emit(`readonly`); return; } // nothing is changed or queued
+    this.outbox.push(op); this.saveCache(); this.flush();
+  }
 
   async flush() {
-    if (this.syncing || !this.outbox.length) return;
+    if (this.syncing || !this.outbox.length || this.readOnly) return;
     if (!navigator.onLine) { this.setStatus(`offline`); return; }
     this.syncing = true; this.setStatus(`syncing`);
     try {
@@ -613,8 +634,8 @@ export class Repo extends EventTarget {
   }
   deleteLocation(loc) { return this.saveLocation({ id: loc.id, deleted: now() }); }
 
-  async invite(email) {
-    const member = await this.backend.invite(email);
+  async invite(email, role = `writer`) {
+    const member = await this.backend.invite(email, role);
     this.members.push(member);
     this.queue({ kind: `member`, data: member });
     this.emit();

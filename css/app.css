@@ -193,7 +193,7 @@ details .field { margin-top: 10px; }
   padding: 12px 0; background: linear-gradient(transparent, var(--bg) 30%); }
 .form-actions .btn { flex: 1; }
 .inline-new { display: flex; gap: 8px; margin-top: 14px; }
-.inline-new input { flex: 1; }
+.inline-new input { flex: 1; min-width: 0; }
 
 /* ---------- lists / places ---------- */
 .list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
@@ -722,3 +722,14 @@ body.scanning { overflow: hidden; }
 .chip.scope .ic { width: 14px; height: 14px; opacity: 0.7; }
 .chip.scope.off { background: var(--surface); border: 1px dashed var(--line); color: var(--ink-3); font-weight: 500; text-decoration: line-through; }
 .chip.scope.off .ic { opacity: 1; }
+
+/* ---------- View only ("Can view") ---------- */
+body.readonly .tabbar .fab, body.readonly .place-add, body.readonly .add-row, body.readonly .setup-link,
+body.readonly #view a[href^="#/add"], body.readonly #view a[href^="#/edit"], body.readonly #view a[href="#/setup"],
+body.readonly [data-a="move"], body.readonly [data-a="lend"], body.readonly [data-a="return"], body.readonly [data-a="pickup"],
+body.readonly [data-a="found"], body.readonly [data-a="unsave"], body.readonly [data-a="scan"], body.readonly #view [data-a="menu"],
+body.readonly [data-quick], body.readonly .add-photo, body.readonly .ptile.add, body.readonly [data-useold], body.readonly [data-remove],
+body.readonly #selbar [data-s="move"], body.readonly .sheet [data-back], body.readonly .sheet [data-pickall], body.readonly .sheet [data-all],
+body.readonly .sheet [data-unsave], body.readonly .sheet [data-pick], body.readonly .xtap + .empty .btn { display: none !important; }
+body.readonly .tabbar { grid-template-columns: repeat(4, 1fr); }
+.invite-form select { flex: none; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 0 8px; min-height: 44px; font-size: 0.9rem; color: var(--ink); }

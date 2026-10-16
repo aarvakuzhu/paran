@@ -78,6 +78,7 @@ async function start(kind, { interactive = false, choice } = {}) {
     localStorage.setItem(MODE_KEY, kind);
     repo.addEventListener(`change`, onRepoChange);
     repo.addEventListener(`status`, renderStatus);
+  repo.addEventListener(`readonly`, onReadOnly);
     renderShell();
     if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
@@ -95,6 +96,7 @@ function resumeGoogle() {
   repo = r;
   repo.addEventListener(`change`, onRepoChange);
   repo.addEventListener(`status`, renderStatus);
+  repo.addEventListener(`readonly`, onReadOnly);
   renderShell(); render();
   if (hasValidToken()) repo.refresh();
   else repo.setStatus(navigator.onLine ? `auth` : `offline`);
@@ -133,6 +135,14 @@ function installQuietRenew() {
     renewNow(); // inside a user gesture, so the browser allows Google's popup
   }, true);
 }
+
+let roToastAt = 0;
+function onReadOnly() {
+  renderStatus(); document.body.classList.add(`readonly`);
+  if (Date.now() - roToastAt > 4000) { roToastAt = Date.now(); toast(`You can view ${invName()}, but not change it. Ask its owner for edit access.`, { ms: 5000 }); }
+}
+const roleLabel = (role) => (role === `owner` ? `Owner` : role === `viewer` ? `Can view` : `Can edit`);
+const roleSelect = () => `<select name="role" aria-label="Access"><option value="writer">Can edit</option><option value="reader">Can view</option></select>`;
 
 function onRepoChange() {
   const r = route().name;
@@ -245,7 +255,8 @@ function renderStatus() {
     pending: [`warn`, `${pending} to save`], offline: [`warn`, pending ? `Offline · ${pending} waiting` : `Offline`],
     auth: [`warn`, pending ? `${pending} waiting · tap to sync` : `Tap to sync`], error: [`bad`, `Not saved yet`],
   };
-  const [cls, label] = repo.backend.kind === `demo` ? [`demo`, `Demo`] : (map[s] || map.idle);
+  const [cls, label] = repo.backend.kind === `demo` ? [`demo`, `Demo`]
+    : repo.readOnly && [`synced`, `idle`].includes(s) ? [`demo`, `View only`] : (map[s] || map.idle);
   el.className = `status ${cls}`;
   el.innerHTML = `<i></i>${esc(label)}`;
 }
@@ -287,6 +298,8 @@ function render() {
   const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places`, group: `places` }[r.name] || `find`;
   const nm = $(`#invname`); if (nm) nm.textContent = invName();
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
+  document.body.classList.toggle(`readonly`, Boolean(repo.readOnly)); // "Can view": edit actions are hidden
+  if (repo.readOnly && [`add`, `edit`, `setup`].includes(r.name)) { toast(`You can view ${invName()}, not change it`); location.replace(`#/`); return; }
   document.body.classList.toggle(`focus-mode`, r.name === `add` || r.name === `edit` || r.name === `setup`); // no tab bar while filling a form
   if (routeChanged && (r.name === `add` || r.name === `edit`)) $$(`#toasts .toast`).forEach((t) => t.remove()); // an Undo from another screen doesn't belong here
   updateOutBadge();
@@ -2102,9 +2115,9 @@ async function scanLabelFlow() {
     el.innerHTML = `<p class="muted small">${esc(repo.pathText(loc.id))} · ${itemsWord(n)}</p>
       <div class="menu">
         <button data-m="open">${icon(`search`)} See what’s inside</button>
-        <button data-m="bring">${icon(`ret`)} Put items away here</button>
+        ${repo.readOnly ? `` : `<button data-m="bring">${icon(`ret`)} Put items away here</button>
         <button data-m="add">${icon(`plus`)} Add a new item here</button>
-        <button data-m="scan">${icon(`spark`)} Scan many into it</button>
+        <button data-m="scan">${icon(`spark`)} Scan many into it</button>`}
       </div>`;
     el.onclick = (e) => {
       const m = e.target.closest(`[data-m]`)?.dataset.m; if (!m) return;
@@ -2554,9 +2567,9 @@ function viewGroup(view, r) {
         ${g.owner && canAddCurrent ? `<button type="button" class="list-row link-row add-row" data-a="addcur">${icon(`move`)}<span>Add “${esc(invName())}” to this group</span></button>` : ``}
       </div>
       <div class="label-sm">People · ${people.length}</div>
-      <div class="list">${people.map((p) => `<div class="list-row">${icon(`users`)}<span>${esc(p.email)}</span><small>${p.role === `owner` ? `Owner` : `Can edit`}</small></div>`).join(``)}</div>
-      ${g.owner ? `<form class="inline-new" id="ginvite"><input type="email" placeholder="Their Google email" required><button class="btn primary">Invite</button></form>
-        <p class="fine">They can open and edit every inventory in ${esc(g.name)}, including ones added later. They sign in to ${esc(CONFIG.APP_NAME)}, choose “Open one shared with you” and pick “${esc(g.name)} – directory”.</p>`
+      <div class="list">${people.map((p) => `<div class="list-row">${icon(`users`)}<span>${esc(p.email)}</span><small>${roleLabel(p.role)}</small></div>`).join(``)}</div>
+      ${g.owner ? `<form class="inline-new invite-form" id="ginvite"><input type="email" placeholder="Their Google email" required>${roleSelect()}<button class="btn primary">Invite</button></form>
+        <p class="fine">They can open every inventory in ${esc(g.name)}, including ones added later: <b>Can edit</b> to change things, <b>Can view</b> to search and browse only. They sign in to ${esc(CONFIG.APP_NAME)}, choose “Open one shared with you” and pick “${esc(g.name)} – directory”.</p>`
         : `<p class="fine">The group’s owner can invite people.</p>`}
     </div>`;
   };
@@ -2593,7 +2606,8 @@ function viewGroup(view, r) {
     if (e.target.id !== `ginvite`) return;
     e.preventDefault();
     const input = e.target.querySelector(`input`); const btn = e.target.querySelector(`button`); btn.disabled = true;
-    try { await inviteToGroup(user, gid, input.value.trim()); toast(`Invited ${input.value.trim()} to ${k.groups[gid].name}`); k = loadKnown(user.email); draw(); }
+    const role = e.target.querySelector(`select`)?.value || `writer`;
+    try { await inviteToGroup(user, gid, input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${k.groups[gid].name} (${role === `reader` ? `can view` : `can edit`})`); k = loadKnown(user.email); draw(); }
     catch (err) { toast(`Couldn’t invite: ${err.message}`); btn.disabled = false; }
   };
 }
@@ -2622,11 +2636,11 @@ function viewMore(view, r) {
 
       ${g ? `<div class="label-sm">People</div>
       <div class="list">
-        ${repo.members.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${m.role === `owner` ? `Owner` : `Can edit`}</small></div>`).join(``)}
+        ${repo.members.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${roleLabel(m.role)}</small></div>`).join(``)}
       </div>
-      ${repo.backend.canShare ? `<form class="inline-new" id="invite"><input type="email" placeholder="Their Google email" required><button class="btn primary">Invite</button></form>
-        <p class="fine">They get edit access to the sheet and can view photos. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick “${esc(invName())}”.</p>
-        ${currentGroupId() ? `<p class="fine">Everyone in the group <a href="#/group/${esc(currentGroupId())}">${esc(loadKnown(repo.user.email).groups[currentGroupId()]?.name || ``)}</a> can open it too.</p>` : ``}` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
+      ${repo.backend.canShare ? `<form class="inline-new invite-form" id="invite"><input type="email" placeholder="Their Google email" required>${roleSelect()}<button class="btn primary">Invite</button></form>
+        <p class="fine"><b>Can edit</b>: add, move, lend and change things. <b>Can view</b>: search and browse only; Google won’t let them change anything. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick “${esc(invName())}”.</p>
+        ${currentGroupId() ? `<p class="fine">Everyone in the group <a href="#/group/${esc(currentGroupId())}">${esc(loadKnown(repo.user.email).groups[currentGroupId()]?.name || ``)}</a> can open it too.</p>` : ``}` : repo.readOnly ? `<p class="fine">You can view this inventory. Ask its owner if you need to change things.</p>` : `<p class="fine">This inventory is shared with you. The owner can invite others.</p>`}` : ``}
 
       <div class="label-sm" id="ai">AI suggestions</div>
       ${aiReady() ? `<div class="menu">
@@ -2659,9 +2673,9 @@ function viewMore(view, r) {
 
   $(`#invite`)?.addEventListener(`submit`, async (e) => {
     e.preventDefault();
-    const input = e.target.querySelector(`input`);
+    const input = e.target.querySelector(`input`); const role = e.target.querySelector(`select`)?.value || `writer`;
     const btn = e.target.querySelector(`button`); btn.disabled = true;
-    try { await repo.invite(input.value.trim()); toast(`Invited ${input.value.trim()}`); input.value = ``; }
+    try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} (${role === `reader` ? `can view` : `can edit`})`); input.value = ``; render(); }
     catch (err) { toast(`Couldn’t invite: ${err.message}`); }
     finally { btn.disabled = false; }
   });
