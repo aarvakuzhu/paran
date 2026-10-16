@@ -979,11 +979,12 @@ export class Repo extends EventTarget {
     return this.saveLine({ id: line.id, bringers: clean.length ? JSON.stringify(clean) : `` });
   }
 
-  /** Google accounts with access here (this inventory's people, and the group's): [{ email, role }], not removed, not me first. */
-  accounts() {
+  /** Google accounts with access here: [{ email, role }], not removed. */
+  accounts() { // in a group: the group's people (access is the group's); otherwise this inventory's people
+    const g = this.group();
+    const src = g ? (g.people || []) : this.members;
     const map = new Map();
-    for (const m of this.members) if (m.email && m.role !== `removed`) map.set(m.email.toLowerCase(), { email: m.email.toLowerCase(), role: m.role });
-    for (const p of this.group()?.people || []) if (p.email && p.role !== `removed`) map.set(p.email.toLowerCase(), { email: p.email.toLowerCase(), role: p.role });
+    for (const p of src) if (p.email && p.role !== `removed`) map.set(p.email.toLowerCase(), { email: p.email.toLowerCase(), role: p.role });
     return [...map.values()];
   }
   /** "ravi.kumar@gmail.com" -> "Ravi Kumar" (unless they've been called something else on an event). */

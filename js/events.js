@@ -120,7 +120,7 @@ export function viewEvents(view) {
   const repo = R();
   const { upcoming, past } = splitEvents();
   const g = repo.group();
-  const canNew = g ? !repo.groupReadOnly || !repo.readOnly : !repo.readOnly;
+  const canNew = g ? !repo.groupReadOnly : !repo.readOnly;
   const newBtn = (cls) => (canNew ? `<button type="button" class="btn primary ${cls}" data-ev="new">${icon(`plus`)} New event</button>` : ``);
   view.innerHTML = `<div class="events">
     <div class="more-head"><a class="back" href="#/more">${icon(`back`)} More</a></div>
@@ -145,8 +145,7 @@ export function viewEvents(view) {
 /** Name, date, notes (and, in a group, whole group or only this inventory). Resolves the fields, or null. */
 function eventForm(ev = null) {
   const repo = R(); const g = ev ? null : repo.group();
-  const canGroup = g && !repo.groupReadOnly; const canHere = !repo.readOnly;
-  let group = Boolean(canGroup);
+  const group = Boolean(g); // in a group, every event is the group's
   return new Promise((resolve) => {
     let answered = false;
     sheet(ev ? `Edit event` : `New event`, (el, close) => {
@@ -154,19 +153,9 @@ function eventForm(ev = null) {
         <label class="field"><span>Name</span><input name="name" required value="${esc(ev?.name || ``)}" placeholder="e.g. Graduation ceremony, Pongal, Camping trip"></label>
         <label class="field"><span>Date <small>(optional)</small></span><input name="date" type="date" value="${esc(ev?.date || ``)}"></label>
         <label class="field"><span>Notes <small>(optional)</small></span><input name="notes" value="${esc(ev?.notes || ``)}" placeholder="e.g. School gym, about 200 people"></label>
-        ${canGroup && canHere ? `<div class="field"><span>Who it’s for</span><div class="seg ev-scope">
-          <button type="button" data-scope="g" class="on">${icon(`users`)} ${esc(g.name)}</button>
-          <button type="button" data-scope="i">${icon(`box`)} Only ${esc(ctx.invName())}</button></div>
-          <small class="fine" data-scopenote>Everyone in ${esc(g.name)} sees it. Things can come from any of its inventories.</small></div>` : ``}
         <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">${ev ? `Save` : `Create`}</button></div></form>`;
       const f = $(`form`, el);
       if (!ev) setTimeout(() => f.elements.name.focus(), 250);
-      el.querySelector(`.ev-scope`)?.addEventListener(`click`, (e) => {
-        const b = e.target.closest(`[data-scope]`); if (!b) return;
-        group = b.dataset.scope === `g`;
-        el.querySelectorAll(`[data-scope]`).forEach((x) => x.classList.toggle(`on`, x === b));
-        $(`[data-scopenote]`, el).textContent = group ? `Everyone in ${g.name} sees it. Things can come from any of its inventories.` : `Only people with ${ctx.invName()} see it. Things come from this inventory.`;
-      });
       $(`[data-no]`, el).onclick = () => { answered = true; resolve(null); close(); };
       f.onsubmit = (e) => {
         e.preventDefault(); answered = true;
@@ -936,8 +925,6 @@ function lineSheet(ev, line) {
       const cur = el._cur;
       const q = e.target.closest(`[data-wq]`);
       if (q) { const list = shares(cur); list[Number(q.dataset.wq)].qty = Math.max(1, Number(q.value) || 1); repo.setBringers(cur, list); draw(); return; }
-      const a = e.target.closest(`[data-acct]`);
-      if (a) { const list = shares(cur); list[Number(a.dataset.acct)].email = a.value; repo.setBringers(cur, list); draw(); return; }
       // "How many needed" applies at once, so the split below follows it
       const need = e.target.closest(`[data-need]`);
       if (need) { repo.saveLine({ id: cur.id, qty: Math.max(1, Number(need.value) || 1) }); draw(); }
@@ -1059,7 +1046,7 @@ function whoBlock(line, canEdit) {
   const start = Math.max(1, left > 0 ? left : need > 1 ? 1 : 1);
   const rows = sh.map((b, i) => `<div class="who-row">
       <span class="who-name">${icon(b.email ? `check` : `users`)} <b>${esc(b.name)}</b>
-        ${accounts.length ? `<select data-acct="${i}" aria-label="Google account for ${esc(b.name)}"><option value="">No Google account linked</option>${accounts.map((a) => `<option value="${esc(a.email)}" ${a.email === b.email ? `selected` : ``}>${esc(acctLabel(a.email))}</option>`).join(``)}</select>` : ``}</span>
+        ${b.email ? `<small>${esc(acctLabel(b.email))}</small>` : ``}</span>
       ${need > 1 || sh.length > 1 ? `<span class="stepper sm"><button type="button" class="icon-btn" data-wstep="${i}" data-d="-1" aria-label="Fewer">−</button><input type="number" min="1" inputmode="numeric" value="${b.qty}" data-wq="${i}" aria-label="How many ${esc(b.name)} brings"><button type="button" class="icon-btn" data-wstep="${i}" data-d="1" aria-label="More">+</button></span>` : ``}
       <button type="button" class="icon-btn un" data-unbring="${i}" aria-label="Remove ${esc(b.name)}">${icon(`x`)}</button>
     </div>`).join(``);
@@ -1072,8 +1059,7 @@ function whoBlock(line, canEdit) {
       <button class="btn primary">Add</button></form>
     <datalist id="ev-people">${names.map((n) => `<option value="${esc(n.name)}">${esc(n.email || ``)}</option>`).join(``)}</datalist>
     ${quick.length ? `<div class="chips who-quick">${quick.map((n) => `<button type="button" class="chip" data-bring="${esc(n.name)}" data-email="${esc(n.email || ``)}">${icon(n.email ? `check` : `plus`)} ${esc(n.email === me ? `Me` : n.name)}</button>`).join(``)}</div>` : ``}
-    ${need > 1 ? `<p class="fine">Set how many first, then tap a name or type one. ${accounts.length ? `Names with ✓ have access to ${esc(repo.group()?.name || ctx.invName())}; they’ll see what they’re bringing when they open ${esc(ctx.appName || `Paran`)}.` : ``}</p>`
-      : accounts.length ? `<p class="fine">Names with ✓ have access; they’ll see what they’re bringing when they open the app.</p>` : ``}`}`;
+    <p class="fine">${need > 1 ? `Set how many first, then tap a name or type one. ` : ``}${accounts.length ? `✓ = in ${esc(repo.group()?.name || ctx.invName())}: they see what they’re bringing when they open the app. Anyone else gets their list by message.` : `They get their list by message (Share).`}</p>`}`;
 }
 
 /** Pick one item the event can use. Resolves a pool entry { invId, item }, or null. */
