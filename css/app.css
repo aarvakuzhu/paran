@@ -703,3 +703,16 @@ body.scanning { overflow: hidden; }
 .inv-row.current > .ic:first-child { color: var(--accent); }
 .inv-actions { margin-top: 6px; }
 .group .list + .label-sm { margin-top: 22px; }
+
+/* ---------- Search across inventories ---------- */
+.offline-banner { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 10px; padding: 12px 14px; border-radius: 14px; background: var(--amber-soft); color: var(--ink); border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); }
+.offline-banner .ic { color: var(--amber); flex: none; margin-top: 1px; }
+.offline-banner b { display: block; color: var(--amber); }
+.offline-banner span { font-size: 0.88rem; color: var(--ink-2); }
+.xloading { display: flex; align-items: center; gap: 8px; margin: 2px 0 8px; font-size: 0.85rem; color: var(--ink-2); }
+.xloading .ic { width: 16px; height: 16px; color: var(--accent); }
+.xloading.warn .ic { color: var(--amber); }
+.xother { margin-top: 26px; color: var(--accent); }
+.xhead .label-sm small { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.xtap { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-top: 14px; padding: 12px 14px; border-radius: 14px; border: 1px dashed var(--line); background: none; color: var(--accent); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.xtap small { color: var(--ink-3); font-weight: 400; }

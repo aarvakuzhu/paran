@@ -299,6 +299,13 @@ class GoogleBackend {
   forgetSheet() { localStorage.removeItem(this.prefKey()); }
 }
 
+/** Read another inventory's items and places (for search across inventories). Nothing is written. */
+export async function fetchInventory(sheetId) {
+  const b = new GoogleBackend(); b.sheetId = sheetId;
+  const d = await b.fetchAll();
+  return { items: d.items, locations: d.locations };
+}
+
 function touchLru(photoId) {
   let list = [];
   try { list = JSON.parse(localStorage.getItem(PHOTO_LRU_KEY) || `[]`); } catch { /* ignore */ }

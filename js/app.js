@@ -1,7 +1,8 @@
 import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSheets, AuthError } from './google.js';
 import { loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory } from './inventories.js';
-import { Repo } from './store.js';
+import { Repo, fetchInventory } from './store.js';
+import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
 import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
@@ -54,6 +55,7 @@ async function boot() {
   window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
   installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
+  window.addEventListener(`offline`, () => { if (!repo) return; if (repo.backend.kind === `google`) repo.setStatus(`offline`); if (route().name === `find`) renderResults(); }); // search shows the offline note at once
   document.addEventListener(`visibilitychange`, () => { if (!document.hidden) repo?.refresh(); });
 
   const mode = localStorage.getItem(MODE_KEY);
@@ -980,6 +982,10 @@ function viewFind(view) {
   q.addEventListener(`input`, () => { findState.q = q.value; renderResults(); });
   $(`#scanlabel`).addEventListener(`click`, (e) => { e.preventDefault(); scanLabelFlow(); });
   $(`#results`).addEventListener(`click`, async (e) => {
+    const xc = e.target.closest(`[data-xinv]`);
+    if (xc) { e.preventDefault(); return switchTo(xc.dataset.xinv, { hash: `#/item/${xc.dataset.xitem}` }); }
+    const xo = e.target.closest(`[data-xopen]`);
+    if (xo) { e.preventDefault(); await openGroupInventories(xo.dataset.xopen); return renderResults(); }
     const p = e.target.closest(`[data-person]`); if (p) { e.preventDefault(); return personSheet(p.dataset.person); }
     const s = e.target.closest(`[data-show]`); if (s) { e.preventDefault(); findState.filter = s.dataset.show; renderResults(); return window.scrollTo(0, 0); }
     const q2 = e.target.closest(`[data-quick]`);
@@ -1038,8 +1044,17 @@ function renderResults() {
     list = q ? search(list, q, (id) => repo.pathText(id))
       : f === `recent` ? [...list].sort((a, b) => String(b.addedAt).localeCompare(String(a.addedAt)))
       : [...list].sort((a, b) => a.name.localeCompare(b.name));
-    if (q && !list.length) {
+    const cross = q && !f && crossReady();
+    if (q && !list.length && !cross) {
       box.innerHTML = `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Looks like you don’t have it logged. Maybe you don’t have one, or it hasn’t been added yet.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>`;
+      return;
+    }
+    if (cross) { // every inventory: this one first, then the rest as they come in
+      box.innerHTML = `<div id="xstatus"></div>
+        <div class="list-head"><div class="label-sm">${esc(invName())} · ${list.length ? `${list.length} found` : `no match`}</div>${list.length ? `<button type="button" class="link small" data-select-toggle>${sel.on ? `Done` : `Select`}</button>` : ``}</div>
+        ${list.length ? `<div class="cards">${list.slice(0, 300).map((i) => itemCard(i)).join(``)}</div>` : ``}
+        <div id="xresults"></div>`;
+      crossSearch(q, list.length);
       return;
     }
     const title = !q && f === `all` ? `All items · ${list.length}` : !q && f === `recent` ? `Recently added` : `${list.length} found`;
@@ -2232,6 +2247,106 @@ function aiConsent(keyOnly = false) {
       };
     }, { onClose: () => { if (!done) resolve(false); } });
   });
+}
+
+// ============================================================ Search across inventories
+// Inventories with a copy on this phone are searched at once; the rest are fetched in the background
+// (online) and kept on the phone for next time. Offline, a banner says what wasn't checked.
+const XFRESH_MS = 10 * 60_000;
+const xmem = {}; // sheetId -> { items, locations, thumbs, at, loading, failed }
+let xrun = 0;
+const crossReady = () => repo?.backend.kind === `google` && Object.keys(loadKnown(repo.user.email).inv).filter((id) => id !== repo.backend.sheetId).length > 0;
+
+function xlocal(id) {
+  if (xmem[id]?.items) return xmem[id];
+  try {
+    const c = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`);
+    if (c) {
+      xmem[id] = { ...(xmem[id] || {}), items: (c.items || []).filter((i) => !(i.deleted === true || i.deleted === `TRUE`)), locations: c.locations || [], at: Number(localStorage.getItem(`paran.xat.${id}`) || 0) };
+      blobs.get(`thumbs:${id}`).then((t) => { if (t) xmem[id].thumbs = t; }).catch(() => {});
+      return xmem[id];
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+async function xfetch(id) {
+  const m = (xmem[id] ||= {});
+  if (m.loading) return m.loading;
+  m.loading = (async () => {
+    try {
+      const d = await fetchInventory(id);
+      const live = d.items.filter((i) => !(i.deleted === true || i.deleted === `TRUE`));
+      Object.assign(m, { items: live, locations: d.locations, at: Date.now(), failed: false });
+      // keep it on the phone; never touch changes still waiting to be saved there
+      let old = null; try { old = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`); } catch { /* ignore */ }
+      if (!old?.outbox?.length) {
+        try {
+          localStorage.setItem(`paran.cache.${id}`, JSON.stringify({ items: d.items, locations: d.locations, members: old?.members || [], log: old?.log || [], outbox: [] }));
+          localStorage.setItem(`paran.xat.${id}`, String(m.at));
+        } catch { /* storage full: still searchable this session */ }
+      }
+    } catch { m.failed = true; }
+    finally { m.loading = null; }
+  })();
+  return m.loading;
+}
+
+function xpath(locations, locId) {
+  const byId = new Map(locations.map((l) => [l.id, l])); const parts = [];
+  let l = byId.get(locId); let guard = 0;
+  while (l && guard++ < 20) { parts.unshift(l.name); l = byId.get(l.parentId); }
+  return parts;
+}
+
+function xcard(invId, item, locations, thumbs) {
+  const parts = xpath(locations, item.locationId);
+  const near = parts.slice(-2).join(` › `); const far = parts.length > 2 ? parts.slice(0, -2).join(` › `) : ``;
+  const t = thumbs?.[item.id];
+  return `<a class="card xcard" href="#" data-xinv="${esc(invId)}" data-xitem="${esc(item.id)}">
+    ${t ? `<img class="thumb" src="${t}" alt="" loading="lazy">` : `<div class="thumb tint" style="--h:${tintOf(item.id || item.name)}">${icon(`box`)}</div>`}
+    <div class="card-main">
+      <div class="card-title">${esc(item.name)}${Number(item.qty) > 1 ? ` <span class="qty">×${esc(item.qty)}</span>` : ``}</div>
+      <div class="card-path">${icon(`place`)}<span>${near ? esc(near) : `<i>No location yet</i>`}${far ? `<small> · ${esc(far)}</small>` : ``}</span></div>
+      ${item.purpose ? `<div class="card-purpose">${esc(item.purpose)}</div>` : ``}
+      ${STATUS_LABEL[item.status] ? `<span class="badge ${esc(item.status)}">${esc(STATUS_LABEL[item.status])}${item.lentTo ? ` · ${esc(item.lentTo)}` : ``}</span>` : ``}
+    </div></a>`;
+}
+
+async function crossSearch(q, hereCount) {
+  const run = ++xrun;
+  const k = loadKnown(repo.user.email);
+  const ids = Object.keys(k.inv).filter((id) => id !== repo.backend.sheetId);
+  const groupName = (id) => { const g = k.inv[id]?.groupId; return (g && k.groups[g]?.name) || ``; };
+  const online = navigator.onLine;
+  const draw = () => {
+    if (run !== xrun || !$(`#xresults`)) return;
+    const sections = []; const unchecked = []; const loading = []; const needTap = []; let total = 0;
+    for (const id of ids) {
+      const inv = k.inv[id];
+      if (inv.reachable === false) { needTap.push(id); continue; }
+      const m = xlocal(id);
+      if (!m?.items) { (online && !xmem[id]?.failed ? loading : unchecked).push(id); continue; }
+      if (xmem[id]?.loading && online) loading.push(id);
+      const hits = search(m.items, q, (locId) => xpath(m.locations, locId).join(` › `));
+      total += hits.length;
+      if (hits.length) sections.push(`<div class="list-head xhead"><div class="label-sm">${esc(inv.name || `Inventory`)}${groupName(id) ? ` <small>· ${esc(groupName(id))}</small>` : ``} · ${hits.length} found</div></div>
+        <div class="cards">${hits.slice(0, 50).map((i) => xcard(id, i, m.locations, m.thumbs)).join(``)}</div>`);
+    }
+    const st = $(`#xstatus`);
+    if (st) st.innerHTML = !online
+      ? `<div class="offline-banner">${icon(`alert`)}<div><b>You’re offline</b><span>Showing what’s on this phone.${unchecked.length ? ` Not checked: ${esc(unchecked.map((id) => k.inv[id].name || `Inventory`).join(`, `))}.` : ``}</span></div></div>`
+      : loading.length ? `<div class="xloading">${icon(`cloud`)} Checking ${esc(loading.map((id) => k.inv[id].name || `Inventory`).join(`, `))}…</div>`
+      : unchecked.length ? `<div class="xloading warn">${icon(`alert`)} Couldn’t check ${esc(unchecked.map((id) => k.inv[id].name || `Inventory`).join(`, `))} right now.</div>` : ``;
+    $(`#xresults`).innerHTML = `${sections.length ? `<div class="label-sm xother">In your other inventories</div>${sections.join(``)}` : ``}
+      ${needTap.length ? `<button type="button" class="xtap" data-xopen="${esc(k.inv[needTap[0]].groupId || ``)}">${icon(`plus`)} Include ${esc(needTap.map((id) => k.inv[id].name || `Inventory`).join(`, `))} <small>one tap to open on this phone</small></button>` : ``}
+      ${!hereCount && !total && !loading.length ? `<div class="empty"><h3>No match for “${esc(q)}”</h3><p>Not in any of your inventories${unchecked.length ? ` on this phone` : ``}.</p><a class="btn ghost" href="#/add?name=${encodeURIComponent(q)}">${icon(`plus`)} Add “${esc(q)}”</a></div>` : ``}`;
+  };
+  draw();
+  if (!online) return;
+  // lazy: only inventories with no copy here, or a copy older than 10 minutes, and each once per few minutes
+  const stale = ids.filter((id) => k.inv[id].reachable !== false && !xmem[id]?.loading && (!xlocal(id)?.items || Date.now() - (xmem[id]?.at || 0) > XFRESH_MS));
+  for (const id of stale) xfetch(id).then(() => { if (run === xrun) draw(); });
 }
 
 // ============================================================ Several inventories, and groups of them
