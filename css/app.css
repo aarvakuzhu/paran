@@ -1041,3 +1041,30 @@ body.readonly .edit-only { display: none !important; }
 .menu .menu-two { display: grid; gap: 2px; flex: 1; min-width: 0; text-align: left; justify-items: start; }
 .menu .menu-two small { text-align: left; margin: 0; }
 .menu-two small { color: var(--ink-2); font-weight: 400; }
+
+/* Gemini key: action first */
+.keyflow { gap: 14px; }
+.ai-hook { display: grid; gap: 8px; }
+.ai-hook p { margin: 0; color: var(--ink-2); font-size: 0.95rem; }
+.ai-demo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 12px; border-radius: var(--radius); background: var(--accent-soft); }
+.ai-demo > .ic { color: var(--accent); width: 22px; height: 22px; }
+.ai-demo .arrow { color: var(--accent); font-weight: 700; }
+.ai-demo .chip { pointer-events: none; }
+.kf-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.kf-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); opacity: .6; transition: opacity .2s, border-color .2s; }
+.kf-steps li > div { display: grid; gap: 8px; flex: 1; min-width: 0; }
+.kf-steps li small { color: var(--ink-2); }
+.kf-steps li.now { opacity: 1; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.kf-steps li.did { opacity: 1; }
+.kf-n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .85rem; background: var(--surface-2); color: var(--ink-2); }
+.kf-steps li.now .kf-n { background: var(--accent); color: var(--accent-ink); }
+.kf-steps li.did .kf-n { background: var(--accent-soft); color: var(--accent); }
+.kf-go { justify-self: start; display: inline-flex; gap: 6px; align-items: center; text-decoration: none; }
+.kf-paste { display: flex; gap: 8px; }
+.kf-paste input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
+.kf-note { display: flex; gap: 6px; align-items: flex-start; margin: 0; }
+.kf-note .ic { flex: none; color: var(--amber); margin-top: 2px; }
+.kf-more { display: grid; gap: 6px; font-size: .85rem; color: var(--ink-2); }
+.kf-more p { margin: 0; }
+.ai-demo .chip { background: var(--surface); color: var(--ink); border-color: var(--line); }
+.kf-more[hidden] { display: none; }

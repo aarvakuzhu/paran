@@ -40,7 +40,7 @@ function registerServiceWorker() {
   if (!(`serviceWorker` in navigator) || location.protocol === `file:`) return;
   const hadController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.register(`./sw.js`, { updateViaCache: `none` }).then((reg) => {
-    document.addEventListener(`visibilitychange`, () => { if (!document.hidden) reg.update().catch(() => {}); });
+    document.addEventListener(`visibilitychange`, () => { if (!document.hidden) reg?.update().catch(() => {}); });
   }).catch(() => {});
   let reloading = false;
   navigator.serviceWorker.addEventListener(`controllerchange`, () => {
@@ -2257,44 +2257,68 @@ async function printLabel(loc) {
 }
 
 /** Explicit opt-in for AI suggestions: explains the data flow, needs a checkbox + a working key. */
+/**
+ * Getting a Gemini key, written to be done rather than read: what you get (one line and an example), then three
+ * steps with one button each. The step you're on is highlighted; coming back from AI Studio jumps to Paste.
+ * Privacy is one plain line by the button, with the detail a tap away.
+ */
 function aiConsent(keyOnly = false) {
+  const KEY_RE = /^AIza[0-9A-Za-z_-]{30,}$/;
   return new Promise((resolve) => {
-    let done = false;
-    sheet(keyOnly ? `Change Gemini key` : `AI suggestions`, (el, close) => {
-      el.innerHTML = `<form class="stack consent">
-        ${keyOnly ? `` : `<div class="consent-points">
-          <p>${icon(`camera`)}<span>When you use it, a reduced copy of the photo is sent <b>from this phone directly to Google Gemini</b>, using your own API key. Paran has no server and never sees it.</span></p>
-          <p>${icon(`alert`)}<span>On Gemini’s <b>free tier</b>, Google may use what you send to improve its products, and people at Google may review it. Don’t photograph IDs, documents or anything private with AI on. Paid-tier keys aren’t used that way.</span></p>
-          <p>${icon(`check`)}<span>You always review suggestions before anything is saved. Nothing you typed gets overwritten.</span></p>
-          <p>${icon(`cloud`)}<span>The free tier allows a few hundred photos a day (check your limits in Google AI Studio). One photo of a bin can list many items.</span></p>
+    let done = false; let left = false; let step = () => {};
+    const onBack = () => { if (!document.hidden && left) step(3); }; // back from AI Studio: on to Paste
+    sheet(keyOnly ? `Change Gemini key` : `Name things from a photo`, (el, close) => {
+      el.innerHTML = `<form class="stack keyflow">
+        ${keyOnly ? `` : `<div class="ai-hook">
+          <div class="ai-demo" aria-hidden="true">${icon(`camera`)}<span class="arrow">→</span>
+            <span class="chip">Tablecloth ×15</span><span class="chip">Banner</span><span class="chip">Mic stand</span></div>
+          <p>Snap a shelf or a bin and Paran lists what’s in it: names, what each is for, how many. Free with your own Google key, about a minute to get.</p>
         </div>`}
-        <ol class="key-steps">
-          <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in.</li>
-          <li>Tap <b>Create API key</b>, then copy it.</li>
-          <li>Paste it below. It’s stored only on this device, not in your Sheet.</li>
+        <ol class="kf-steps">
+          <li data-s="1"><span class="kf-n">1</span><div><b>Get a free key from Google</b>
+            <a class="btn primary kf-go" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Open Google AI Studio ${icon(`ext`)}</a></div></li>
+          <li data-s="2"><span class="kf-n">2</span><div><b>Tap “Create API key”, then Copy</b><small>Sign in with any Google account if asked.</small></div></li>
+          <li data-s="3"><span class="kf-n">3</span><div><b>Come back and paste it here</b>
+            <div class="kf-paste"><input name="key" autocomplete="off" spellcheck="false" placeholder="AIza…" aria-label="Gemini key" required>
+              <button type="button" class="btn ghost" data-paste>Paste</button></div></div></li>
         </ol>
-        <label class="field"><span>Gemini key</span><input name="key" autocomplete="off" spellcheck="false" placeholder="AIza…" required></label>
-        ${keyOnly ? `` : `<label class="check"><input type="checkbox" name="agree" required><span>I understand that photos I choose to analyze are sent to Google Gemini.</span></label>`}
         <p class="error-box" hidden></p>
-        <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">${keyOnly ? `Save key` : `Verify &amp; turn on`}</button></div>
+        <button class="btn primary full kf-on" disabled>${keyOnly ? `Save key` : `Turn on`}</button>
+        ${keyOnly ? `<p class="fine">Kept only on this phone.</p>` : `<p class="fine kf-note">${icon(`alert`)} Photos you analyze go from this phone straight to Google. With a free key Google may review them, so skip IDs and private papers. <button type="button" class="link small" data-more>More</button></p>
+        <div class="kf-more" hidden>
+          <p>Paran has no server and never sees your photos. A smaller copy is sent only when you ask for suggestions, using your key, which stays on this phone (not in your Sheet).</p>
+          <p>You always check suggestions before anything is saved, and nothing you typed is overwritten.</p>
+          <p>On the free tier Google may use what you send to improve its products. Paid keys aren’t used that way. The free tier covers a few hundred photos a day.</p>
+          <p>Turning on means you agree that photos you choose to analyze are sent to Google Gemini.</p>
+        </div>`}
       </form>`;
-      const form = $(`form`, el); const err = $(`.error-box`, el);
-      $(`[data-no]`, el).onclick = () => { done = true; resolve(false); close(); };
+      const form = $(`form`, el); const err = $(`.error-box`, el); const input = form.elements.key; const on = $(`.kf-on`, el);
+      step = (n) => $$(`.kf-steps li`, el).forEach((li) => { const i = Number(li.dataset.s); li.classList.toggle(`now`, i === n); li.classList.toggle(`did`, i < n); });
+      const check = () => { const v = input.value.trim(); on.disabled = !KEY_RE.test(v); if (v) step(3); };
+      step(1);
+      $(`.kf-go`, el).onclick = () => { left = true; setTimeout(() => step(2), 300); };
+      document.addEventListener(`visibilitychange`, onBack);
+      input.oninput = check; input.onfocus = () => step(3);
+      $(`[data-paste]`, el).onclick = async () => {
+        try { input.value = (await navigator.clipboard.readText()).trim(); check(); if (on.disabled) { err.textContent = `That doesn’t look like a key yet. Copy the key in AI Studio (it starts with AIza) and tap Paste again.`; err.hidden = false; } else err.hidden = true; }
+        catch { input.focus(); err.textContent = `Long-press the box and choose Paste.`; err.hidden = false; }
+      };
+      const more = $(`[data-more]`, el); if (more) more.onclick = () => { const m = $(`.kf-more`, el); m.hidden = !m.hidden; more.textContent = m.hidden ? `More` : `Less`; };
       form.onsubmit = async (e) => {
         e.preventDefault();
-        const key = form.elements.key.value.trim();
-        const btn = form.querySelector(`button.primary`); btn.disabled = true; btn.textContent = `Checking key…`; err.hidden = true;
+        const key = input.value.trim();
+        on.disabled = true; on.textContent = `Checking key…`; err.hidden = true;
         try {
           const model = await verifyKey(key);
           saveAiSettings({ enabled: true, key, model, consentAt: aiSettings().consentAt || new Date().toISOString() });
           done = true; resolve(true); close();
-          toast(keyOnly ? `Key updated` : `AI suggestions are on`);
+          toast(keyOnly ? `Key updated` : `AI is on. Try it: take a photo when you add something`);
         } catch (ex) {
           err.textContent = ex.message || String(ex); err.hidden = false;
-          btn.disabled = false; btn.innerHTML = keyOnly ? `Save key` : `Verify &amp; turn on`;
+          on.disabled = false; on.textContent = keyOnly ? `Save key` : `Turn on`;
         }
       };
-    }, { onClose: () => { if (!done) resolve(false); } });
+    }, { onClose: () => { document.removeEventListener(`visibilitychange`, onBack); if (!done) resolve(false); } });
   });
 }
 
@@ -2698,8 +2722,8 @@ function viewMore(view, r) {
           <button data-m="aikey">${icon(`edit`)} Change Gemini key</button>
           <button data-m="aioff" class="danger">${icon(`x`)} Turn off and remove key</button>
         </div>`
-        : `<div class="ai-card">${icon(`spark`)}<div><b>AI suggestions</b><p>Gemini can name what’s in a photo, say what it’s for, and list several items from one shot of a bin or shelf. Off until you turn it on.</p>
-          <button class="btn primary" data-m="aion">Set up AI suggestions</button></div></div>`}
+        : `<div class="ai-card">${icon(`spark`)}<div><b>Name things from a photo</b><p>Snap a shelf or a bin and get the list of what’s in it. Free, about a minute to set up.</p>
+          <button class="btn primary" data-m="aion">Set it up</button></div></div>`}
     </div>`;
   } else if (page === `data`) {
     // The sheets are the owner's: only owners get links to them. Data is spread over sheets, so each link says what's in it.
