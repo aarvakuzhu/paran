@@ -162,7 +162,7 @@ export const drive = {
     return api(`${DRIVE}/files/${fileId}?fields=id`, { method: `PATCH`, ...jsonBody({ appProperties: props }) });
   },
   meta(fileId) {
-    return api(`${DRIVE}/files/${fileId}?fields=id,name,owners(emailAddress),parents,appProperties,webViewLink,capabilities(canEdit)`);
+    return api(`${DRIVE}/files/${fileId}?fields=id,name,owners(emailAddress),parents,appProperties,webViewLink,capabilities(canEdit),trashed`);
   },
 };
 

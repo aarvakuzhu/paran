@@ -52,7 +52,7 @@ async def main():
             await pg.click(f'[data-toggle="{t["id"]}"] >> nth=0'); await pg.wait_for_timeout(150)
             await pg.click(f'[data-go="{t["id"]}"]'); await pg.wait_for_timeout(900)
             url_ok = pg.url.endswith(t['go']) or (t['go'] == '#/' and pg.url.rstrip('/').endswith(':8080') or pg.url.endswith('#/'))
-            ui_ok = True if not t.get('ui') else bool(await pg.query_selector(t['ui']))
+            ui_ok = True if not t.get('ui') or t.get('google') else bool(await pg.query_selector(t['ui']))  # demo has no Google-only buttons
             check(url_ok and ui_ok, f"{t['id']}: opens {t['go']}{' and finds ' + t['ui'] if t.get('ui') else ''}")
         print('4. Feedback')
         await pg.goto('http://localhost:8080/#/'); await pg.wait_for_timeout(300); await open_help()

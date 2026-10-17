@@ -25,6 +25,12 @@ def role(email, fid, seen=None):
         if r and (not best or RANK[r] > RANK[best]): best = 'writer' if r == 'owner' else r
     return best
 
+def in_trash(f):  # trashed itself, or inside a trashed folder
+    while f:
+        if f.get('trashed'): return True
+        f = FILES.get(next((p for p in f['parents'] if not p.startswith('root:')), ''), None)
+    return False
+
 def visible(email, fid):
     f = FILES.get(fid)
     return bool(f) and role(email, fid) is not None and (f['creator'] == email or (email, fid) in PICKED)
@@ -40,7 +46,7 @@ def meta(email, f):
     r = role(email, f['id'])
     return {'id': f['id'], 'name': f['name'], 'mimeType': f['mime'], 'parents': [p for p in f['parents']],
             'owners': [{'emailAddress': f['owner']}], 'appProperties': dict(f['app']),
-            'capabilities': {'canEdit': RANK.get(r, 0) >= 2}, 'webViewLink': 'x'}
+            'capabilities': {'canEdit': RANK.get(r, 0) >= 2}, 'webViewLink': 'x', 'trashed': bool(f.get('trashed'))}
 
 def create(email, name, mime, parents, app=None):
     parents = parents or [myroot(email)]
@@ -99,7 +105,7 @@ def _handle(email, method, path, q, body):
         return {'id': fid, 'webViewLink': 'x'}
     if path.endswith('/drive/v3/files') and method == 'GET':
         role_ = re.search(r"value='([^']+)'", q['q'][0]).group(1)
-        return {'files': [meta(email, f) for f in FILES.values() if f['app'].get('stash') == role_ and visible(email, f['id'])]}
+        return {'files': [meta(email, f) for f in FILES.values() if f['app'].get('stash') == role_ and visible(email, f['id']) and not in_trash(f)]}
     m = re.search(r'/drive/v3/files/([^/]+)/permissions(?:/([^/]+))?$', path)
     if m:
         fid, pid = m.groups(); f = FILES.get(fid)

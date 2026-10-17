@@ -87,7 +87,12 @@ export async function readDirectory(dirId) {
 const rootKey = (email) => `paran.root.${email}`;
 /** This person's "Paran" folder in their Drive (found by its tag, or created). Groups and inventories go inside it. */
 export async function paranRoot(user) {
-  const cached = localStorage.getItem(rootKey(user.email)); if (cached) return cached;
+  const cached = localStorage.getItem(rootKey(user.email));
+  if (cached) { // still there? (someone may have deleted it in Drive to start over)
+    const m = await drive.meta(cached).catch(() => null);
+    if (m && !m.trashed) return cached;
+    localStorage.removeItem(rootKey(user.email));
+  }
   const found = (await drive.findTagged(`paran`)).find((f) => f.owners?.some((o) => o.emailAddress === user.email));
   const id = found?.id || (await drive.createFolder(CONFIG.APP_NAME, null, `paran`)).id;
   try { localStorage.setItem(rootKey(user.email), id); } catch { /* ignore */ }

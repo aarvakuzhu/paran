@@ -2356,6 +2356,15 @@ function aiConsent(keyOnly = false) {
   });
 }
 
+/** Forget everything this phone knows about inventories (keeps the AI key, activity counts and help feedback). */
+async function startFresh() {
+  const KEEP = new Set([`paran.ai`, `paran.ai.usage`, `paran.stats`, `paran.stats.off`, `paran.feedback`, `paran.migrated`]); // migrated: never re-copy the old Stash pilot's data
+  try { signOut(); } catch { /* ignore */ }
+  for (const k of Object.keys(localStorage)) if (k.startsWith(`paran.`) && !KEEP.has(k)) localStorage.removeItem(k);
+  try { for (const k of await blobs.keys()) await blobs.del(k); } catch { /* ignore */ }
+  location.hash = ``; location.reload();
+}
+
 // ============================================================ Help (? on every screen; catalog and search in help.js)
 const helpScreen = () => { const r = route(); return r.name === `more` && r.id ? `more/${r.id}` : r.name; };
 const POPULAR = [`start`, `find`, `add-item`, `share-inv`, `events-what`, `lend`];
@@ -3096,6 +3105,7 @@ function viewMore(view, r) {
       <div class="menu">
         <button data-m="csv">${icon(`download`)} Download this inventory (CSV)</button>
         <button data-m="sync">${icon(`cloud`)} Refresh now</button>
+        ${g ? `<button data-m="fresh" class="danger">${icon(`x`)} Start fresh on this phone</button>` : ``}
       </div>
       <p class="fine">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${!g ? `In demo mode, everything stays in this browser.`
         : ownInv ? `` : `${esc(invName())} is kept in ${owner ? esc(owner) : `its owner`}’s Google Drive; only the owner opens its sheet. You can download a copy.`}</p>
@@ -3201,6 +3211,12 @@ function viewMore(view, r) {
       a.download = `paran-inventory-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
     }
     if (m === `sync`) { await repo.refresh(); toast(repo.status === `synced` ? `Up to date` : `Sync: ${repo.status}`); }
+    if (m === `fresh`) {
+      const waiting = repo.outbox.length;
+      if (!(await confirmSheet(`Start fresh on this phone?`,
+        `${waiting ? `${waiting} change(s) haven’t reached Google yet and will be lost. ` : ``}This phone forgets its copy of your inventories, groups and photos and signs out. Nothing in Google Drive is changed: to delete your data too, delete the Paran folder in Drive. Your AI key, Your activity and help feedback stay.`, `Start fresh`, true))) return;
+      await startFresh(); return;
+    }
     if (m === `signout`) {
       if (repo.outbox.length && !(await confirmSheet(`Sign out?`, `${repo.outbox.length} change(s) haven’t reached Google yet and will be lost.`, `Sign out anyway`, true))) return;
       signOut(); [MODE_KEY, `paran.session`].forEach((k) => localStorage.removeItem(k)); location.hash = ``; location.reload();

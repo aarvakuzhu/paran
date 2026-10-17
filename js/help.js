@@ -13,6 +13,7 @@
 //            tools/help-check.mjs fails if any action in the code isn't covered here or listed in HELP_IGNORE,
 //            or if a topic's ui/covers no longer exist in the code. That's what keeps this file up to date.
 //   who      who it's for, when it isn't everyone (shown under the answer)
+//   google   true when the button only exists when signed in with Google (not in demo mode)
 //
 // When a feature changes: update the topic in the same change, then run `node tools/help-check.mjs`.
 
@@ -165,6 +166,9 @@ export const HELP = [
   { id: `data`, q: `Where is my data, and can I get a copy?`, also: [`google drive`, `sheet`, `backup`, `export`, `csv`, `download`, `privacy`, `spreadsheet`],
     steps: [`Everything is in your own Google Drive, in a Paran folder; Paran has no server.`, `More → Your data has the sheets (for owners) and Download this inventory (CSV).`],
     go: `#/more/data`, screens: [`more/data`], covers: [`m:csv`], related: [`offline`] },
+  { id: `fresh`, q: `How do I start over from scratch?`, also: [`start over`, `reset`, `clean up`, `delete everything`, `restart`, `wipe`, `test data`, `fresh start`],
+    steps: [`To delete your data: in Google Drive, delete the Paran folder (and any older “Paran Inventory” or “Stash” folders at the top of My Drive).`, `On each phone: More → Your data → Start fresh on this phone. It forgets this phone’s copy and signs out; your AI key, Your activity and help feedback stay.`, `Sign in again and pick a starting template.`, `People you shared with should tap Start fresh on their phones too.`],
+    go: `#/more/data`, ui: `[data-m="fresh"]`, screens: [`more/data`], covers: [`m:fresh`], google: true, who: `Signed in only; in demo, use More → Clear demo data. Deleting the Drive folder deletes it for everyone it was shared with.`, related: [`data`, `templates`] },
   { id: `offline`, q: `Does it work without internet?`, also: [`offline`, `no signal`, `no wifi`, `sync`, `not saved`, `refresh`],
     steps: [`Yes. Changes are kept on the phone and saved to Google when you’re back online; the pill at the top says Saved when done.`, `More → Your data → Refresh now checks for others’ changes.`],
     screens: [`more/data`], covers: [`m:sync`], related: [`data`] },
