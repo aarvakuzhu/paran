@@ -2292,7 +2292,9 @@ async function printLabel(loc) {
  * Privacy is one plain line by the button, with the detail a tap away.
  */
 function aiConsent(keyOnly = false) {
-  const KEY_RE = /^AIza[0-9A-Za-z_-]{30,}$/;
+  // Google's key formats change (older keys start "AIza", newer ones don't), so only rule out what can't be a key:
+  // too short or with spaces. Google itself says whether it works when it's checked on Turn on.
+  const KEY_RE = /^[\x21-\x7e]{20,}$/;
   return new Promise((resolve) => {
     let done = false; let left = false; let step = () => {};
     const onBack = () => { if (!document.hidden && left) step(3); }; // back from AI Studio: on to Paste
@@ -2308,7 +2310,7 @@ function aiConsent(keyOnly = false) {
             <a class="btn primary kf-go" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Open Google AI Studio ${icon(`ext`)}</a></div></li>
           <li data-s="2"><span class="kf-n">2</span><div><b>Tap “Create API key”, then Copy</b><small>Sign in with any Google account if asked.</small></div></li>
           <li data-s="3"><span class="kf-n">3</span><div><b>Come back and paste it here</b>
-            <div class="kf-paste"><input name="key" autocomplete="off" spellcheck="false" placeholder="AIza…" aria-label="Gemini key" required>
+            <div class="kf-paste"><input name="key" autocomplete="off" spellcheck="false" placeholder="Paste your key" aria-label="Gemini key" required>
               <button type="button" class="btn ghost" data-paste>Paste</button></div></div></li>
         </ol>
         <p class="error-box" hidden></p>
@@ -2329,7 +2331,7 @@ function aiConsent(keyOnly = false) {
       document.addEventListener(`visibilitychange`, onBack);
       input.oninput = check; input.onfocus = () => step(3);
       $(`[data-paste]`, el).onclick = async () => {
-        try { input.value = (await navigator.clipboard.readText()).trim(); check(); if (on.disabled) { err.textContent = `That doesn’t look like a key yet. Copy the key in AI Studio (it starts with AIza) and tap Paste again.`; err.hidden = false; } else err.hidden = true; }
+        try { input.value = (await navigator.clipboard.readText()).trim(); check(); if (on.disabled) { err.textContent = `That doesn’t look like a key yet. In AI Studio, tap Copy next to the key, then tap Paste here again.`; err.hidden = false; } else err.hidden = true; }
         catch { input.focus(); err.textContent = `Long-press the box and choose Paste.`; err.hidden = false; }
       };
       const more = $(`[data-more]`, el); if (more) more.onclick = () => { const m = $(`.kf-more`, el); m.hidden = !m.hidden; more.textContent = m.hidden ? `More` : `Less`; };
