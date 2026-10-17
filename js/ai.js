@@ -249,6 +249,37 @@ export function aiTally(rows, fields) {
   return { n: rows.length, t, f };
 }
 
+// ---------------- Ask (help answers from the help catalog only)
+const ASK_SCHEMA = {
+  type: `OBJECT`,
+  properties: { found: { type: `BOOLEAN` }, answer: { type: `STRING` }, topics: { type: `ARRAY`, items: { type: `STRING` } } },
+  required: [`found`, `answer`, `topics`],
+};
+/**
+ * A question about using Paran, answered only from the help topics given (picked on the phone: no inventory data is
+ * sent). who: a short description of the person and screen. prior: { q, answer } for one follow-up.
+ * Returns { found, answer, topics: [ids used] }.
+ */
+export async function askHelp(question, topics, { who = ``, prior = null } = {}) {
+  const promptText = [
+    `You answer questions about using Paran, a phone app for keeping an inventory of a home, storage unit, office or community group (places, items, lending, people, events).`,
+    `Answer ONLY from the HELP TOPICS below. Do not invent buttons, screens or features. If they don't answer the question, set found to false and say briefly that you don't know, in one sentence; the app will show the closest topics.`,
+    `If they do: set found to true and answer in 2 to 5 short sentences or a few numbered steps, using the exact words on the buttons as written in the topics. Speak to the person ("you"), plainly, no greeting, no markdown headings. Reply in the language of the question.`,
+    `Fit the answer to the person: ${who || `unknown`}. If something isn't possible for them (for example they can only view), say who can do it.`,
+    `topics: the ids of the topics you used, most useful first (at most 3).`,
+    `If the question is about where one of their own things is, say they can search for it on Find, and set found to true with topic "find".`,
+    ``,
+    `HELP TOPICS:`,
+    ...topics.map((t) => `[${t.id}] ${t.q}\n${t.steps.map((s, i) => `  ${i + 1}. ${s}`).join(`\n`)}${t.who ? `\n  (${t.who})` : ``}`),
+    ``,
+    ...(prior ? [`EARLIER QUESTION: ${prior.q}`, `EARLIER ANSWER: ${prior.answer}`, ``] : []),
+    `QUESTION: ${String(question).slice(0, 500)}`,
+  ].join(`\n`);
+  const r = await callGemini([], promptText, ASK_SCHEMA);
+  const ids = new Set(topics.map((t) => t.id));
+  return { found: Boolean(r.found), answer: String(r.answer || ``).trim().slice(0, 900), topics: (Array.isArray(r.topics) ? r.topics : []).filter((id) => ids.has(id)).slice(0, 3) };
+}
+
 // ---------------- event from words
 const PLAN_SCHEMA = {
   type: `OBJECT`,

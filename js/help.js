@@ -107,13 +107,13 @@ export const HELP = [
   { id: `group`, q: `What is a group, and how do I make one?`, also: [`organization`, `school`, `temple`, `community`, `family`, `our homes`, `team`],
     steps: [`A group holds several inventories (the school building, the storage unit) so people and events can use them all.`, `Tap the inventory name at the top → New group.`, `On the group page, New inventory in the group adds one, and Add “this inventory” to this group moves the one you have open into it.`],
     screens: [`group`, `more/inventory`], covers: [`m:newgroup`, `a:addcur`], related: [`share-group`, `events-what`] },
-  { id: `share-inv`, q: `How do I share an inventory with someone?`, also: [`invite`, `share`, `add person`, `family member`, `wife`, `husband`, `volunteer`, `give access`],
+  { id: `share-inv`, q: `How do I share an inventory with someone?`, also: [`invite`, `share`, `add person`, `family member`, `wife`, `husband`, `volunteer`, `give access`, `let someone see`, `see my inventory`, `use it together`, `access`],
     steps: [`Go to More → People & access.`, `Type their Google email, choose Can edit or Can view, and tap Invite.`, `They open Paran, sign in, choose Open one shared with you and pick the inventory.`],
     go: `#/more/people`, screens: [`more/people`], related: [`roles`, `share-group`, `join`] },
   { id: `share-group`, q: `How do I give someone the whole group?`, also: [`whole group`, `all inventories`, `group access`, `invite to group`],
     steps: [`Open the group page (tap the inventory name at the top → the group).`, `Invite them there with their Google email; they can open every inventory in it and its events.`, `On People & access, Give whole group upgrades someone who has one inventory.`],
     screens: [`group`, `more/people`], related: [`share-inv`, `roles`] },
-  { id: `roles`, q: `Can someone only view, not change things?`, also: [`view only`, `read only`, `permission`, `access level`, `can edit`, `can view`, `viewer`],
+  { id: `roles`, q: `Can someone only view, not change things?`, also: [`view only`, `read only`, `permission`, `access level`, `can edit`, `can view`, `viewer`, `only look`, `only see`, `not change`],
     steps: [`When inviting, choose Can view: they can search and browse but not change anything.`, `To change it later, the owner taps the person on People & access.`],
     go: `#/more/people`, screens: [`more/people`, `group`], related: [`share-inv`, `people-change`] },
   { id: `people-change`, q: `How do I remove someone or change their access?`, also: [`remove person`, `stop sharing`, `revoke`, `change role`, `make owner`, `transfer`],
@@ -183,8 +183,8 @@ export const HELP = [
   { id: `demo`, q: `What is demo mode?`, also: [`demo`, `try`, `sample`, `without account`, `clear demo`],
     steps: [`Demo mode lets you try Paran with sample data, kept only in this browser.`, `More → Clear demo data starts it fresh; Sign in with Google uses your own Drive.`],
     screens: [`more`], covers: [`m:reset`], related: [`start`] },
-  { id: `help`, q: `How do I use this help?`, also: [`help`, `question mark`, `support`, `how to`],
-    steps: [`Tap ? at the top of any screen; it starts with what’s on that screen.`, `Type your question in your own words.`, `Take me there opens the right screen; tell us if something’s missing.`],
+  { id: `help`, q: `How do I use this help?`, also: [`help`, `question mark`, `support`, `how to`, `ask`, `ask ai`, `chat`, `assistant`],
+    steps: [`Tap ? at the top of any screen; it starts with what’s on that screen.`, `Type your question in your own words.`, `With AI suggestions on, tap Ask AI (or press Enter) for a direct answer from Paran’s help, with the topics it came from; you can ask one follow-up.`, `Take me there opens the right screen; tell us if something’s missing.`],
     screens: [], related: [`start`] },
 ];
 
@@ -198,9 +198,13 @@ const SAME = { delete: `remove`, erase: `remove`, trash: `remove`, rename: `rena
 const stem = (w) => SAME[w] || SAME[w.replace(/(ies)$/, `y`)] || w.replace(/(ing|ed|es|s)$/, ``) || w;
 const words = (t) => String(t || ``).toLowerCase().replace(/[’']/g, ``).split(/[^\p{L}\p{N}]+/u).filter((w) => w && !STOP.has(w)).map(stem);
 
-let index = null;
+let index = null; let idf = null;
 function buildIndex() {
   index = HELP.map((t) => ({ t, q: new Set(words(t.q)), also: new Set(t.also.flatMap(words)), body: new Set(t.steps.flatMap(words)) }));
+  // rare words tell topics apart ("wife", "label"); words in many topics ("item", "tap") count for little
+  const df = new Map();
+  for (const e of index) for (const w of new Set([...e.q, ...e.also, ...e.body])) df.set(w, (df.get(w) || 0) + 1);
+  idf = (w) => Math.log(1 + index.length / (df.get(w) || 1));
 }
 
 /**
@@ -215,7 +219,7 @@ export function searchHelp(query, screen = ``) {
   const out = [];
   for (const e of index) {
     let s = 0;
-    for (const w of qw) s += near(w, e.q) ? 3 : near(w, e.also) ? 2.5 : near(w, e.body) ? 1 : 0;
+    for (const w of qw) s += (near(w, e.q) ? 3 : near(w, e.also) ? 2.5 : near(w, e.body) ? 1 : 0) * idf(w) / 2;
     if (!s) continue;
     s = s / Math.sqrt(qw.length);
     if (screen && e.t.screens.includes(screen)) s += 0.75;

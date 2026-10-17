@@ -7,7 +7,7 @@ import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
-import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally, aiScore } from './ai.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally, aiScore, askHelp } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
@@ -2362,9 +2362,32 @@ const POPULAR = [`start`, `find`, `add-item`, `share-inv`, `events-what`, `lend`
 const ITEM_Q = /^(where('?s| is| are)|find|lost|looking for|have i got|do i have)\b/i;
 
 /** Help: topics for this screen first, then search in your own words; Take me there; did it help; tell us. */
+/** Who's asking, in a line, so an answer fits what they can do (no names, no inventory contents). */
+function helpWho(screen) {
+  if (!repo) return `on the ${screen} screen`;
+  const g = repo.backend.kind === `google`; const grp = g ? repo.group() : null;
+  const bits = [g ? `signed in with Google` : `trying the demo (sample data on this phone)`];
+  if (g) bits.push(repo.backend.isOwner ? `owner of this inventory` : repo.readOnly ? `can only view this inventory` : `can edit this inventory`);
+  if (grp) bits.push(`in the group "${grp.name}"${grp.owner ? ` (its owner)` : repo.groupReadOnly ? ` (can only view the group)` : ``}`);
+  else if (g && repo.backend.inGroupName) bits.push(`has this inventory only, not its group (so can't open the group's events)`);
+  bits.push(aiReady() ? `AI suggestions on` : `AI suggestions off`);
+  bits.push(`looking at the ${screen} screen`);
+  return bits.join(`; `);
+}
+/** The topics an answer may use: the best matches, topped up with this screen's and the common ones. */
+function askTopics(text, screen, prior) {
+  const out = [];
+  const add = (t) => { if (t && !out.includes(t) && out.length < 8) out.push(t); };
+  (prior?.topics || []).forEach((id) => add(topicById(id)));
+  searchHelp(text, screen).forEach((h) => add(h.topic));
+  topicsFor(screen).forEach(add); POPULAR.map(topicById).forEach(add);
+  return out;
+}
+
 function helpSheet(startQuery = ``) {
   const screen = helpScreen();
   let q = startQuery; let open = ``;
+  let ask = null; // { q, busy, res: { found, answer, topics }, err, prior, rated }
   sheet(`Help`, (el, close) => {
     el.innerHTML = `<div class="help">
       <label class="search sm">${icon(`search`)}<input data-hq type="search" value="${esc(q)}" placeholder="Ask in your own words, e.g. share with my family" autocomplete="off" enterkeyhint="search"></label>
@@ -2392,12 +2415,49 @@ function helpSheet(startQuery = ``) {
       const hits = searchHelp(text, screen).slice(0, 5);
       const itemQ = ITEM_Q.test(text) || !hits.length;
       const what = text.replace(ITEM_Q, ``).replace(/[?.!]+$/, ``).trim().replace(/^((is|are|my|our|the|a|an|i|put|did|kept)\s+)+/i, ``).trim();
-      list.innerHTML = `${itemQ && what ? `<button type="button" class="help-items" data-items="${esc(what)}">${icon(`search`)}<span>Search your things for “${esc(what)}”</span>${icon(`chevron`)}</button>` : ``}
-        ${hits.length ? hits.map((h) => card(h.topic)).join(``) : `<p class="muted small pad">No help topic matches that yet. Tell us below what you were trying to do, so it gets added.</p>`}`;
+      const answered = ask && (ask.q === text || ask.prior);
+      list.innerHTML = `${answered ? askCard() : aiReady() && !ITEM_Q.test(text) ? `<button type="button" class="help-ask" data-ask>${icon(`spark`)}<span>Ask AI: “${esc(text)}”</span>${icon(`chevron`)}</button>` : ``}
+        ${itemQ && what ? `<button type="button" class="help-items" data-items="${esc(what)}">${icon(`search`)}<span>Search your things for “${esc(what)}”</span>${icon(`chevron`)}</button>` : ``}
+        ${answered && ask.res?.found ? `` : hits.length ? `${answered ? `<div class="label-sm">Close matches</div>` : ``}${hits.map((h) => card(h.topic)).join(``)}`
+          : `<p class="muted small pad">No help topic matches that yet. Tell us below what you were trying to do, so it gets added.</p>`}
+        ${!aiReady() && !ITEM_Q.test(text) ? `<p class="fine help-aion">${icon(`spark`)} With AI turned on you can ask in your own words and get a direct answer. <button type="button" class="link small" data-aion>Set it up</button></p>` : ``}`;
+    };
+    // the AI's answer: text, the topics it came from (with Take me there), did it help, one follow-up
+    const askCard = () => {
+      if (ask.busy) return `<div class="help-answer"><div class="help-ahead">${icon(`spark`)} Asking…</div><div class="spinner sm"></div></div>`;
+      if (ask.err) return `<div class="help-answer"><div class="help-ahead">${icon(`alert`)} ${esc(ask.err)}</div><button type="button" class="btn ghost small" data-ask>Try again</button></div>`;
+      const r = ask.res; const src = r.topics.map(topicById).filter(Boolean);
+      return `<div class="help-answer${r.found ? `` : ` none`}">
+        ${ask.prior ? `<p class="help-prior">${esc(ask.prior.q)}</p><p class="help-prior a">${esc(ask.prior.answer)}</p><p class="help-prior">${esc(ask.q)}</p>` : ``}
+        <div class="help-ahead">${icon(`spark`)} ${r.found ? `Answer` : `Not in Paran’s help yet`}</div>
+        <p class="help-text">${esc(r.answer)}</p>
+        ${src.length ? `<div class="help-src">${src.map((t) => `${card(t)}`).join(``)}</div>` : ``}
+        ${r.found && src[0]?.go ? `<button type="button" class="btn primary small" data-go="${esc(src[0].id)}">Take me there</button>` : ``}
+        <div class="help-acts">${ask.rated ? `<span class="help-was">Thanks!</span>` : `<span class="help-was">Did this help? <button type="button" class="chip" data-askyes>Yes</button><button type="button" class="chip" data-askno>No</button></span>`}</div>
+        ${ask.prior ? `` : `<form class="help-follow" data-follow><input placeholder="Ask a follow-up" aria-label="Ask a follow-up" autocomplete="off"><button class="btn ghost small">Ask</button></form>`}
+        <p class="fine">Answered by AI from Paran’s help, sent to Google Gemini with your question (no inventory details).</p>
+      </div>`;
+    };
+    const runAsk = async (text, prior = null) => {
+      ask = { q: text, busy: true, prior }; draw();
+      statCount(`helpAsk`);
+      try {
+        const res = await askHelp(text, askTopics(text, screen, prior), { who: helpWho(screen), prior });
+        ask = { q: text, res, prior, rated: false };
+        if (!res.found) { statCount(`helpAskNone`); addFeedback({ q: text, screen, ai: true, found: false }); }
+      } catch (err) { ask = { q: text, err: err.message || String(err), prior }; }
+      if (q.trim() === text || prior) draw();
+    };
+    input.onkeydown = (e) => { if (e.key === `Enter` && aiReady() && q.trim() && !ITEM_Q.test(q.trim())) { e.preventDefault(); runAsk(q.trim()); } };
+    el.onsubmit = (e) => {
+      if (!e.target.matches(`[data-follow]`)) return;
+      e.preventDefault();
+      const f = e.target.querySelector(`input`).value.trim(); if (!f || !ask?.res) return;
+      runAsk(f, { q: ask.q, answer: ask.res.answer, topics: ask.res.topics });
     };
     let timer = 0;
     input.oninput = () => {
-      q = input.value; open = ``; draw();
+      q = input.value; open = ``; ask = null; draw();
       clearTimeout(timer);
       timer = setTimeout(() => { const t = q.trim(); if (t.length > 2) { statCount(`help`); if (!searchHelp(t, screen).length) { statCount(`helpNone`); addFeedback({ q: t, screen }); } } }, 1500);
     };
@@ -2406,6 +2466,15 @@ function helpSheet(startQuery = ``) {
       const d = b.dataset;
       if (d.toggle) { open = open === d.toggle ? `` : d.toggle; draw(); $(`[data-topic="${CSS.escape(open)}"]`, el)?.scrollIntoView({ block: `nearest` }); return; }
       if (d.go) { const t = topicById(d.go); close(); helpGo(t); return; }
+      if (d.ask !== undefined) { const t = ask?.err ? ask.q : q.trim(); if (t) runAsk(t, ask?.err ? ask.prior : null); return; }
+      if (d.aion !== undefined) { close(); if (await aiConsent(false)) helpSheet(q); return; }
+      if (d.askyes !== undefined || d.askno !== undefined) {
+        const helpful = d.askyes !== undefined; statCount(helpful ? `helpAskYes` : `helpAskNo`);
+        addFeedback({ q: ask.q, topic: ask.res?.topics[0] || ``, helpful, screen, ai: true, found: ask.res?.found });
+        ask.rated = true; draw();
+        if (!helpful) { const text = await promptSheet(`Tell us`, { label: `What were you trying to do?`, value: ask.q, okLabel: `Save` }); if (text) addFeedback({ q: ask.q, text, screen, ai: true }); }
+        return;
+      }
       if (d.yes || d.no) {
         const helpful = Boolean(d.yes); statCount(helpful ? `helpYes` : `helpNo`);
         addFeedback({ q: q.trim(), topic: d.yes || d.no, helpful, screen });
