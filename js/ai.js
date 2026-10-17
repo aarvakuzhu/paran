@@ -256,6 +256,7 @@ const RECEIPT_SCHEMA = {
   type: `OBJECT`,
   properties: {
     store: { type: `STRING` }, date: { type: `STRING` }, currency: { type: `STRING` }, total: { type: `NUMBER` }, returnBy: { type: `STRING` },
+    subtotal: { type: `NUMBER` }, tax: { type: `NUMBER` }, other: { type: `NUMBER` },
     items: {
       type: `ARRAY`,
       items: {
@@ -290,6 +291,8 @@ export async function readReceipt(image, { inventory = [], lines = [], categorie
     `- match: if the same kind of thing is already in the INVENTORY list below, its name copied EXACTLY; otherwise empty.`,
     `- line: if it supplies one of the NEEDED lines below, that line's id exactly; otherwise empty.`,
     `Also: store name; date as YYYY-MM-DD; currency code (USD, INR…); total paid as a number; returnBy as YYYY-MM-DD only if a return-by date is printed.`,
+    `Copy these exactly as printed (0 if not printed): subtotal; tax (all taxes added up); other (tips, fees, deposits, delivery, bag charges, added up; discounts not taken off a product count as negative).`,
+    `Read every product line, even if the photo is long; never drop one to keep the answer short.`,
     `Do NOT return card numbers, names, addresses, phone numbers, membership or loyalty numbers. If the photo is not a receipt, return an empty items list.`,
     ``, `INVENTORY:`, inventory.slice(0, 400).map((i) => `- ${i.name}`).join(`\n`) || `(empty)`,
     ``, `NEEDED (id: name, event):`, lines.slice(0, 80).map((l) => `- ${l.id}: ${l.name} (${l.event})`).join(`\n`) || `(none)`,
@@ -307,7 +310,9 @@ export async function readReceipt(image, { inventory = [], lines = [], categorie
     warrantyMonths: Math.max(0, Math.min(120, parseInt(it.warrantyMonths, 10) || 0)), consumable: Boolean(it.consumable),
     match: known.get(String(it.match || ``).trim().toLowerCase()) || ``, line: lineIds.has(String(it.line || ``).trim()) ? String(it.line).trim() : ``,
   })).filter((it) => it.name);
-  return { store: str(r.store, 60), date: iso(r.date), currency: str(r.currency, 8).toUpperCase(), total: money(r.total), returnBy: iso(r.returnBy), items };
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  return { store: str(r.store, 60), date: iso(r.date), currency: str(r.currency, 8).toUpperCase(), total: money(r.total), returnBy: iso(r.returnBy),
+    subtotal: money(r.subtotal) || null, tax: num(r.tax), other: num(r.other), items };
 }
 
 async function callGemini(images, promptText, schema) {

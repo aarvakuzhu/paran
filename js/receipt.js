@@ -58,6 +58,23 @@ function pickReceipt(eventId) {
   });
 }
 
+/**
+ * Do the products add up to what the receipt says? Compared with the printed subtotal when there is one (taxes and
+ * fees aside), else with the total minus tax and fees. A gap means a line was missed or a price misread.
+ * Returns null when the receipt gives nothing to compare with.
+ */
+export function totalCheck(result) {
+  const sum = Math.round(result.items.reduce((a, it) => a + (it.price || 0), 0) * 100) / 100;
+  const missingPrice = result.items.filter((it) => it.price == null).length;
+  let expect = null; let against = ``;
+  if (result.subtotal) { expect = result.subtotal; against = `subtotal`; }
+  else if (result.total != null) { expect = Math.round((result.total - (result.tax || 0) - (result.other || 0)) * 100) / 100; against = result.tax || result.other ? `total before tax and fees` : `total`; }
+  if (expect == null || expect <= 0) return null;
+  const gap = Math.round((expect - sum) * 100) / 100;
+  const ok = Math.abs(gap) <= Math.max(0.05, expect * 0.01) && !missingPrice;
+  return { ok, sum, expect, gap, against, missingPrice };
+}
+
 function review(result, shot, eventId) {
   const repo = R();
   const byName = new Map(); // name → every item with it (the same thing can be kept in two places)
@@ -78,6 +95,7 @@ function review(result, shot, eventId) {
         <div class="rc-head"><img src="${shot.thumb}" alt="Receipt">
           <div><b>${esc(result.store || `Receipt`)}</b><small>${esc(nice(date))}${result.total != null ? ` · ${esc(moneyText(moneyValue(result.total, result.currency)))}` : ``}</small>
           ${result.returnBy ? `<small>Return by ${esc(nice(result.returnBy))}</small>` : ``}</div></div>
+        ${checkHtml(totalCheck(result), result.currency)}
         <div class="pr-list">${rows.map((r, i) => `<div class="pr-row${r.on ? `` : ` off`}">
           <label class="tick"><input type="checkbox" data-on="${i}" ${r.on ? `checked` : ``} aria-label="Include ${esc(r.name)}"></label>
           <div class="pr-main">
@@ -117,6 +135,16 @@ function review(result, shot, eventId) {
       ctx.done?.();
     };
   });
+}
+
+function checkHtml(c, cur) {
+  if (!c) return ``;
+  const m = (n) => esc(moneyText(moneyValue(Math.abs(n), cur)));
+  if (c.ok) return `<p class="rc-check ok">${icon(`check`)} Adds up to the receipt’s ${esc(c.against)} (${m(c.expect)})</p>`;
+  const why = c.missingPrice ? `${c.missingPrice} line${c.missingPrice === 1 ? `` : `s`} came back without a price. `
+    : c.gap > 0 ? `${m(c.gap)} short of the receipt’s ${esc(c.against)}, so a line may be missing or a price misread. `
+    : `${m(c.gap)} more than the receipt’s ${esc(c.against)}, so a line may be read twice or a price misread. `;
+  return `<div class="rc-check warn">${icon(`alert`)}<div><b>These add up to ${m(c.sum)}, the receipt says ${m(c.expect)}</b><small>${why}Check the prices against the receipt, or retake the photo flatter and closer.</small></div></div>`;
 }
 
 async function saveAll(rows, { result, shot, date, locationId, lineById }) {

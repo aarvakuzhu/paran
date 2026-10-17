@@ -1105,3 +1105,10 @@ body.readonly .edit-only { display: none !important; }
 .receipt-entry small { color: var(--ink-2); }
 .receipt-img { width: 100%; border-radius: 8px; }
 .center { text-align: center; }
+.rc-check { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: .88rem; }
+.rc-check .ic { flex: none; margin-top: 2px; }
+.rc-check.ok { color: var(--accent); }
+.rc-check.warn { padding: 10px 12px; border-radius: var(--radius); background: var(--amber-soft); color: var(--ink); }
+.rc-check.warn .ic { color: var(--amber); }
+.rc-check.warn div { display: grid; gap: 2px; }
+.rc-check.warn small { color: var(--ink-2); }

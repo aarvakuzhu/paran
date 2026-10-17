@@ -3,7 +3,7 @@ import asyncio, sys, json, re
 import os; SP = os.path.dirname(os.path.abspath(__file__))
 from playwright.async_api import async_playwright
 T = lambda s: re.sub(r'\s+', ' ', s).strip()
-FAILS = []; PROMPTS = []
+FAILS = []; PROMPTS = []; DROP = []
 def check(c, w):
     print(('  ok   ' if c else '  FAIL ') + w)
     if not c: FAILS.append(w)
@@ -29,12 +29,13 @@ def gemini(body):
         lid = next((x.split(':')[0] for x in need if 'Certificates' in x), '')
         inv = section(prompt, 'INVENTORY')
         tc = next((n for n in inv if 'Tablecloth' in n), '')
-        out = {'store': 'Party City', 'date': '2026-10-12', 'currency': 'USD', 'total': 156.70, 'items': [
+        out = {'store': 'Party City', 'date': '2026-10-12', 'currency': 'USD', 'total': 156.70, 'subtotal': 146.45, 'tax': 10.25, 'items': [
             {'name': 'Certificate paper, gold', 'qty': 1, 'price': 12.99, 'category': 'Stationery', 'purpose': 'Printing certificates', 'tags': ['certificate', 'paper'], 'line': lid},
             {'name': 'Folding table, 6 ft', 'brand': 'Lifetime', 'qty': 2, 'price': 99.98, 'warrantyMonths': 12, 'category': 'Furniture'},
             {'name': 'White tablecloths', 'qty': 10, 'price': 24.99, 'match': tc},
             {'name': 'Paper plates', 'qty': 100, 'price': 8.49, 'consumable': True},
         ]}
+        out['items'] = [i for i in out['items'] if i['name'] not in DROP]
     return {'candidates': [{'content': {'parts': [{'text': json.dumps(out)}]}, 'finishReason': 'STOP'}]}
 
 def make_receipt():
@@ -104,6 +105,7 @@ async def main():
         print('  review:', rv[:300])
         await pg.screenshot(path=f'{SP}/r2-review.png', full_page=True)
         check('Party City' in rv and '$156.70' in rv, 'store and total shown')
+        check('Adds up to the receipt’s subtotal ($146.45)' in rv, 'total check passes when every line was read')
         lsel = await pg.eval_on_selector_all('.rc-review select[data-line]', 'ss => ss.map(s => s.options[s.selectedIndex].text)')
         check(lsel and 'Certificates' in lsel[0], f'certificate paper matched to the Certificates line ({lsel[:1]})')
         ons = await pg.eval_on_selector_all('.rc-review [data-on]', 'cs => cs.map(c => c.checked)')
@@ -134,11 +136,19 @@ async def main():
         await pg.click('[data-a="receipt"]'); await pg.wait_for_timeout(800)
         check(bool(await pg.query_selector('.receipt-img[src^="blob:"]')), 'receipt photo opens')
         await pg.screenshot(path=f'{SP}/r3-item.png', full_page=True)
+        await pg.click('.sheet-wrap.open [data-close]'); await pg.wait_for_timeout(400)
 
         print('4. From Add')
         await pg.goto('http://localhost:8080/#/add'); await pg.wait_for_timeout(600)
         check(bool(await pg.query_selector('[data-receipt]')), 'Add screen offers the receipt')
         await pg.screenshot(path=f'{SP}/r4-add.png')
+        DROP.append('White tablecloths')  # the model missed a line
+        await pg.click('[data-receipt]'); await pg.wait_for_timeout(400)
+        await pg.set_input_files('.rc-pick input[type=file] >> nth=1', f'{SP}/receipt.jpg'); await pg.wait_for_timeout(5500)
+        warn = T(await pg.inner_text('.rc-check.warn')) if await pg.query_selector('.rc-check.warn') else ''
+        print('  warning:', warn)
+        check('add up to $121.46' in warn and '$24.99 short' in warn, 'missing line flagged with the gap')
+        await pg.screenshot(path=f'{SP}/r5-warn.png')
         print('errors', errs)
         await b.close()
     print('\nFAILURES:', FAILS or 'none')
