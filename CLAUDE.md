@@ -8,3 +8,6 @@
 - Bump `VERSION` in `sw.js` for every change that ships, and add new modules to its file list and to the
   modulepreload links in `index.html`.
 - Keep `README.md` describing what's built; tests live in `tests/` (see `tests/README.md`).
+- **Layout:** nothing may make a screen wider than the phone (it drags the fixed tab bar sideways). Grid/flex children
+  that hold text, inputs or many small items need `min-width: 0` / `minmax(0, 1fr)`. Run `python3 tests/no_overflow.py`
+  after any layout change.

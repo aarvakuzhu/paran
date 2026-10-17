@@ -1190,3 +1190,14 @@ body.readonly .edit-only { display: none !important; }
 .help-aion .ic { color: var(--accent); }
 .spinner.sm { width: 22px; height: 22px; border-width: 2px; margin: 0; }
 .help-answer > .btn { justify-self: start; }
+
+/* Nothing may make the page wider than the phone: a wide page scrolls sideways and drags the fixed tab bar with it.
+   Grid/flex children default to their content's width, so long text, date inputs or many chart bars could push it. */
+.menu > *, .more-menu > *, .form > *, .two > *, .field, .field > * { min-width: 0; }
+.form, .menu, .more-menu { grid-template-columns: minmax(0, 1fr); }
+input, select, textarea { max-width: 100%; }
+.act-bars { gap: 1px; }
+.act-bars i { min-width: 0; }
+.place-add { grid-template-columns: minmax(0, 1fr) auto; }
+.place-add > * { min-width: 0; }
+@media (max-width: 340px) { .place-add { grid-template-columns: 1fr; } }

@@ -35,3 +35,7 @@ against the code without a browser.
 8 topics, the right one among them, a who/where line and no inventory contents sent; one follow-up carrying the first
 question and answer; made-up topic ids dropped; "not in help yet" and Gemini errors (Try again, matches still
 listed); questions about your things never sent; feedback and counts kept.
+
+`no_overflow.py` (demo, 320 and 390 px): no screen is wider than the phone (a wide page scrolls sideways and drags
+the fixed tab bar with it), including Edit with all details open, Your activity over 120 days and Help with a long
+question; and the tab bar stays pinned to the bottom while scrolling. Run it after any layout change.
