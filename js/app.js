@@ -1,6 +1,7 @@
 import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSheets, AuthError } from './google.js';
-import { paranRoot, loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory, groupAccess } from './inventories.js';
+import { chooseTemplate } from './templates.js';
+import { seedPlaces, paranRoot, loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory, groupAccess } from './inventories.js';
 import { Repo } from './store.js';
 import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 import { blobs } from './idb.js';
@@ -10,7 +11,7 @@ import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeI
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
-import { count as statCount, snapshot as statSnapshot, sendStats, statsOn, setStatsOn, statsData } from './stats.js';
+import { count as statCount, snapshot as statSnapshot, statsOn, setStatsOn, statsData } from './stats.js';
 import { scanLabel } from './qrscan.js';
 import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml, toggleTaskDone } from './events.js';
 
@@ -97,7 +98,8 @@ async function start(kind, { interactive = false, choice } = {}) {
   repo.addEventListener(`readonly`, onReadOnly);
     repo.addEventListener(`groupdenied`, onGroupDenied);
     renderShell();
-    if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
+    if (choice?.template) { location.hash = `#/places`; render(); await applyTemplate(choice.template); }
+    else if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
     if (kind === `google`) installQuietRenew();
   } catch (e) {
@@ -228,8 +230,10 @@ function renderChoice(user) {
     </div>
   </main>`;
   $(`#create`).onclick = async () => {
-    const name = await promptSheet(`Name your inventory`, { label: `Name`, value: `My home`, placeholder: `e.g. My home, Lake house, Tamil School`, okLabel: `Create` });
-    if (name) start(`google`, { choice: { create: true, name } });
+    const t = await chooseTemplate(app);
+    if (!t) return renderChoice(user);
+    if (t.empty) return start(`google`, { choice: { create: true, name: t.name } });
+    start(`google`, { choice: { create: true, name: t.inventories[0].name, template: t } });
   };
   $(`#join`).onclick = async () => {
     try {
@@ -2376,28 +2380,54 @@ function statsSnapshot() {
       events: repo.group()?.id === gid ? repo.liveEvents().filter((e) => e._g).length : 0 };
   });
   setTimeout(() => statSnapshot({ version: appVersion, mode: repo.backend.kind, inventories: google ? Object.keys(k.inv).length : 1, aiOn: aiReady(), groups })
-    .then(() => sendStats()).catch(() => {}), 1500); // the version answer arrives just after asking
+    .catch(() => {}), 1500); // the version answer arrives just after asking
 }
 
+let actPeriod = 7; // Your activity: 7, 30, or 0 (everything kept)
+/** The usage counts, shown to the person themselves: what they did, when, how AI did, their groups now. */
 function statsPage() {
   const s = statsData();
-  const days = s ? Object.entries(s.days).sort(([a], [b]) => b.localeCompare(a)) : [];
-  const week = days.slice(0, 7);
-  const sum = (key) => week.reduce((a, [, d]) => a + (d.c?.[key] || 0), 0);
-  const LABEL = { open: `Days opened`, add: `Items added`, addMore: `More of an item`, move: `Moves`, lend: `Lends and reservations`, return: `Returns`, edit: `Edits`, remove: `Removed`,
-    search: `Searches`, event: `Events created`, dayof: `Day-of ticks`, after: `After-event actions` };
-  const aiUses = week.reduce((a, [, d]) => a + Object.values(d.ai || {}).reduce((x, y) => x + y.uses, 0), 0);
-  return `<div class="menu">
-      <label class="menu-switch"><span>Keep usage counts on this phone</span><span class="switch"><input type="checkbox" data-stats ${statsOn() ? `checked` : ``}><i></i></span></label>
+  const on = statsOn();
+  const switchHtml = `<div class="menu">
+      <label class="menu-switch"><span>Keep these counts on this phone</span><span class="switch"><input type="checkbox" data-stats ${on ? `checked` : ``}><i></i></span></label></div>
+    <p class="fine">Only counts: how often you add, search, lend, plan events, use AI; how many people and inventories your groups have. Never names, emails, items, places, photos or what you searched for. They stay on this phone and aren’t sent anywhere. Turning this off deletes them.</p>`;
+  if (!s) return switchHtml;
+  const dates = [];
+  const n = actPeriod || Math.max(1, Math.ceil((Date.now() - new Date(`${Object.keys(s.days).sort()[0] || todayStr()}T00:00`)) / 86400000) + 1);
+  for (let i = n - 1; i >= 0; i--) dates.push(isoDay(-i));
+  const days = dates.map((d) => [d, s.days[d]]);
+  const sum = (key) => days.reduce((a, [, d]) => a + (d?.c?.[key] || 0), 0);
+  const used = days.filter(([, d]) => d && Object.values(d.c || {}).some(Boolean)).length;
+  const LABEL = { add: `Items added`, addMore: `Added more of one`, move: `Moved`, lend: `Lent or reserved`, return: `Got back`, edit: `Edited`, remove: `Removed`,
+    search: `Searches`, event: `Events planned`, dayof: `Ticked on the day`, after: `Sorted after an event` };
+  const activity = (d) => (d ? Object.entries(d.c || {}).filter(([k]) => k !== `open`).reduce((a, [, v]) => a + v, 0) + Object.values(d.ai || {}).reduce((a, x) => a + x.uses, 0) : 0);
+  const peak = Math.max(1, ...days.map(([, d]) => activity(d)));
+  const ai = {};
+  for (const [, d] of days) for (const [kind, x] of Object.entries(d?.ai || {})) {
+    const k = ACC_GROUP[kind] || kind; const a = ai[k] ||= { uses: 0, total: 0, score: 0 };
+    a.uses += x.uses; const nm = x.fields?.name; if (nm) { a.total += nm[1]; a.score += nm[2]; }
+  }
+  const k = repo.backend.kind === `google` ? loadKnown(repo.user.email) : { inv: {}, groups: {} };
+  const groups = Object.entries(k.groups).map(([gid, g]) => {
+    const invs = Object.entries(k.inv).filter(([, i]) => i.groupId === gid).map(([id]) => id);
+    const people = (g.people || []).filter((p) => p.role !== `removed`);
+    const items = invs.reduce((a, id) => a + (id === repo.backend.sheetId ? repo.activeItems().length : cachedCount(id) || 0), 0);
+    return { name: g.name, people: people.length, viewers: people.filter((p) => p.role === `viewer`).length, invs: invs.length, items };
+  });
+  const tiles = Object.keys(LABEL).filter((x) => sum(x));
+  return `<div class="seg act-period">${[[7, `7 days`], [30, `30 days`], [0, `Everything kept`]].map(([v, l]) => `<button type="button" data-period="${v}" class="${actPeriod === v ? `on` : ``}">${l}</button>`).join(``)}</div>
+    <div class="acc-card">
+      <div class="acc-head"><b>You used Paran on ${used} of ${n} day${n === 1 ? `` : `s`}</b><small>${esc(niceDay(dates[0]))} to today</small></div>
+      <div class="act-bars" aria-hidden="true">${days.map(([d, x]) => `<i title="${esc(d)}: ${activity(x)}" style="--h:${Math.round((activity(x) / peak) * 100)}%" class="${activity(x) ? `` : `none`}"></i>`).join(``)}</div>
+      ${tiles.length ? `<div class="stat-grid">${tiles.map((x) => `<div><b>${sum(x)}</b><span>${esc(LABEL[x])}</span></div>`).join(``)}</div>` : `<p class="muted small">Nothing done in this time yet.</p>`}
     </div>
-    <p class="fine">Counts only: how often things are added, searched or lent, how many inventories and people a group has, how well AI did. Never names, emails, items, places or photos. They stay on this phone; nothing has been sent${CONFIG.STATS_URL ? `` : `, and nothing will be until Paran says so here first`}.</p>
-    ${s ? `<div class="acc-card">
-      <div class="acc-head"><b>Last 7 days on this phone</b><small>${days.length} day${days.length === 1 ? `` : `s`} kept (up to 120)</small></div>
-      <div class="stat-grid">${Object.keys(LABEL).filter((k) => sum(k)).map((k) => `<div><b>${sum(k)}</b><span>${esc(LABEL[k])}</span></div>`).join(``) || `<p class="muted small">Nothing counted yet.</p>`}
-        ${aiUses ? `<div><b>${aiUses}</b><span>Uses of AI</span></div>` : ``}</div>
-      <details><summary class="small">See exactly what’s kept</summary><pre class="stats-raw">${esc(JSON.stringify(s, null, 1))}</pre></details>
-    </div>` : ``}`;
+    ${Object.keys(ai).length ? `<div class="label-sm">AI</div><div class="acc-card">${Object.entries(ai).map(([label, a]) => `<div class="act-ai"><b>${esc(label)}</b><span>${a.uses} time${a.uses === 1 ? `` : `s`}${a.total ? ` · names ${Math.round((a.score / a.total) * 100)}% right` : ``}</span></div>`).join(``)}
+      <a class="link small" href="#/more/ai">How accurate AI has been</a></div>` : ``}
+    ${groups.length ? `<div class="label-sm">Your groups now</div><div class="acc-card">${groups.map((g) => `<div class="act-ai"><b>${esc(g.name)}</b><span>${g.people} ${g.people === 1 ? `person` : `people`}${g.viewers ? ` (${g.viewers} view only)` : ``} · ${g.invs} inventor${g.invs === 1 ? `y` : `ies`} · ${g.items} items</span></div>`).join(``)}</div>` : ``}
+    ${switchHtml}
+    <details class="raw-wrap"><summary class="small">See exactly what’s kept</summary><pre class="stats-raw">${esc(JSON.stringify(s, null, 1))}</pre></details>`;
 }
+const niceDay = (iso) => { try { return new Date(`${iso}T00:00`).toLocaleDateString(undefined, { day: `numeric`, month: `short` }); } catch { return iso; } };
 
 // ============================================================ How accurate AI has been
 // Added up from the "ai" rows in History (one per use of AI: what it offered and what was kept) and from later edits
@@ -2642,6 +2672,28 @@ async function bringPeopleIntoGroup(gid) {
   if (n) toast(`${n} added to ${g.name}`);
 }
 
+/**
+ * A starting template, once the first inventory exists (it's the open one): its places; then, for a group, the group
+ * with it inside and the other inventories with their places.
+ */
+async function applyTemplate(t) {
+  const addPlaces = (places) => { for (const p of places) { const top = repo.saveLocation({ name: p.name, parentId: ``, kind: `place` }); for (const r of p.rooms) repo.saveLocation({ name: r, parentId: top.id, kind: `room` }); } };
+  addPlaces(t.inventories[0]?.places || []);
+  if (t.group) {
+    const g = await putInGroup({ name: t.group });
+    if (!g) return;
+    for (const inv of t.inventories.slice(1)) {
+      try {
+        toast(`Creating ${inv.name}…`, { ms: 6000 });
+        const made = await createInventory(repo.user, inv.name, g.id);
+        await seedPlaces(made.sheetId, repo.user, inv.places);
+      } catch (e) { toast(`Couldn’t create ${inv.name}: ${e.message}`, { ms: 6000 }); }
+    }
+    toast(`${t.group} is ready: ${t.inventories.map((i) => i.name).join(`, `)}. Switch between them from the name at the top.`, { ms: 7000 });
+  } else toast(`Your places are in. Now add something you always hunt for.`, { ms: 5000 });
+  render();
+}
+
 /** Put the open inventory (which you own) into a group: an existing one of yours, or a new one. Resolves the group or null. */
 async function putInGroup({ gid = ``, name = `` }) {
   const user = repo.user;
@@ -2856,7 +2908,7 @@ function viewMore(view, r) {
       ${aiAccuracyHtml()}
     </div>`;
   } else if (page === `stats`) {
-    view.innerHTML = `<div class="more">${head(`Usage counts`)}${statsPage()}</div>`;
+    view.innerHTML = `<div class="more">${head(`Your activity`)}${statsPage()}</div>`;
   } else if (page === `data`) {
     // The sheets are the owner's: only owners get links to them. Data is spread over sheets, so each link says what's in it.
     const b = repo.backend; const grp = g ? repo.group() : null;
@@ -2898,7 +2950,7 @@ function viewMore(view, r) {
         ${g ? (() => { const n = grp ? (grp.people || []).filter((p) => p.role !== `removed`).length : members.length;
           return row(`#/more/people`, `users`, `People & access`, `${n} ${n === 1 ? `person` : `people`}${grp ? ` in ${grp.name}` : ``} · you: ${myRole.toLowerCase()}`); })() : ``}
         ${row(`#/more/ai`, `spark`, `AI suggestions`, aiReady() ? `On` : `Off`)}
-        ${row(`#/more/stats`, `info`, `Usage counts`, statsOn() ? `Kept on this phone, not sent` : `Off`)}
+        ${row(`#/more/stats`, `clock`, `Your activity`, statsOn() ? `What you’ve done in Paran · kept on this phone` : `Off`)}
         ${row(`#/more/data`, `sheet`, `Your data`, g && (repo.backend.isOwner || repo.group()?.owner) ? `Google Sheets, download, refresh` : `Download, refresh`)}
         <button data-m="about" class="more-row">${icon(`info`)}<span><b>About ${esc(CONFIG.APP_NAME)}</b></span>${icon(`chevron`)}</button>
       </div>
@@ -2934,6 +2986,7 @@ function viewMore(view, r) {
     finally { btn.disabled = false; }
   };
   $(`[data-aiauto]`, view)?.addEventListener(`change`, (e) => saveAiSettings({ auto: e.target.checked }));
+  view.querySelectorAll(`[data-period]`).forEach((b) => b.addEventListener(`click`, () => { actPeriod = Number(b.dataset.period); render(); }));
   $(`[data-stats]`, view)?.addEventListener(`change`, (e) => { setStatsOn(e.target.checked); lastSnap = 0; if (e.target.checked) statsSnapshot(); setTimeout(render, 1700); });
   if (r?.params?.get(`ai`) === `1` && !aiReady()) setTimeout(() => aiConsent().then((ok) => ok && render()), 50);
 

@@ -12,7 +12,7 @@
 // people who were shared a group learn which inventories it holds.
 import { CONFIG } from './config.js';
 import { drive, sheets } from './google.js';
-import { TABS, MEMBER_COLS, rowsToObjects, objectToRow, lastCol, now } from './store.js';
+import { TABS, MEMBER_COLS, LOC_COLS, EVENT_TABS, rowsToObjects, objectToRow, lastCol, now } from './store.js';
 
 export const DIR_INV_COLS = [`id`, `name`, `folderId`, `addedBy`, `addedAt`, `removed`];
 export const DIR_PEOPLE_COLS = [`email`, `role`, `invitedBy`, `joinedAt`];
@@ -121,10 +121,11 @@ export async function tidyIntoRoot(user) {
 // ---------------------------------------------------------------- creating
 export async function createGroup(user, name) {
   const folder = await drive.createFolder(name, await paranRoot(user), `group`);
-  const ss = await sheets.create(`${name} – directory`, DIR_TABS);
+  const tabs = [...DIR_TABS, ...EVENT_TABS]; // events tabs from the start, so reading them never fails
+  const ss = await sheets.create(`${name} – directory`, tabs);
   const m = await drive.meta(ss.spreadsheetId);
   await drive.tagAndMove(ss.spreadsheetId, folder.id, (m.parents || []).join(`,`), `directory`);
-  await sheets.batchUpdateValues(ss.spreadsheetId, DIR_TABS.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
+  await sheets.batchUpdateValues(ss.spreadsheetId, tabs.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
   await sheets.append(ss.spreadsheetId, `People!A1`, [objectToRow({ email: user.email, role: `owner`, invitedBy: ``, joinedAt: now() }, DIR_PEOPLE_COLS)]);
   const k = loadKnown(user.email);
   k.groups[folder.id] = { name, dirId: ss.spreadsheetId, owner: true, people: [{ email: user.email, role: `owner` }] };
@@ -146,6 +147,18 @@ export async function createInventory(user, name = CONFIG.SHEET_NAME, groupId = 
   if (group) await drive.setProps(ss.spreadsheetId, { groupName: group.name }).catch(() => {}); // see addToGroup
   rememberInventory(user.email, ss.spreadsheetId, { name, owner: true, reachable: true, groupId: group ? groupId : `` });
   return { sheetId: ss.spreadsheetId, folderId: folder.id, name };
+}
+
+/** Places for an inventory that isn't the open one (from a starting template): [{ name, rooms: [names] }]. */
+export async function seedPlaces(sheetId, user, places) {
+  const id = () => Math.random().toString(36).slice(2, 12);
+  const rows = [];
+  for (const p of places) {
+    const top = id();
+    rows.push(objectToRow({ id: top, name: p.name, parentId: ``, kind: `place`, notes: ``, createdBy: user.email, createdAt: now(), deleted: `` }, LOC_COLS));
+    for (const r of p.rooms) rows.push(objectToRow({ id: id(), name: r, parentId: top, kind: `room`, notes: ``, createdBy: user.email, createdAt: now(), deleted: `` }, LOC_COLS));
+  }
+  if (rows.length) await sheets.append(sheetId, `Locations!A1`, rows);
 }
 
 async function addDirectoryRow(dirId, user, inv) {

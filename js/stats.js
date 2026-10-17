@@ -1,15 +1,13 @@
-// Usage stats, collected on this phone only. Nothing is sent until CONFIG.STATS_URL is set (and the app's privacy
-// wording changed to say so). Counts only: no names, emails, item names, places, photos or text, ever.
+// Usage stats, collected on this phone only and never sent (how they might be shared later is still to be decided).
+// Counts only: no names, emails, item names, places, photos or text, ever. Shown to the person in More → Your activity.
 //
 // Kept in localStorage under paran.stats:
-//   { id: random install id, days: { 'YYYY-MM-DD': Day }, sentUpTo: 'YYYY-MM-DD' | '' }
+//   { id: random install id, days: { 'YYYY-MM-DD': Day } }
 // Day = { v: app version, mode: demo|google, standalone, inventories, inGroup, aiOn,
 //         c: { open, add, move, lend, return, edit, remove, search, event, plan, dayof, after, receipt, photoAi, scan },
 //         ai: { kind: { uses, n, t, fields: { field: [unchanged, total, score] } } },
 //         groups: { hashed group id: { members, editors, viewers, inventories, items, events } } }
 // Days older than KEEP_DAYS are dropped.
-import { CONFIG } from './config.js';
-
 const KEY = `paran.stats`;
 const OFF_KEY = `paran.stats.off`;
 const KEEP_DAYS = 120;
@@ -31,7 +29,7 @@ export function setStatsOn(on) {
 
 function load() {
   try { const s = JSON.parse(localStorage.getItem(KEY) || `null`); if (s?.id && s.days) return s; } catch { /* ignore */ }
-  return { id: rid(), days: {}, sentUpTo: `` };
+  return { id: rid(), days: {} };
 }
 function save(s) {
   const cut = new Date(); cut.setDate(cut.getDate() - KEEP_DAYS);
@@ -98,22 +96,3 @@ export async function snapshot(snap) {
 
 /** What's kept, for the page that shows it. */
 export function statsData() { return statsOn() ? load() : null; }
-
-/**
- * Send the days not sent yet. Off until CONFIG.STATS_URL is set; today is only sent tomorrow (once it's complete).
- * The endpoint gets { id, days: { date: Day } }; an Apps Script web app can append one row per day.
- */
-export async function sendStats() {
-  const url = CONFIG.STATS_URL;
-  if (!url || !statsOn() || !navigator.onLine) return false;
-  const s = load(); const t = today();
-  const days = Object.fromEntries(Object.entries(s.days).filter(([d]) => d < t && d > (s.sentUpTo || ``)));
-  if (!Object.keys(days).length) return false;
-  try {
-    // text/plain keeps it a "simple" request (no preflight), which Apps Script web apps need
-    const r = await fetch(url, { method: `POST`, headers: { 'Content-Type': `text/plain;charset=utf-8` }, body: JSON.stringify({ id: s.id, days }) });
-    if (!r.ok) return false;
-    s.sentUpTo = Object.keys(days).sort().pop(); save(s);
-    return true;
-  } catch { return false; }
-}

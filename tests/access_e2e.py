@@ -52,7 +52,7 @@ async def main():
         print('1. Owner creates an inventory')
         a, A, aerr = await phone(b, OWNER)
         check('Start a new inventory' in T(await A.inner_text('body')), 'first run offers Start a new inventory')
-        await A.click('#create'); await A.wait_for_timeout(300)
+        await A.click('#create'); await A.wait_for_timeout(300); await A.click('[data-empty]'); await A.wait_for_timeout(300)
         await A.fill('.sheet input', 'School'); await A.click('.sheet button.primary'); await A.wait_for_timeout(3000)
         S = G.find('School') if any(f['name'] == 'School' and f['mime'] == G.SHEET for f in G.FILES.values()) else None
         S = next(f['id'] for f in G.FILES.values() if f['name'] == 'School' and f['mime'] == G.SHEET)

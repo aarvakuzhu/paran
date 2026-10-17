@@ -486,6 +486,11 @@ export class Repo extends EventTarget {
   }
 
   /** Pull latest from the backend, keeping any local edits still waiting in the outbox. */
+  refreshAgain() {
+    clearTimeout(this.againTimer);
+    this.againTimer = setTimeout(() => { if (this.syncing) this.refreshAgain(); else this.refresh(); }, 600);
+  }
+
   async refresh() {
     if (this.needsResumeChecks) {
       try { await this.backend.afterResume(); this.needsResumeChecks = false; this.user = this.backend.user; this.label = this.backend.label(); }
@@ -494,7 +499,11 @@ export class Repo extends EventTarget {
     await this.flush();
     if (!navigator.onLine) return;
     try {
+      const seq = this.writeSeq || 0;
       const data = await this.backend.fetchAll();
+      // Something was saved while this was being read: the copy may predate it (and no longer be in the outbox to
+      // lay on top), so read again rather than show an older state.
+      if (data && ((this.writeSeq || 0) !== seq || this.syncing)) { this.refreshAgain(); return; }
       if (data) {
         const pending = new Map(this.outbox.filter((o) => o.kind === `item` || o.kind === `location`).map((o) => [o.data.id, o.data]));
         this.items = data.items.map((i) => pending.get(i.id) || i);
@@ -584,7 +593,7 @@ export class Repo extends EventTarget {
           const data = op.kind === `item` ? { ...op.data, thumb: this.thumbs[op.data.id] || ``, photos: this.photosForSheet(op.data.photos) } : op.data;
           await this.backend.writeOps([{ ...op, data }]);
         }
-        this.outbox.shift(); this.saveCache();
+        this.outbox.shift(); this.writeSeq = (this.writeSeq || 0) + 1; this.saveCache();
       }
       this.setStatus(`synced`);
     } catch (e) { this.handleError(e); }

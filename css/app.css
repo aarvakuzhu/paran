@@ -1125,3 +1125,29 @@ body.readonly .edit-only { display: none !important; }
 .stat-grid b { font-size: 1.25rem; }
 .stat-grid span { font-size: .8rem; color: var(--ink-2); }
 .stats-raw { font-size: .7rem; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto; background: var(--bg); padding: 8px; border-radius: 8px; }
+.act-period { margin-bottom: 12px; }
+.act-bars { display: flex; align-items: flex-end; gap: 2px; height: 56px; }
+.act-bars i { flex: 1; min-width: 2px; height: max(var(--h), 3px); background: var(--accent); border-radius: 2px 2px 0 0; }
+.act-bars i.none { background: var(--surface-2); height: 3px; }
+.act-ai { display: grid; gap: 2px; }
+.act-ai span { color: var(--ink-2); font-size: .88rem; }
+.raw-wrap { margin-top: 12px; }
+
+/* first-run templates */
+.tpl { text-align: left; }
+.tpl .choice .ic { color: var(--accent); width: 24px; height: 24px; }
+.tpl-edit { display: grid; gap: 14px; }
+.tpl-inv { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.tpl-invhead, .tpl-ptop { display: flex; gap: 8px; align-items: center; }
+.tpl-invhead .ic { color: var(--accent); flex: none; }
+.tpl-invhead input { flex: 1; min-width: 0; font: inherit; font-weight: 700; font-size: 1.05rem; border: 1px solid transparent; background: transparent; padding: 6px; border-radius: 8px; color: var(--ink); }
+.tpl-place { display: grid; gap: 6px; padding-left: 6px; border-left: 2px solid var(--accent-soft); }
+.tpl-ptop .ic { color: var(--ink-3); flex: none; }
+.tpl-ptop input { flex: 1; min-width: 0; font: inherit; font-weight: 600; border: 1px solid transparent; background: transparent; padding: 4px 6px; border-radius: 8px; color: var(--ink); }
+.tpl-invhead input:focus, .tpl-ptop input:focus { border-color: var(--line); background: var(--bg); outline: none; }
+.tpl-room { display: inline-flex; align-items: center; gap: 4px; }
+.tpl-room button { border: 0; background: transparent; color: inherit; padding: 0; display: inline-flex; cursor: pointer; opacity: .8; }
+.tpl-room button .ic { width: 14px; height: 14px; }
+.tpl .form-actions { display: flex; gap: 10px; justify-content: space-between; }
+.welcome.tpl { padding: 28px 16px 48px; max-width: 640px; margin: 0 auto; box-sizing: border-box; width: 100%; }
+.tpl-edit { grid-template-columns: minmax(0, 1fr); } .tpl-edit > * { min-width: 0; } .tpl-inv { grid-template-columns: minmax(0, 1fr); }

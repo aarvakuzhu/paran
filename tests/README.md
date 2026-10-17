@@ -19,3 +19,9 @@ description and a receipt read into items: matching to existing items (including
 event lines turning ready, price/store/date/warranty captured, one shared receipt photo, and no card digits stored.
 
     pip install pillow && python3 tests/ai_flows.py
+
+`templates_first_run.py` (strict fake Google) starts three new people: a group template edited before creating
+(places removed and added, an inventory renamed and one added; the group, its inventories and their places all made
+in Drive), the home template as is, and an empty start.
+
+    python3 tests/templates_first_run.py
