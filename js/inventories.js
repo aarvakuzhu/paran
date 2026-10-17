@@ -106,6 +106,7 @@ export async function createInventory(user, name = CONFIG.SHEET_NAME, groupId = 
   await sheets.batchUpdateValues(ss.spreadsheetId, TABS.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
   await sheets.append(ss.spreadsheetId, `Members!A1`, [objectToRow({ email: user.email, role: `owner`, invitedBy: ``, joinedAt: now() }, MEMBER_COLS)]);
   if (group?.dirId) await addDirectoryRow(group.dirId, user, { id: ss.spreadsheetId, name, folderId: folder.id });
+  if (group) await drive.setProps(ss.spreadsheetId, { groupName: group.name }).catch(() => {}); // see addToGroup
   rememberInventory(user.email, ss.spreadsheetId, { name, owner: true, reachable: true, groupId: group ? groupId : `` });
   return { sheetId: ss.spreadsheetId, folderId: folder.id, name };
 }
@@ -126,6 +127,8 @@ export async function addToGroup(user, inv, groupId) {
     const dir = await readDirectory(group.dirId);
     if (!dir.inventories.some((i) => i.id === inv.sheetId)) await addDirectoryRow(group.dirId, user, { id: inv.sheetId, name: inv.name, folderId: inv.folderId || `` });
   }
+  // Label the inventory with its group, so people who were given only this inventory know its events are the group's.
+  await drive.setProps(inv.sheetId, { groupName: group.name }).catch(() => {});
   rememberInventory(user.email, inv.sheetId, { groupId });
 }
 

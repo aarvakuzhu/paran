@@ -1022,3 +1022,16 @@ body.readonly .edit-only { display: none !important; }
 .ar-actions .btn .ic { width: 16px; height: 16px; }
 .check-row { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--ink-2); }
 .check-row input { width: 20px; height: 20px; accent-color: var(--accent); }
+.only-row { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
+.only-row:last-child { border-bottom: 0; }
+.only-row > .list-row { flex: 1; border-bottom: 0; }
+.only-row > .btn { margin-right: 8px; flex: none; }
+.invite-form.stack { display: grid; gap: 8px; }
+.invite-form.stack input[type=email] { border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: 12px; min-height: 46px; }
+.invite-form .inline-new { margin-top: 0; }
+.invite-form select[name=scope] { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 0 8px; min-height: 44px; font-size: 0.9rem; color: var(--ink); }
+.job-card li { grid-template-columns: 1fr auto; column-gap: 8px; }
+.job-card li > b, .job-card li > small { grid-column: 1; }
+.job-card li .job-done { grid-column: 2; grid-row: 1 / span 2; align-self: center; min-height: 32px; }
+.job-card li .job-done .ic { width: 15px; height: 15px; }
+.done-mark { color: var(--accent); }

@@ -33,6 +33,10 @@ export const ELINE_COLS = [`id`, `eventId`, `section`, `itemId`, `name`, `qty`, 
 // bringers: JSON [{ name, qty }] — who is bringing it (buying, borrowing, or taking it from where it's kept). qty 0 = all of it. itemId/invId mirror the first one, so older app versions still show something.
 // invId: which inventory (spreadsheet id) the item is in. Group events (kept in the group's directory sheet) draw on every
 // inventory in the group; an inventory's own events leave it empty (= this inventory).
+// Tasks: an event assignment for someone who has access to this inventory but not to the group (so they can't open the
+// group's events). Written by the organizer's app into an inventory they can open; they mark it done. id = lineId:email.
+export const TASK_COLS = [`id`, `eventId`, `eventName`, `eventDate`, `lineId`, `email`, `name`, `qty`, `todo`, `section`, `done`, `updatedAt`, `updatedBy`, `deleted`];
+export const TASK_TAB = { name: `Tasks`, cols: TASK_COLS };
 export const EVENT_TABS = [
   { name: `Events`, cols: EVENT_COLS },
   { name: `EventLines`, cols: ELINE_COLS },
@@ -44,8 +48,9 @@ export const TABS = [
   { name: `Members`, cols: MEMBER_COLS },
   { name: `Log`, cols: LOG_COLS },
   ...EVENT_TABS,
+  TASK_TAB,
 ];
-const ROW_TAB = { item: [`Items`, ITEM_COLS], location: [`Locations`, LOC_COLS], event: [`Events`, EVENT_COLS], eline: [`EventLines`, ELINE_COLS] };
+const ROW_TAB = { item: [`Items`, ITEM_COLS], location: [`Locations`, LOC_COLS], event: [`Events`, EVENT_COLS], eline: [`EventLines`, ELINE_COLS], task: [`Tasks`, TASK_COLS] };
 
 const colLetter = (n) => { let s = ``; n += 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
 export const lastCol = (cols) => colLetter(cols.length - 1);
@@ -132,8 +137,8 @@ class GoogleBackend {
   // Remember enough to reopen straight into the cached inventory, even before Google has re-issued a token.
   saveSession() {
     if (this.legacy) return;
-    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId, canEdit } = this;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId, canEdit }));
+    const { user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId, canEdit, inGroupName } = this;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ user, sheetId, sheetName, isOwner, rootFolderId, photoFolderId, sheetUrl, groupDirId, canEdit, inGroupName }));
   }
   static savedSession() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || `null`); } catch { return null; } }
   resume() {
@@ -173,10 +178,15 @@ class GoogleBackend {
     const owner = m.owners?.[0]?.emailAddress;
     this.isOwner = !owner || owner === this.user.email;
     this.canEdit = this.isOwner || m.capabilities?.canEdit !== false;
+    this.inGroupName = m.appProperties?.groupName || ``; // set when the inventory is in a group (readable even without group access)
     this.rootFolderId = this.isOwner ? (m.parents?.[0] || null) : null;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
     const k = rememberInventory(this.user.email, this.sheetId, { name: this.sheetName, owner: this.isOwner, reachable: true });
     const g = k.inv[this.sheetId]?.groupId; this.groupDirId = (g && k.groups[g]?.dirId) || this.groupDirId || null;
+    // inventories that joined a group before the label existed: the owner's app adds it
+    if (g && this.isOwner && k.groups[g]?.name && this.inGroupName !== k.groups[g].name) {
+      drive.setProps(this.sheetId, { groupName: k.groups[g].name }).then(() => { this.inGroupName = k.groups[g].name; }).catch(() => {});
+    }
   }
 
   async createInventory(name = CONFIG.SHEET_NAME) {
@@ -206,14 +216,16 @@ class GoogleBackend {
    * Sheets made before Events existed: add the Events and EventLines tabs (and header cells for columns added since).
    * Returns true when the tabs are there. Viewers can't add tabs; they simply see no events until the owner opens the app.
    */
-  async ensureEventTabs(sheetId = this.sheetId) {
-    const key = `paran.evtabs.${sheetId}`;
-    const ver = EVENT_TABS.map((t) => t.cols.length).join(`.`);
+  ensureEventTabs(sheetId = this.sheetId) { return this.ensureTabs(sheetId, EVENT_TABS, `evtabs`); }
+  ensureTaskTab(sheetId = this.sheetId) { return this.ensureTabs(sheetId, [TASK_TAB], `tasktab`); }
+  async ensureTabs(sheetId, tabs, tag) {
+    const key = `paran.${tag}.${sheetId}`;
+    const ver = tabs.map((t) => t.cols.length).join(`.`);
     if (localStorage.getItem(key) === ver) return true;
     if (sheetId === this.sheetId && !this.canEdit) return false;
     const have = await sheets.tabTitles(sheetId);
-    const missing = EVENT_TABS.filter((t) => !have.includes(t.name));
-    const present = EVENT_TABS.filter((t) => have.includes(t.name));
+    const missing = tabs.filter((t) => !have.includes(t.name));
+    const present = tabs.filter((t) => have.includes(t.name));
     if (missing.length) {
       await sheets.addTabs(sheetId, missing.map((t) => t.name));
       await sheets.batchUpdateValues(sheetId, missing.map((t) => ({ range: `${t.name}!A1`, values: [t.cols] })));
@@ -259,7 +271,10 @@ class GoogleBackend {
     localStorage.setItem(key, this.photoFolderId);
   }
 
-  async fetchAll({ events = true } = {}) {
+  async fetchAll({ events = true, tasks = events } = {}) {
+    // Make sure the Tasks tab exists first (once per sheet), so reading it isn't a failed request on every refresh.
+    const tk = tasks ? this.ensureTaskTab().catch(() => false)
+      .then(() => sheets.get(this.sheetId, `Tasks!A1:${lastCol(TASK_COLS)}`)).catch(() => null) : Promise.resolve(null);
     // Events come in a separate request: older sheets opened by a viewer may not have those tabs yet (null = unknown, keep what's cached).
     const evRanges = EVENT_TABS.map((t) => `${t.name}!A1:${lastCol(t.cols)}`);
     const ev = events ? sheets.batchGet(this.sheetId, evRanges).catch(() => null) : Promise.resolve(null);
@@ -274,8 +289,9 @@ class GoogleBackend {
     const [left, locs, members, log, right] = r.valueRanges.map((v) => v.values || []);
     const items = left.map((row, i) => [...row, ...Array(Math.max(0, ITEM_COLS.indexOf(`thumb`) - row.length)).fill(``), ``, ...(right[i] || [])]);
     if (items[0]) items[0].splice(ITEM_COLS.indexOf(`thumb`), 1, `thumb`);
-    const evr = await ev; const gevr = await gev;
+    const evr = await ev; const gevr = await gev; const tkr = await tk;
     return {
+      tasks: tkr ? rowsToObjects(tkr.values || [], TASK_COLS) : null,
       groupEvents: gevr ? rowsToObjects(gevr.valueRanges[0]?.values || [], EVENT_COLS) : null,
       groupLines: gevr ? rowsToObjects(gevr.valueRanges[1]?.values || [], ELINE_COLS) : null,
       events: evr ? rowsToObjects(evr.valueRanges[0]?.values || [], EVENT_COLS) : null,
@@ -311,6 +327,19 @@ class GoogleBackend {
     this.tabsOk ||= new Set();
     for (const op of ops) {
       if (op.kind === `log`) { await sheets.append(op.sheet || this.sheetId, `Log!A1`, [objectToRow(op.data, LOG_COLS)]); continue; }
+      if (op.kind === `task`) {
+        const target = op.sheet || this.sheetId;
+        if (!this.tabsOk.has(`t:${target}`)) { if (await this.ensureTaskTab(target)) this.tabsOk.add(`t:${target}`); }
+        const m = await rowMap(target, `Tasks`); const r = m[op.data.id];
+        if (r) {
+          await sheets.batchUpdateValues(target, Object.entries(op.data).filter(([f, v]) => TASK_COLS.includes(f) && v !== undefined)
+            .map(([f, v]) => ({ range: `Tasks!${colLetterOf(TASK_COLS.indexOf(f))}${r}`, values: [[v ?? ``]] })));
+        } else {
+          const res = await sheets.append(target, `Tasks!A1`, [objectToRow(op.data, TASK_COLS)]);
+          const match = /![A-Z]+(\d+)/.exec(res.updates?.updatedRange || ``); if (match) m[op.data.id] = Number(match[1]);
+        }
+        continue;
+      }
       if (op.kind === `xitem`) { // a few fields of an item in another inventory of the group: only those cells, so its photo preview stays
         const m = await rowMap(op.sheet, `Items`); const r = m[op.data.id];
         if (!r) continue; // removed there meanwhile
@@ -378,8 +407,9 @@ class GoogleBackend {
 /** Read another inventory's items and places (for search across inventories). Nothing is written. */
 export async function fetchInventory(sheetId) {
   const b = new GoogleBackend(); b.sheetId = sheetId;
-  const d = await b.fetchAll({ events: false });
-  return { items: d.items, locations: d.locations };
+  const d = await b.fetchAll({ events: false, tasks: true });
+  const m = await sheets.get(sheetId, `Members!A1:${lastCol(MEMBER_COLS)}`).catch(() => null);
+  return { items: d.items, locations: d.locations, tasks: d.tasks, members: m ? rowsToObjects(m.values || [], MEMBER_COLS) : null };
 }
 
 function touchLru(photoId) {
@@ -392,7 +422,7 @@ function touchLru(photoId) {
 
 // ------------------------------------------------------------------ repository
 export class Repo extends EventTarget {
-  items = []; locations = []; members = []; log = []; thumbs = {}; events = []; eventLines = [];
+  items = []; locations = []; members = []; log = []; thumbs = {}; events = []; eventLines = []; tasks = [];
   outbox = []; syncing = false; status = `idle`; lastError = null;
 
   constructor(kind) {
@@ -427,7 +457,7 @@ export class Repo extends EventTarget {
   loadCache() {
     try {
       const c = JSON.parse(localStorage.getItem(this.key) || `null`);
-      if (c) Object.assign(this, { items: c.items || [], locations: c.locations || [], members: c.members || [], log: c.log || [], outbox: c.outbox || [], events: c.events || [], eventLines: c.eventLines || [] });
+      if (c) Object.assign(this, { items: c.items || [], locations: c.locations || [], members: c.members || [], log: c.log || [], outbox: c.outbox || [], events: c.events || [], eventLines: c.eventLines || [], tasks: c.tasks || [] });
     } catch { /* ignore */ }
     blobs.get(`thumbs:${this.backend.cacheKey}`).then((t) => { if (t) { this.thumbs = { ...t, ...this.thumbs }; this.emit(); } });
   }
@@ -435,7 +465,7 @@ export class Repo extends EventTarget {
   saveCache() {
     const strip = this.items.map(({ thumb, ...rest }) => rest);
     try {
-      localStorage.setItem(this.key, JSON.stringify({ items: strip, locations: this.locations, members: this.members, log: this.log.slice(-3000), outbox: this.outbox, events: this.events, eventLines: this.eventLines }));
+      localStorage.setItem(this.key, JSON.stringify({ items: strip, locations: this.locations, members: this.members, log: this.log.slice(-3000), outbox: this.outbox, events: this.events, eventLines: this.eventLines, tasks: this.tasks }));
     } catch (e) { console.warn(`cache save failed`, e); }
     blobs.put(`thumbs:${this.backend.cacheKey}`, this.thumbs).catch(() => {});
   }
@@ -475,6 +505,12 @@ export class Repo extends EventTarget {
           ...(data.eventLines ? withPending(data.eventLines, `eline`, false) : mine(this.eventLines, false)),
           ...(!inGroup ? [] : data.groupLines ? withPending(data.groupLines, `eline`, true) : mine(this.eventLines, true)),
         ];
+        if (data.tasks) { // with this phone's changes not yet sent on top
+          const p = this.outbox.filter((o) => o.kind === `task` && o.sheet === this.hereId).map((o) => o.data);
+          const t = data.tasks.map((x) => ({ ...x }));
+          for (const d of p) { const cur = t.find((x) => x.id === d.id); if (cur) Object.assign(cur, Object.fromEntries(Object.entries(d).filter(([, v]) => v !== undefined))); else t.push(d); }
+          this.tasks = t;
+        }
         const pendingLog = this.outbox.filter((o) => o.kind === `log` && !o.sheet).map((o) => o.data); // not other inventories' entries
         this.log = [...(data.log || []), ...pendingLog];
         this.saveCache(); this.emit();
@@ -936,6 +972,15 @@ export class Repo extends EventTarget {
     return this.saveLine({ id: line.id, after: obj ? JSON.stringify({ ...obj, at: now(), by: this.user.email }) : `` });
   }
 
+  /** Write a task into an inventory's Tasks tab (only the fields given; leave a field out to keep what's there, e.g. done). */
+  saveTask(invId, fields) {
+    const row = { ...fields, updatedAt: now(), updatedBy: this.user.email };
+    if (invId === this.hereId) { const t = this.tasks.find((x) => x.id === row.id); if (t) Object.assign(t, row); else this.tasks.push({ ...row }); }
+    this.outbox.push({ kind: `task`, sheet: invId, data: row });
+    this.saveCache(); this.flush();
+    return row;
+  }
+
   /**
    * Change an item that lives in another inventory of the group (reserve it for an event, put it back, move it, mark it missing).
    * item: that inventory's item object on this phone (it's updated in place, so screens show the change at once).
@@ -979,11 +1024,12 @@ export class Repo extends EventTarget {
     return this.saveLine({ id: line.id, bringers: clean.length ? JSON.stringify(clean) : `` });
   }
 
-  /** Google accounts with access here (this inventory's people, and the group's): [{ email, role }], not removed, not me first. */
-  accounts() {
+  /** Google accounts with access here: [{ email, role }], not removed. */
+  accounts() { // in a group: the group's people (access is the group's); otherwise this inventory's people
+    const g = this.group();
+    const src = g ? (g.people || []) : this.members;
     const map = new Map();
-    for (const m of this.members) if (m.email && m.role !== `removed`) map.set(m.email.toLowerCase(), { email: m.email.toLowerCase(), role: m.role });
-    for (const p of this.group()?.people || []) if (p.email && p.role !== `removed`) map.set(p.email.toLowerCase(), { email: p.email.toLowerCase(), role: p.role });
+    for (const p of src) if (p.email && p.role !== `removed`) map.set(p.email.toLowerCase(), { email: p.email.toLowerCase(), role: p.role });
     return [...map.values()];
   }
   /** "ravi.kumar@gmail.com" -> "Ravi Kumar" (unless they've been called something else on an event). */
@@ -995,7 +1041,7 @@ export class Repo extends EventTarget {
    * People to offer when assigning: [{ name, email }]. Accounts with access first (named as they were last called on an
    * event, else from their email), then other names used on events, then people you lend to.
    */
-  bringerNames() {
+  bringerNames(extra = []) { // extra: [{ email, only }] people with access to just one inventory of the group
     const byEmail = new Map(); const byName = new Map();
     for (const l of [...this.eventLines].filter((x) => !x.deleted).sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))) {
       for (const b of this.bringersOf(l)) {
@@ -1005,19 +1051,20 @@ export class Repo extends EventTarget {
     }
     const out = []; const seen = new Set();
     const me = String(this.user?.email || ``).toLowerCase();
-    for (const a of this.accounts().sort((x, y) => (x.email === me) - (y.email === me))) {
+    for (const a of [...this.accounts().sort((x, y) => (x.email === me) - (y.email === me)), ...extra]) {
+      if (seen.has(a.email)) continue;
       const name = byEmail.get(a.email) || (a.email === me && this.user?.name && !this.user.name.includes(`@`) ? this.user.name : Repo.nameFromEmail(a.email));
-      out.push({ name, email: a.email }); seen.add(Repo.personKey(name)); seen.add(a.email);
+      out.push({ name, email: a.email, ...(a.only ? { only: a.only } : {}) }); seen.add(Repo.personKey(name)); seen.add(a.email);
     }
     for (const [k, v] of byName) if (!seen.has(k) && !(v.email && seen.has(v.email))) { out.push(v); seen.add(k); }
     for (const p of this.people()) if (!seen.has(p.key)) { out.push({ name: p.name, email: `` }); seen.add(p.key); }
     return out;
   }
   /** The Google account a typed name or email belongs to, if any. */
-  accountFor(text) {
+  accountFor(text, extra = []) {
     const t = String(text || ``).trim().toLowerCase(); if (!t) return ``;
-    if (t.includes(`@`)) return this.accounts().some((a) => a.email === t) ? t : ``;
-    return this.bringerNames().find((p) => p.email && Repo.personKey(p.name) === Repo.personKey(t))?.email || ``;
+    if (t.includes(`@`)) return [...this.accounts(), ...extra].some((a) => a.email === t) ? t : ``;
+    return this.bringerNames(extra).find((p) => p.email && Repo.personKey(p.name) === Repo.personKey(t))?.email || ``;
   }
   /** Lines in an event that this signed-in person is bringing. */
   myLines(eventId) {
