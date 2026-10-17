@@ -13,3 +13,9 @@ the owner on a new phone; Your data links; and that nothing is created in a view
     pip install playwright && python3 tests/access_e2e.py
 
 Exits non-zero if any check fails.
+
+`ai_flows.py` (demo mode, Gemini answered by a stand-in in the real API's shape) covers an event made from a
+description and a receipt read into items: matching to existing items (including the same thing kept in two places),
+event lines turning ready, price/store/date/warranty captured, one shared receipt photo, and no card digits stored.
+
+    pip install pillow && python3 tests/ai_flows.py

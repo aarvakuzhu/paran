@@ -66,3 +66,11 @@ export async function cropItem(canvas, box) {
   const crop = draw(canvas, 1600, x0, y0, x1 - x0, y1 - y0);
   return { photo: await toBlob(crop, 0.85), thumb: thumbOf(crop) };
 }
+
+/** A receipt: kept sharp enough to read (long edge 2000px), plus a small preview. */
+export async function processReceipt(file) {
+  const bmp = await loadBitmap(file);
+  const canvas = draw(bmp, 2000);
+  const photo = await toBlob(canvas, 0.85);
+  return { photo, ai: photo, thumb: thumbOf(canvas, { max: 200, limit: 20000 }) };
+}

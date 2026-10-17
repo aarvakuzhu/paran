@@ -4,7 +4,8 @@
 //    them, and each line can point at an item in any of the group's inventories (school, storage unit, a volunteer's).
 //  - An inventory that isn't in a group keeps its own events in its own sheet (an inventory in a group can too).
 // Other inventories are read from this phone's copy (refreshed in the background), the same way search across them works.
-import { esc, $, toast, sheet, confirmSheet, promptSheet, icon } from './ui.js';
+import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon } from './ui.js';
+import { aiReady, planEvent } from './ai.js';
 import { search, findDuplicates } from './search.js';
 import { loadKnown } from './inventories.js';
 import { Repo } from './store.js';
@@ -141,6 +142,15 @@ export function splitEvents() {
   return { upcoming, past };
 }
 
+/** Lines still to buy or borrow (no item yet) in upcoming events this person can change: for matching a receipt. */
+export function openNeeds(eventId = ``) {
+  const repo = R();
+  const evs = splitEvents().upcoming.filter((e) => (!eventId || e.id === eventId) && repo.canEditEvent(e));
+  const out = [];
+  for (const ev of evs) for (const l of repo.linesOf(ev.id)) if (!repo.sourcesOf(l).some((x) => !x.off)) out.push({ id: l.id, name: l.name, qty: Number(l.qty) || 1, event: ev.name, eventId: ev.id });
+  return out;
+}
+
 // ------------------------------------------------------------ readiness bits
 function summaryText(s) {
   if (!s.total) return `No items yet`;
@@ -203,9 +213,10 @@ export function viewEvents(view) {
     if (e.target.closest(`[data-ev="new"]`)) {
       if (needsGroup && !(await groupFirst())) return;
       const f = await eventForm(); if (!f) return;
-      const { group, ...fields } = f;
+      const { group, words, ...fields } = f;
       const ev = repo.saveEvent(fields, { group }); if (!ev) return;
       location.hash = `#/event/${ev.id}`;
+      if (words) setTimeout(() => listFromWords(ev, words, { fresh: fields.name === `New event` }), 50);
     }
   };
 }
@@ -255,16 +266,21 @@ function eventForm(ev = null) {
     let answered = false;
     sheet(ev ? `Edit event` : `New event`, (el, close) => {
       el.innerHTML = `<form class="stack">
-        <label class="field"><span>Name</span><input name="name" required value="${esc(ev?.name || ``)}" placeholder="e.g. Graduation ceremony, Pongal, Camping trip"></label>
+        <label class="field"><span>Name</span><input name="name" ${ev ? `required` : ``} value="${esc(ev?.name || ``)}" placeholder="e.g. Graduation ceremony, Pongal, Camping trip"></label>
         <label class="field"><span>Date <small>(optional)</small></span><input name="date" type="date" value="${esc(ev?.date || ``)}"></label>
         <label class="field"><span>Notes <small>(optional)</small></span><input name="notes" value="${esc(ev?.notes || ``)}" placeholder="e.g. School gym, about 200 people"></label>
+        ${ev ? `` : `<label class="field ai-words"><span>${icon(`spark`)} What does it need? <small>(optional)</small></span>
+          <textarea name="words" rows="4" placeholder="Describe it or paste your list. e.g. “Graduation for 200 in the gym: stage with podium and 2 mics, banner, 40 tablecloths, certificates for 35 students”"></textarea>
+          <small class="fine">AI turns this into the list and finds what you already have. You check it before anything is added.</small></label>`}
         <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">${ev ? `Save` : `Create`}</button></div></form>`;
       const f = $(`form`, el);
       if (!ev) setTimeout(() => f.elements.name.focus(), 250);
       $(`[data-no]`, el).onclick = () => { answered = true; resolve(null); close(); };
       f.onsubmit = (e) => {
         e.preventDefault(); answered = true;
-        resolve({ ...(ev ? { id: ev.id } : { group }), name: f.elements.name.value.trim(), date: f.elements.date.value, notes: f.elements.notes.value.trim() });
+        const name = f.elements.name.value.trim(); const words = f.elements.words?.value.trim() || ``;
+        if (!name && !words) { answered = false; f.elements.name.focus(); toast(`Give it a name, or describe it below`); return; }
+        resolve({ ...(ev ? { id: ev.id } : { group, words }), name: name || `New event`, date: f.elements.date.value, notes: f.elements.notes.value.trim() });
         close();
       };
     }, { onClose: () => { if (!answered) resolve(null); } });
@@ -326,11 +342,11 @@ export function viewEvent(view, r) {
         <div class="ev-ghead"><h2>${esc(gr.label)}</h2><span>${esc(gr.sub)}</span>${gr.section !== undefined ? plus(gr.section) : ``}</div>
         <div class="elines">${gr.rows.map(({ l, x }) => lineRow(ev, l, x, st.by === `place`)).join(``)}</div>
       </section>`).join(``) || `<p class="muted pad">Nothing ${esc((STATE_LABEL[st.filter] || ``).toLowerCase())} right now.</p>`}
-      ${canEdit ? `<div class="row-actions left"><button type="button" class="btn ghost" data-ev="add">${icon(`plus`)} Add items</button></div>` : ``}
+      ${canEdit ? `<div class="row-actions left"><button type="button" class="btn ghost" data-ev="add">${icon(`plus`)} Add items</button><button type="button" class="btn ghost" data-ev="words">${icon(`spark`)} From a list</button>${s.none ? `<button type="button" class="btn ghost" data-ev="receipt">${icon(`sheet`)} Bought some? Scan the receipt</button>` : ``}</div>` : ``}
       ${neededCard(ev)}`
       : `<div class="empty">${icon(`box`, `big`)}<h3>What does ${esc(ev.name)} need?</h3>
         <p>Add things from ${g ? `any of ${esc(g.name)}’s inventories` : `your inventory`}, grouped in sections like Stage, Decor or Food. Things nobody has logged yet can go on the list too.</p>
-        ${canEdit ? `<button type="button" class="btn primary" data-ev="add">${icon(`plus`)} Add items</button>` : ``}</div>`}
+        ${canEdit ? `<div class="row-actions center"><button type="button" class="btn primary" data-ev="words">${icon(`spark`)} Describe it or paste a list</button><button type="button" class="btn ghost" data-ev="add">${icon(`plus`)} Pick items</button></div>` : ``}</div>`}
   </div>`;
 
   view.onclick = async (e) => {
@@ -352,6 +368,8 @@ export function viewEvent(view, r) {
     const ln = t.closest(`[data-line]`); if (ln) { const line = repo.eventLines.find((x) => x.id === ln.dataset.line); if (line) lineSheet(ev, line); return; }
     const a = t.closest(`[data-ev]`)?.dataset.ev; if (!a) return;
     if (a === `add`) return addItemsSheet(ev, ``);
+    if (a === `words`) return listFromWords(ev);
+    if (a === `receipt`) return ctx.scanReceipt({ eventId: ev.id });
     if (a === `share`) return shareMenu(ev);
     if (a === `needshare`) return shareNeeded(ev);
     if (a === `needprint`) return printNeeded(ev);
@@ -818,6 +836,121 @@ function searchPool(entries, q) {
     for (const h of hits) out.push(idx.get(h.id));
   }
   return out;
+}
+
+// ------------------------------------------------------------ An event's list from words (AI)
+/** What the event can draw on, by name (one entry per name, quantities added up), for the AI to match against. */
+function poolByName(ev) {
+  const by = new Map();
+  for (const e of pool(ev).entries) {
+    const k = e.item.name.trim().toLowerCase(); if (!k) continue;
+    if (!by.has(k)) by.set(k, { name: e.item.name, qty: 0, entries: [] });
+    const g = by.get(k); g.qty += Number(e.item.qty) || 1; g.entries.push(e);
+  }
+  return by;
+}
+
+/** Describe the event or paste a list → AI drafts sections, lines and counts, matched to what the group has → review → add. */
+async function listFromWords(ev, preset = ``, { fresh = false } = {}) {
+  const repo = R();
+  if (!aiReady() && !(await ctx.aiSetup())) return;
+  if (ev._g) freshen(groupInventories().map((i) => i.id));
+  const text = preset || await wordsSheet(ev);
+  if (!text) return;
+  let wait = null;
+  sheet(`Making the list`, (el, close) => { wait = close; el.innerHTML = `<div class="pad center"><div class="spinner"></div><p class="muted">Reading what you wrote and checking ${ev._g ? `the group’s inventories` : `your inventory`}…</p></div>`; });
+  const by = poolByName(ev);
+  let plan;
+  try {
+    plan = await planEvent(text, { inventory: [...by.values()].map(({ name, qty }) => ({ name, qty })), sections: repo.sectionsOf(ev.id).filter(Boolean), eventName: fresh ? `` : ev.name, today: ctx.todayStr() });
+  } catch (e) { wait?.(); toast(e.message || String(e), { ms: 6000 }); return; }
+  wait?.();
+  if (!plan.lines.length) { toast(`Couldn’t find things to gather in that. Try listing them, one per line.`, { ms: 6000 }); return; }
+  // fill in what the organizer left empty
+  const patch = {};
+  if (fresh && plan.name) patch.name = plan.name;
+  if (!ev.date && plan.date) patch.date = plan.date;
+  if (!ev.notes && plan.notes) patch.notes = plan.notes;
+  if (Object.keys(patch).length) repo.saveEvent({ id: ev.id, ...patch });
+  planReview(repo.eventById(ev.id) || ev, plan, by);
+}
+
+function wordsSheet(ev) {
+  return new Promise((resolve) => {
+    let answered = false;
+    sheet(`Make the list`, (el, close) => {
+      el.innerHTML = `<form class="stack">
+        <p class="muted small">Describe ${esc(ev.name)} or paste a list you already have (WhatsApp, email, notes). AI drafts the list and finds what ${ev._g ? `the group already has` : `you already have`}. You check it before anything is added.</p>
+        <textarea name="t" rows="8" required placeholder="e.g. Graduation for 200 in the gym. Stage: podium, 2 mics, banner. 40 tablecloths, certificates for 35 students, snacks and water."></textarea>
+        <button class="btn primary full">${icon(`spark`)} Make the list</button></form>`;
+      const f = $(`form`, el); setTimeout(() => f.elements.t.focus(), 250);
+      f.onsubmit = (e) => { e.preventDefault(); answered = true; resolve(f.elements.t.value.trim()); close(); };
+    }, { onClose: () => { if (!answered) resolve(``); } });
+  });
+}
+
+/** The AI's draft, line by line: tick, rename, change the count, and pick what in the inventory it uses. Then add. */
+function planReview(ev, plan, by) {
+  const repo = R();
+  const have = new Set(repo.linesOf(ev.id).map((l) => l.name.trim().toLowerCase()));
+  const entries = pool(ev).entries;
+  const rows = plan.lines.map((l) => {
+    const names = [...l.matches];
+    for (const e of matchesFor(ev, l.name)) names.push(e.item.name);
+    for (const e of searchPool(entries, l.name).slice(0, 3)) names.push(e.item.name);
+    const cands = [...new Map(names.map((n) => [n.trim().toLowerCase(), n])).values()].filter((n) => by.has(n.trim().toLowerCase())).slice(0, 5);
+    const dup = have.has(l.name.trim().toLowerCase());
+    return { ...l, cands, pick: l.matches[0] || (matchesFor(ev, l.name)[0]?.item.name ?? ``), on: !dup, dup };
+  });
+  const where = (name) => {
+    const g = by.get(name.trim().toLowerCase()); if (!g) return ``;
+    const e = g.entries[0];
+    const place = e.pathText(e.item.locationId).split(` › `).slice(-2).join(` › `);
+    return `have ${g.qty}${place ? ` · ${place}` : ``}${e.invName ? ` (${e.invName})` : ``}${g.entries.length > 1 ? ` +${g.entries.length - 1}` : ``}`;
+  };
+  sheet(`Check the list`, (el, close) => {
+    const draw = () => {
+      const on = rows.filter((r) => r.on); const found = on.filter((r) => r.pick).length;
+      const sections = [...new Set(rows.map((r) => r.section || ``))];
+      el.innerHTML = `<div class="plan-review">
+        <p class="pr-sum"><b>${on.length} thing${on.length === 1 ? `` : `s`}</b> · ${found} found in ${ev._g ? `the group’s inventories` : `your inventory`}${on.length - found ? ` · ${on.length - found} to buy or borrow` : ``}</p>
+        ${sections.map((sec) => `<div class="label-sm">${esc(sec || `No section`)}</div>
+          <div class="pr-list">${rows.map((r, i) => (r.section || ``) !== sec ? `` : `<div class="pr-row${r.on ? `` : ` off`}">
+            <label class="tick"><input type="checkbox" data-on="${i}" ${r.on ? `checked` : ``} aria-label="Include ${esc(r.name)}"></label>
+            <div class="pr-main">
+              <div class="pr-top"><input class="pr-name" data-name="${i}" value="${esc(r.name)}" aria-label="Name">
+                <span class="pr-qty"><span>×</span><input type="number" min="1" inputmode="numeric" data-qty="${i}" value="${r.qty}" aria-label="How many needed"></span></div>
+              <select class="pr-pick${r.pick ? ` found` : ``}" data-pick="${i}" aria-label="Uses">
+                ${r.cands.map((n) => `<option value="${esc(n)}" ${n === r.pick ? `selected` : ``}>✓ ${esc(n)} · ${esc(where(n))}</option>`).join(``)}
+                <option value="" ${r.pick ? `` : `selected`}>Not in inventory yet (buy or borrow)</option></select>
+              ${r.dup ? `<small class="pr-hint">Already on the list</small>` : r.guessed ? `<small class="pr-hint">≈ estimated, change if you know</small>` : r.note ? `<small class="pr-hint">${esc(r.note)}</small>` : ``}
+            </div></div>`).join(``)}</div>`).join(``)}
+        <div class="row-actions sticky-actions"><button type="button" class="btn primary full" data-addall ${on.length ? `` : `disabled`}>Add ${on.length} to ${esc(ev.name)}</button></div>
+      </div>`;
+    };
+    draw();
+    el.onchange = (e) => {
+      const t = e.target;
+      if (t.dataset.on) { rows[t.dataset.on].on = t.checked; draw(); }
+      else if (t.dataset.pick) { rows[t.dataset.pick].pick = t.value; draw(); }
+      else if (t.dataset.qty) rows[t.dataset.qty].qty = Math.max(1, parseInt(t.value, 10) || 1);
+      else if (t.dataset.name) rows[t.dataset.name].name = t.value.trim() || rows[t.dataset.name].name;
+    };
+    el.onclick = (e) => {
+      if (!e.target.closest(`[data-addall]`)) return;
+      const on = rows.filter((r) => r.on); let n = 0;
+      for (const sec of [...new Set(on.map((r) => r.section || ``))]) {
+        const list = on.filter((r) => (r.section || ``) === sec);
+        const added = repo.addLines(ev.id, sec, list.map((r) => ({
+          name: r.name, qty: r.qty, sources: r.pick ? by.get(r.pick.trim().toLowerCase()).entries.map((x) => srcOf(ev, x)) : [],
+        })));
+        added.forEach((line, i) => { if (list[i].note && line) repo.saveLine({ id: line.id, note: list[i].note }, { quiet: true }); });
+        n += added.length;
+      }
+      close(); repo.emit?.();
+      toast(`${n} added to ${ev.name}`);
+    };
+  });
 }
 
 /**

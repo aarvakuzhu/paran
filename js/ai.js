@@ -198,6 +198,118 @@ export async function scanPhotos(images, { categories = [], location = `` } = {}
   return clean(raw, 40).map((it, i) => ({ ...it, photo: Math.max(0, Math.min(n - 1, (parseInt(it._photo, 10) || 1) - 1)) }));
 }
 
+// ---------------- event from words
+const PLAN_SCHEMA = {
+  type: `OBJECT`,
+  properties: {
+    name: { type: `STRING` },
+    date: { type: `STRING` },
+    notes: { type: `STRING` },
+    lines: {
+      type: `ARRAY`,
+      items: {
+        type: `OBJECT`,
+        properties: {
+          section: { type: `STRING` }, name: { type: `STRING` }, qty: { type: `INTEGER` }, guessed: { type: `BOOLEAN` },
+          note: { type: `STRING` }, matches: { type: `ARRAY`, items: { type: `STRING` } },
+        },
+        required: [`name`, `qty`],
+      },
+    },
+  },
+  required: [`lines`],
+};
+
+/**
+ * Words → an event's checklist. `inventory` is [{ name, qty }] (names only, no photos), so the model can point each
+ * line at things the group already has. Returns { name, date, notes, lines: [{ section, name, qty, guessed, note, matches }] }.
+ */
+export async function planEvent(text, { inventory = [], sections = [], eventName = ``, today = `` } = {}) {
+  const names = inventory.slice(0, 600).map((i) => `- ${i.name}${Number(i.qty) > 1 ? ` (×${i.qty})` : ``}`).join(`\n`);
+  const promptText = [
+    `You help a volunteer group or a family get ready for an event: what physical things to gather, and how many.`,
+    `Below is what the organizer wrote. It may be a description ("graduation for 200 people in the gym"), a pasted list, a WhatsApp message or notes, in any format or language. Today is ${today || `unknown`}.`,
+    `Make the checklist of PHYSICAL things to gather. Follow the text: every thing it mentions becomes a line. If it only describes the event, add what such an event typically needs, but keep it practical and to at most 40 lines. Never include tasks, people or money.`,
+    `For each line:`,
+    `- section: a short group like Stage, Decor, AV, Seating, Food, Registration, Kitchen. ${sections.length ? `Reuse these existing sections where they fit: ${sections.join(`, `)}.` : ``} Use the text's own headings if it has them.`,
+    `- name: short and plain, 1 to 5 words, in the organizer's language.`,
+    `- qty: the number written in the text. If none is written, a sensible estimate from the headcount or context, and set guessed to true.`,
+    `- note: anything specific the text says about it (size, colour, who has it); otherwise empty.`,
+    `- matches: up to 3 names copied EXACTLY, character for character, from the inventory list below that would serve this line (a "table cover" line can match "Tablecloth"). Best first. Empty if nothing fits. Never invent names.`,
+    `Also: name = the event's name if the text gives or clearly implies one${eventName ? ` (it is already called "${eventName}")` : ``}; date = YYYY-MM-DD only if a date is written; notes = place, time or headcount if written.`,
+    ``, `ORGANIZER'S TEXT:`, text.slice(0, 8000),
+    ``, `INVENTORY (what the group already has):`, names || `(nothing yet)`,
+  ].join(`\n`);
+  const r = await callGemini([], promptText, PLAN_SCHEMA);
+  const known = new Map(inventory.map((i) => [String(i.name).trim().toLowerCase(), i.name]));
+  const lines = (Array.isArray(r.lines) ? r.lines : []).slice(0, 60).map((l) => ({
+    section: str(l.section, 40), name: str(l.name, 80), qty: Math.max(1, Math.min(9999, parseInt(l.qty, 10) || 1)), guessed: Boolean(l.guessed),
+    note: str(l.note, 200),
+    matches: [...new Set((Array.isArray(l.matches) ? l.matches : []).map((m) => known.get(String(m).trim().toLowerCase())).filter(Boolean))].slice(0, 3),
+  })).filter((l) => l.name);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(r.date || ``).trim()) ? String(r.date).trim() : ``;
+  return { name: str(r.name, 80), date, notes: str(r.notes, 200), lines };
+}
+
+// ---------------- receipts
+const RECEIPT_SCHEMA = {
+  type: `OBJECT`,
+  properties: {
+    store: { type: `STRING` }, date: { type: `STRING` }, currency: { type: `STRING` }, total: { type: `NUMBER` }, returnBy: { type: `STRING` },
+    items: {
+      type: `ARRAY`,
+      items: {
+        type: `OBJECT`,
+        properties: {
+          name: { type: `STRING` }, brand: { type: `STRING` }, model: { type: `STRING` }, qty: { type: `INTEGER` },
+          price: { type: `NUMBER` }, category: { type: `STRING` }, purpose: { type: `STRING` }, tags: { type: `ARRAY`, items: { type: `STRING` } },
+          warrantyMonths: { type: `INTEGER` }, consumable: { type: `BOOLEAN` }, match: { type: `STRING` }, line: { type: `STRING` },
+        },
+        required: [`name`],
+      },
+    },
+  },
+  required: [`items`],
+};
+
+/**
+ * A photo of a receipt → what was bought. `inventory`: names already in this inventory; `lines`: [{ id, name, event }]
+ * still needed for events. Payment and personal details are not asked for and not kept.
+ */
+export async function readReceipt(image, { inventory = [], lines = [], categories = [] } = {}) {
+  const promptText = [
+    `This is a photo of a shopping receipt (or an order confirmation). Read it for a home or community inventory app.`,
+    `List each product bought ONCE (combine repeated lines into qty). Skip tax, totals, fees, deposits, bag charges, coupons and loyalty lines; if a discount clearly belongs to a product, take it off that product's price.`,
+    `For each product:`,
+    `- name: a clear everyday name, expanding receipt abbreviations ("KS PPR TWL 12PK" → "Paper towels, 12 pack"). 2 to 6 words.`,
+    `- brand and model: only if printed; otherwise empty.`,
+    `- qty: units bought (1 if unsure). price: the total paid for that line, as a number in the receipt's currency.`,
+    `- category: one or two words.${categories.length ? ` Prefer one of: ${categories.slice(0, 40).join(`, `)}.` : ``} purpose: one short sentence on what it's used for. tags: 3 to 5 lowercase search words.`,
+    `- warrantyMonths: only if the receipt prints a warranty or protection plan for it; otherwise 0.`,
+    `- consumable: true for food, drinks, cleaning supplies and other things used up; false for things kept.`,
+    `- match: if the same kind of thing is already in the INVENTORY list below, its name copied EXACTLY; otherwise empty.`,
+    `- line: if it supplies one of the NEEDED lines below, that line's id exactly; otherwise empty.`,
+    `Also: store name; date as YYYY-MM-DD; currency code (USD, INR…); total paid as a number; returnBy as YYYY-MM-DD only if a return-by date is printed.`,
+    `Do NOT return card numbers, names, addresses, phone numbers, membership or loyalty numbers. If the photo is not a receipt, return an empty items list.`,
+    ``, `INVENTORY:`, inventory.slice(0, 400).map((i) => `- ${i.name}`).join(`\n`) || `(empty)`,
+    ``, `NEEDED (id: name, event):`, lines.slice(0, 80).map((l) => `- ${l.id}: ${l.name} (${l.event})`).join(`\n`) || `(none)`,
+  ].join(`\n`);
+  const r = await callGemini([image], promptText, RECEIPT_SCHEMA);
+  const known = new Map(inventory.map((i) => [String(i.name).trim().toLowerCase(), i.name]));
+  const lineIds = new Set(lines.map((l) => l.id));
+  const iso = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || ``).trim()) ? String(v).trim() : ``);
+  const money = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null; };
+  const items = (Array.isArray(r.items) ? r.items : []).slice(0, 60).map((it) => ({
+    name: str(it.name, 80), brand: str(it.brand, 40), model: str(it.model, 60),
+    qty: Math.max(1, Math.min(999, parseInt(it.qty, 10) || 1)), price: money(it.price),
+    category: str(it.category, 40), purpose: str(it.purpose, 200),
+    tags: (Array.isArray(it.tags) ? it.tags : []).map((t) => str(t, 30).toLowerCase()).filter(Boolean).slice(0, 6).join(`, `),
+    warrantyMonths: Math.max(0, Math.min(120, parseInt(it.warrantyMonths, 10) || 0)), consumable: Boolean(it.consumable),
+    match: known.get(String(it.match || ``).trim().toLowerCase()) || ``, line: lineIds.has(String(it.line || ``).trim()) ? String(it.line).trim() : ``,
+  })).filter((it) => it.name);
+  return { store: str(r.store, 60), date: iso(r.date), currency: str(r.currency, 8).toUpperCase(), total: money(r.total), returnBy: iso(r.returnBy), items };
+}
+
 async function callGemini(images, promptText, schema) {
   const s = aiSettings();
   if (!s.enabled || !s.key) throw new AiError(`key`, `AI suggestions are not set up.`);
@@ -233,9 +345,9 @@ async function callGemini(images, promptText, schema) {
 
   const data = await res.json();
   const cand = data.candidates?.[0];
-  if (!cand) throw new AiError(`blocked`, `Gemini didn’t return a result for this photo.`);
+  if (!cand) throw new AiError(`blocked`, `Gemini didn’t return a result${images.length ? ` for this photo` : ``}.`);
   if (cand.finishReason && ![`STOP`, `MAX_TOKENS`].includes(cand.finishReason)) {
-    throw new AiError(`blocked`, `Gemini declined to describe this photo.`);
+    throw new AiError(`blocked`, images.length ? `Gemini declined to read this photo.` : `Gemini declined this request.`);
   }
   const text = (cand.content?.parts || []).map((p) => p.text || ``).join(``);
   try { return JSON.parse(text); } catch { throw new AiError(`other`, `Gemini’s answer couldn’t be read. Try again.`); }

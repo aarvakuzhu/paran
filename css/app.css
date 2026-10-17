@@ -1068,3 +1068,40 @@ body.readonly .edit-only { display: none !important; }
 .kf-more p { margin: 0; }
 .ai-demo .chip { background: var(--surface); color: var(--ink); border-color: var(--line); }
 .kf-more[hidden] { display: none; }
+
+/* AI: event list from words, receipts */
+.row-actions.center { justify-content: center; }
+.ai-words > span .ic { color: var(--accent); vertical-align: -3px; }
+.ai-words textarea { min-height: 96px; }
+.plan-review, .rc-review { display: grid; gap: 10px; }
+.pr-sum { margin: 0; color: var(--ink-2); }
+.pr-list { display: grid; gap: 8px; }
+.pr-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.pr-row.off { opacity: .55; }
+.pr-row .tick { padding-top: 10px; }
+.pr-main { flex: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.pr-pick { min-width: 0; text-overflow: ellipsis; }
+.plan-review, .rc-review { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.pr-top { display: flex; gap: 8px; align-items: center; }
+.pr-name { flex: 1; min-width: 0; font-weight: 600; border: 1px solid transparent; background: transparent; padding: 6px 4px; border-radius: 8px; font: inherit; font-weight: 600; color: var(--ink); }
+.pr-name:focus { border-color: var(--line); background: var(--bg); outline: none; }
+.pr-qty { display: flex; align-items: center; gap: 2px; color: var(--ink-2); }
+.pr-qty input { width: 60px; text-align: center; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); font: inherit; color: var(--ink); }
+.pr-pick { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--ink-2); font: inherit; font-size: .88rem; }
+.pr-pick.found { color: var(--accent); background: var(--accent-soft); border-color: transparent; font-weight: 600; }
+.pr-hint { color: var(--ink-3); }
+.rc-head { display: flex; gap: 12px; align-items: center; }
+.rc-head img { width: 56px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+.rc-head div { display: grid; gap: 2px; }
+.rc-head small { color: var(--ink-2); }
+.rc-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: .82rem; color: var(--ink-2); }
+.rc-meta span:not(:last-child)::after { content: "·"; margin-left: 6px; color: var(--ink-3); }
+.rc-pick .btn { display: flex; justify-content: center; gap: 8px; align-items: center; }
+.rc-pick .fine { display: flex; gap: 6px; align-items: flex-start; }
+.rc-pick .fine .ic { flex: none; color: var(--amber); }
+.receipt-entry { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; padding: 12px 14px; margin: 4px 0 12px; border: 1px dashed var(--accent); border-radius: var(--radius); background: var(--accent-soft); color: var(--ink); cursor: pointer; font: inherit; }
+.receipt-entry > .ic:first-child { color: var(--accent); width: 24px; height: 24px; flex: none; }
+.receipt-entry span { flex: 1; display: grid; gap: 2px; }
+.receipt-entry small { color: var(--ink-2); }
+.receipt-img { width: 100%; border-radius: 8px; }
+.center { text-align: center; }

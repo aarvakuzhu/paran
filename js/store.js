@@ -8,7 +8,8 @@ import { createInventory as createInventoryFiles, readDirectory, rememberInvento
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
-  `dueAt`, `size`, `photos`]; // columns added later go AFTER thumb so older sheets stay aligned
+  `dueAt`, `size`, `photos`, `price`, `store`, `boughtAt`, `receipt`]; // columns added later go AFTER thumb so older sheets stay aligned
+// price/store/boughtAt: from a receipt (or typed). receipt: Drive id of the receipt photo (several items can share one).
 // photos: JSON list of additional photos [{ pid, id, url, thumb }]. In memory the thumbs live in repo.thumbs.
 const THUMB_COL = colLetterOf(ITEM_COLS.indexOf(`thumb`));
 const BEFORE_THUMB = colLetterOf(ITEM_COLS.indexOf(`thumb`) - 1);
@@ -19,7 +20,7 @@ export const MEMBER_COLS = [`email`, `role`, `photoFolderId`, `invitedBy`, `join
 export const LOG_COLS = [`ts`, `itemId`, `action`, `detail`, `by`, `info`, `changes`];
 // info: readable summary (what changed / pick-up date / moved from). changes: JSON { field: [before, after] } so an edit can be undone;
 // on `added` it is { _ai: [fields AI suggested] } so AI may refine its own suggestions later but never what someone typed.
-export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `qty`, `warranty`, `expiry`, `notes`];
+export const TRACKED_FIELDS = [`name`, `purpose`, `category`, `size`, `tags`, `qty`, `warranty`, `expiry`, `notes`, `price`, `store`, `boughtAt`];
 
 // Events (graduation, Annual Day, a camping trip): what's needed, in sections, each line pointing at an item.
 // date is YYYY-MM-DD (optional). A line with no itemId is something needed that isn't in the inventory yet.
@@ -568,6 +569,7 @@ export class Repo extends EventTarget {
       while (this.outbox.length) {
         const op = this.outbox[0];
         if (op.kind === `photo`) await this.flushPhoto(op);
+        else if (op.kind === `receipt`) await this.flushReceipt(op);
         else if (op.kind === `xphoto`) await this.flushExtraPhoto(op);
         else if (op.sheet) { // a group event row (the group's directory sheet), or an item change in another inventory of the group
           try { await this.backend.writeOps([op]); }
@@ -600,6 +602,30 @@ export class Repo extends EventTarget {
       await blobs.del(`pending:${op.itemId}`);
       this.emit();
     }
+  }
+
+  /** A receipt photo: kept on the phone until uploaded, then every item from it points at the one Drive file. */
+  async queueReceipt(rid, blob) {
+    await blobs.put(`pending:r:${rid}`, blob);
+    this.outbox.push({ kind: `receipt`, rid }); this.saveCache(); this.flush();
+  }
+  async flushReceipt(op) {
+    const blob = await blobs.get(`pending:r:${op.rid}`);
+    if (blob) {
+      const { photoId } = await this.backend.uploadPhoto(blob, `receipt-${op.rid}`, `receipt-${op.rid}.jpg`);
+      for (const item of this.items.filter((i) => i.receipt === `p:${op.rid}`)) {
+        item.receipt = photoId;
+        this.outbox.splice(1, 0, { kind: `item`, data: { ...item } });
+      }
+      await blobs.put(`photo:${photoId}`, blob).catch(() => {}); // keep it on this phone too
+      await blobs.del(`pending:r:${op.rid}`);
+      this.emit();
+    }
+  }
+  receiptUrl(item) {
+    const r = item?.receipt; if (!r) return Promise.resolve(null);
+    if (r.startsWith(`p:`)) return blobs.get(`pending:r:${r.slice(2)}`).then((b) => (b ? URL.createObjectURL(b) : null));
+    return blobs.get(`photo:${r}`).then((b) => (b ? URL.createObjectURL(b) : this.backend.photoObjectUrl({ photoId: r })));
   }
 
   async flushExtraPhoto(op) {
@@ -802,7 +828,7 @@ export class Repo extends EventTarget {
   }
 
   exportCsv() {
-    const cols = [`name`, `purpose`, `category`, `size`, `tags`, `location`, `qty`, `status`, `lentTo`, `dueAt`, `warranty`, `expiry`, `notes`, `photoUrl`, `addedBy`, `addedAt`];
+    const cols = [`name`, `purpose`, `category`, `size`, `tags`, `location`, `qty`, `status`, `lentTo`, `dueAt`, `warranty`, `expiry`, `price`, `store`, `boughtAt`, `notes`, `photoUrl`, `addedBy`, `addedAt`];
     const esc = (v) => `"${String(v ?? ``).replace(/"/g, `""`)}"`;
     const lines = [cols.join(`,`)];
     for (const i of this.activeItems()) lines.push(cols.map((c) => esc(c === `location` ? this.pathText(i.locationId) : i[c])).join(`,`));

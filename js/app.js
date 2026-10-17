@@ -9,6 +9,7 @@ import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.
 import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
+import { initReceipts, scanReceipt, moneyText } from './receipt.js';
 import { scanLabel } from './qrscan.js';
 import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml, toggleTaskDone } from './events.js';
 
@@ -57,12 +58,15 @@ async function boot() {
   initEvents({
     repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr, invName, switchTo, pickLocation,
     openGroupInventories: (gid) => (gid ? openGroupInventories(gid) : Promise.resolve()), putInGroup,
+    aiSetup: () => aiConsent(false), scanReceipt: (o) => scanReceipt(o),
     redraw: () => { // another inventory's items arrived: refresh whatever shows events
       if (document.querySelector(`.sheet-wrap.open`)) return redrawOpenAddSheet();
       const n = route().name;
       if (n === `find`) { if (!findState.q.trim() && !findState.filter) renderResults(); } else if (n === `events` || n === `event`) render();
     },
   });
+  initReceipts({ repo: () => repo, aiSetup: () => aiConsent(false), pickLocation, todayStr, invName,
+    done: () => { if ([`add`].includes(route().name)) location.hash = `#/`; else render(); } });
   window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
   installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
@@ -862,7 +866,7 @@ function describeEntry(e, prev) {
   }
 }
 
-const FIELD_LABEL = { name: `Name`, purpose: `What it’s for`, category: `Category`, size: `Size`, tags: `Search words`, qty: `How many`, warranty: `Warranty until`, expiry: `Expires`, notes: `Notes` };
+const FIELD_LABEL = { name: `Name`, purpose: `What it’s for`, category: `Category`, size: `Size`, tags: `Search words`, qty: `How many`, warranty: `Warranty until`, expiry: `Expires`, notes: `Notes`, price: `Price`, store: `Bought at`, boughtAt: `Bought on` };
 
 function itemHistoryHtml(item) {
   const hist = repo.itemHistory(item.id);
@@ -1286,6 +1290,7 @@ function viewItem(view, r) {
         ${item.category ? `<div><span>Category</span><b>${esc(item.category)}</b></div>` : ``}
         ${item.warranty ? `<div><span>Warranty until</span><b>${esc(item.warranty)}</b></div>` : ``}
         ${item.expiry ? `<div><span>Expires</span><b>${esc(item.expiry)}</b></div>` : ``}
+        ${item.boughtAt || item.store || item.price ? `<div><span>Bought</span><b>${esc([item.boughtAt, item.store, moneyText(item.price)].filter(Boolean).join(` · `))}</b>${item.receipt ? ` <button type="button" class="link small" data-a="receipt">Receipt</button>` : ``}</div>` : ``}
         <div><span>Added</span><b>${esc(timeAgo(item.addedAt))}${item.addedBy && item.addedBy !== repo.user.email ? ` by ${esc(item.addedBy.split(`@`)[0])}` : ``}</b></div>
       </div>
       ${tags.length ? `<div class="chips">${tags.map((t) => `<a class="chip" href="#/?q" data-tag="${esc(t)}">${esc(t)}</a>`).join(``)}</div>` : ``}
@@ -1331,6 +1336,11 @@ function viewItem(view, r) {
     const b = e.target.closest(`[data-a]`); if (!b) return;
     const a = b.dataset.a;
     if (a === `back`) goBack(`#/`);
+    else if (a === `receipt`) {
+      const url = await repo.receiptUrl(item).catch(() => null);
+      if (!url) { toast(`The receipt isn’t on this phone yet. Try again when online.`); return; }
+      sheet(`Receipt`, (el) => { el.innerHTML = `<img class="receipt-img" src="${url}" alt="Receipt">`; });
+    }
     else if (a === `menu`) itemMenu(item);
     else if (a === `share`) shareItem(item);
     else if (a === `move`) {
@@ -1390,6 +1400,7 @@ function viewEdit(view, r) {
     <form class="form" id="f" autocomplete="off">
       <div class="form-head"><button type="button" class="back" data-cancel>${icon(`x`)} Cancel</button></div>
       <h1>${editing ? `Edit item` : `Add an item`}</h1>
+      ${editing ? `` : `<button type="button" class="receipt-entry" data-receipt>${icon(`sheet`)}<span><b>Bought a few things?</b><small>Scan the receipt: everything on it becomes an item, with price and date</small></span>${icon(`chevron`)}</button>`}
       <label class="photo-pick" id="pp">
         <input type="file" accept="image/*" capture="environment" id="photo" hidden>
         <div class="pp-view">${editing && repo.thumbs[editing.id] ? `<img src="${repo.thumbs[editing.id]}" alt="">` : `<div class="pp-empty">${icon(`camera`)}<span>Take a photo</span></div>`}</div>
@@ -1408,8 +1419,8 @@ function viewEdit(view, r) {
       <div class="field"><span>How big is it? <small>(optional)</small></span>
         <input type="hidden" name="size" value="${esc(item.size || ``)}">
         <div class="chips size-chips" id="sizes">${SIZES.map((z) => `<button type="button" class="chip${item.size === z ? ` on` : ``}" data-size="${esc(z)}">${esc(z)}<small>${esc(SIZE_HINT[z])}</small></button>`).join(``)}</div></div>
-      <details ${editing && (item.category || item.tags || item.warranty || item.expiry || item.notes) ? `open` : ``}>
-        <summary>More details <small>category, notes, dates</small></summary>
+      <details ${editing && (item.category || item.tags || item.warranty || item.expiry || item.notes || item.price || item.store) ? `open` : ``}>
+        <summary>More details <small>category, notes, dates, price</small></summary>
         <label class="field"><span>Category</span><input name="category" list="cats" value="${esc(item.category)}" placeholder="Tools"></label>
         <datalist id="cats">${cats.map((c) => `<option value="${esc(c)}">`).join(``)}</datalist>
         <label class="field"><span>Search words <small>(optional)</small></span><input name="tags" value="${esc(item.tags)}" placeholder="e.g. plumbing, teflon"></label>
@@ -1417,6 +1428,11 @@ function viewEdit(view, r) {
           <label class="field"><span>Warranty until</span><input name="warranty" type="date" value="${esc(item.warranty)}"></label>
           <label class="field"><span>Expires</span><input name="expiry" type="date" value="${esc(item.expiry)}"></label>
         </div>
+        <div class="two">
+          <label class="field"><span>Price</span><input name="price" inputmode="decimal" value="${esc(item.price || ``)}" placeholder="e.g. 24.99"></label>
+          <label class="field"><span>Bought on</span><input name="boughtAt" type="date" value="${esc(item.boughtAt || ``)}"></label>
+        </div>
+        <label class="field"><span>Bought at</span><input name="store" value="${esc(item.store || ``)}" placeholder="e.g. Costco, Amazon"></label>
         <label class="field"><span>Notes</span><textarea name="notes" rows="3" placeholder="Model number, where you bought it, manual link…">${esc(item.notes)}</textarea></label>
       </details>
       <div class="form-actions">
@@ -1426,6 +1442,7 @@ function viewEdit(view, r) {
     </form>`;
 
   $(`[data-cancel]`, view).onclick = () => goBack(editing ? `#/item/${editing.id}` : `#/`);
+  const rcpt = $(`[data-receipt]`, view); if (rcpt) rcpt.onclick = () => scanReceipt();
   $(`.stepper`, view).addEventListener(`click`, (e) => { // − / + without opening the keyboard
     const b = e.target.closest(`[data-step]`); if (!b) return;
     const input = $(`.stepper input`, view);
