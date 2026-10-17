@@ -4,7 +4,7 @@
 import { CONFIG } from './config.js';
 import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
-import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow, loadKnown } from './inventories.js';
+import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow, loadKnown, paranRoot, tidyIntoRoot } from './inventories.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
@@ -128,6 +128,7 @@ class GoogleBackend {
     await this.ensureHeaders();
     await this.ensureEventTabs().catch((e) => console.warn(`event tabs`, e)); // never blocks opening the inventory
     await this.ensurePhotoFolder();
+    tidyIntoRoot(this.user).catch((e) => console.warn(`tidy`, e)); // older groups and inventories into the Paran folder
     this.saveSession();
     return { user: this.user, label: this.label() };
   }
@@ -170,6 +171,7 @@ class GoogleBackend {
     else { await this.inspectSheet(); this.fresh = false; } // each open: name, owner, and whether this person can still edit
     await this.ensureHeaders(); await this.ensureEventTabs().catch((e) => console.warn(`event tabs`, e));
     await this.ensurePhotoFolder(); this.saveSession();
+    tidyIntoRoot(this.user).catch((e) => console.warn(`tidy`, e));
   }
 
   async inspectSheet() {
@@ -252,8 +254,9 @@ class GoogleBackend {
     const found = await drive.findTagged(role);
     if (found.length) this.photoFolderId = found[0].id;
     else {
+      // the owner's photos sit in the inventory's folder; anyone else's in their own Paran folder
       const f = await drive.createFolder(
-        this.isOwner ? `Photos` : `${CONFIG.APP_NAME} photos (shared inventory)`, this.isOwner ? this.rootFolderId : null, role);
+        this.isOwner ? `Photos` : `Photos – ${this.sheetName || `shared inventory`}`, this.isOwner ? this.rootFolderId : await paranRoot(this.user), role);
       this.photoFolderId = f.id;
       if (!this.isOwner) {
         // let everyone in this inventory open the full-size photos this member adds

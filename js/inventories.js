@@ -1,6 +1,8 @@
 // Several inventories per person, optionally gathered in a group: an organization, or "my homes".
 //
+// Everything a person creates lives under one "Paran" folder in their Drive (stash = "paran"); it is never shared.
 // In Google Drive a group is one folder. Sharing that folder shares every inventory inside it.
+//   Paran/                   folder, appProperties.stash = "paran"
 //   <Group name>/            folder, appProperties.stash = "group"
 //     <Group> – directory    sheet, stash = "directory": Inventories + People tabs (the group's own list)
 //     <Inventory name>/      folder, stash = "root" (same as a standalone inventory)
@@ -81,9 +83,43 @@ export async function readDirectory(dirId) {
   };
 }
 
+// ---------------------------------------------------------------- the Paran folder
+const rootKey = (email) => `paran.root.${email}`;
+/** This person's "Paran" folder in their Drive (found by its tag, or created). Groups and inventories go inside it. */
+export async function paranRoot(user) {
+  const cached = localStorage.getItem(rootKey(user.email)); if (cached) return cached;
+  const found = (await drive.findTagged(`paran`)).find((f) => f.owners?.some((o) => o.emailAddress === user.email));
+  const id = found?.id || (await drive.createFolder(CONFIG.APP_NAME, null, `paran`)).id;
+  try { localStorage.setItem(rootKey(user.email), id); } catch { /* ignore */ }
+  return id;
+}
+
+/**
+ * Groups and inventories made before the Paran folder existed sit loose in My Drive: move the ones this person owns
+ * into it. Only things at the top of My Drive are moved (never a folder they put somewhere themselves, nor anything
+ * inside a group). Once per device.
+ */
+export async function tidyIntoRoot(user) {
+  const flag = `paran.tidied.${user.email}`;
+  if (localStorage.getItem(flag)) return 0;
+  const rootId = await paranRoot(user);
+  const myDrive = (await drive.meta(rootId)).parents?.[0];
+  let moved = 0;
+  if (myDrive) {
+    const [groups, invs] = await Promise.all([drive.findTagged(`group`), drive.findTagged(`root`)]);
+    for (const f of [...groups, ...invs]) {
+      if (!f.owners?.some((o) => o.emailAddress === user.email)) continue;
+      if (!(f.parents || []).includes(myDrive)) continue;
+      await drive.move(f.id, rootId, f.parents.join(`,`)); moved++;
+    }
+  }
+  try { localStorage.setItem(flag, `1`); } catch { /* ignore */ }
+  return moved;
+}
+
 // ---------------------------------------------------------------- creating
 export async function createGroup(user, name) {
-  const folder = await drive.createFolder(name, null, `group`);
+  const folder = await drive.createFolder(name, await paranRoot(user), `group`);
   const ss = await sheets.create(`${name} – directory`, DIR_TABS);
   const m = await drive.meta(ss.spreadsheetId);
   await drive.tagAndMove(ss.spreadsheetId, folder.id, (m.parents || []).join(`,`), `directory`);
@@ -99,7 +135,7 @@ export async function createGroup(user, name) {
 export async function createInventory(user, name = CONFIG.SHEET_NAME, groupId = ``) {
   const k = loadKnown(user.email);
   const group = groupId ? k.groups[groupId] : null;
-  const folder = await drive.createFolder(name, group ? groupId : null, `root`);
+  const folder = await drive.createFolder(name, group ? groupId : await paranRoot(user), `root`);
   const ss = await sheets.create(name, TABS);
   const m = await drive.meta(ss.spreadsheetId);
   await drive.tagAndMove(ss.spreadsheetId, folder.id, (m.parents || []).join(`,`), `sheet`);

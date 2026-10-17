@@ -23,6 +23,16 @@ The app only asks for the `drive.file` scope, so it can see **only the files it 
 - **More** is a short menu: the current inventory (switch, rename, add), People & access, AI suggestions, Your data, About, and Sign out. Each opens its own page.
 - **Roles: Owner, Can edit, Can view.** Invites (More → People for one inventory, or the group page for a whole group) have a **Can edit / Can view** choice. *Can view* shares the sheet (or group folder) as Google Drive *reader*, so Google itself refuses changes. A viewer's app shows **View only** in the status pill, hides Add, Edit, Move, Lend, Scan many, photo changes, restore and other edit actions, and keeps search, browsing, Share and QR scanning. Access is re-checked with Drive each time the app opens; if a change is refused mid-session because access was reduced, the app re-checks and switches to view-only. Viewers don't create a photo folder or update sheet headers.
 - **Several inventories, and groups of them:** tap the inventory name at the top (or More → Inventory) for **Your inventories**: switch, **New inventory**, **New group** (an organization, or your homes) and **Open one shared with you**. Each inventory is its own Google Sheet and folder, with its own places, people and history; the app reopens straight into the one you pick, from this phone's copy. More → Inventory also has **Rename this inventory** (renames the sheet and folder).
+  - **In Drive, everything sits under one "Paran" folder** in the creator's My Drive (never shared itself): groups inside it, inventories inside their group (or straight inside Paran when not in one), and each inventory's Photos inside its folder. Photos someone adds to an inventory they don't own go in *their* Paran folder as "Photos – <inventory>". Groups and inventories made before this folder existed are moved into it the first time the owner opens the new version (only ones at the top of My Drive; anything they filed elsewhere stays put). People shared a group or inventory still find it under *Shared with me*.
+```
+My Drive / Paran /
+  Tamil School /                 group (share this = group access)
+    Tamil School – directory     Inventories, People, Events, EventLines
+    School /                     inventory (share its sheet = inventory access)
+      School                     Items, Locations, Members, Log, Tasks
+      Photos /
+  Home /                         an inventory not in a group
+```
   - **A group** is one Drive folder holding its inventories' folders plus a **directory** sheet (Inventories and People tabs). Inviting someone on the **group page** shares the folder, so they can open and edit every inventory in it, including ones added later. Inviting from More → People still shares a single inventory.
   - **Joining a group:** the invited person chooses *Open one shared with you* and picks "<Group> – directory". Google only lets the app open files a person picks, so the app then asks them to tick the group's inventories once (the picker opens inside the group's folder). New inventories added later show "Tap to open it on this phone".
   - **Search covers every inventory.** Results from the one you're in come first, then "In your other inventories", each under its inventory (and group) name. Inventories with a copy on this phone are searched instantly; the rest are fetched in the background when online (and refreshed if the copy is over 10 minutes old), then kept on the phone. Offline, a banner at the top says so and names any inventory that couldn't be checked. Tapping a result opens that inventory at the item. Chips under the search box (one per inventory with matches, with its count) drop an inventory from the results; tap again to bring it back. They reset when the search is cleared. Group inventories not yet opened on this phone show "Include …" (one tap via the picker).
@@ -124,7 +134,7 @@ After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on th
 - The owner taps **More → Invite**. That shares the sheet (edit) and the root folder (view) with the email and adds a row to **Members**.
 - The invited person opens Paran, signs in, and chooses **Join a shared inventory**. The Google Picker grants the app access to that one sheet.
 - Each item stores a small thumbnail (≈20 KB) inside the sheet, so **everyone always sees every photo thumbnail**. The full-size photo opens in Drive.
-- Photos a member adds go to a "Stash photos (shared inventory)" folder in *their* Drive. It is shared with everyone on the Members list at the time they join; people invited later see the thumbnail, and need the photo shared to open the full size.
+- Photos a member adds go to a "Photos – <inventory>" folder inside *their* Paran folder. It is shared with everyone on the Members list at the time they join; people invited later see the thumbnail, and need the photo shared to open the full size.
 
 ## Data model (Google Sheet)
 
