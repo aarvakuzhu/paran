@@ -1035,3 +1035,5 @@ body.readonly .edit-only { display: none !important; }
 .job-card li .job-done { grid-column: 2; grid-row: 1 / span 2; align-self: center; min-height: 32px; }
 .job-card li .job-done .ic { width: 15px; height: 15px; }
 .done-mark { color: var(--accent); }
+
+.bullets { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }

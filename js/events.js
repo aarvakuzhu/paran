@@ -179,14 +179,20 @@ export function viewEvents(view) {
   syncTasks();
   const { upcoming, past } = splitEvents();
   const g = repo.group();
-  const runByGroup = !g && repo.backend.kind === `google` ? repo.backend.inGroupName : ``; // in a group I can't open
-  const canNew = runByGroup ? false : g ? !repo.groupReadOnly : !repo.readOnly;
+  const google = repo.backend.kind === `google`;
+  const runByGroup = !g && google ? repo.backend.inGroupName : ``; // in a group I can't open
+  // Events belong to a group. An inventory on its own gets one first (its owner is asked); others can't start one.
+  const needsGroup = !g && !runByGroup && google;
+  const ownerHere = needsGroup && repo.backend.isOwner;
+  const ownerEmail = (repo.members || []).find((m) => m.role === `owner`)?.email || ``;
+  const canNew = runByGroup ? false : g ? !repo.groupReadOnly : needsGroup ? ownerHere : !repo.readOnly;
   const newBtn = (cls) => (canNew ? `<button type="button" class="btn primary ${cls}" data-ev="new">${icon(`plus`)} New event</button>` : ``);
   view.innerHTML = `<div class="events">
     <div class="more-head"><a class="back" href="#/more">${icon(`back`)} More</a></div>
     <div class="page-head"><h1>Events</h1>${newBtn(`small`)}</div>
-    <p class="muted small">${g ? `Events for <b>${esc(g.name)}</b>. Everyone in the group sees them, and they can use things from any of its ${groupInventories().length} inventories.`
+    <p class="muted small">${g ? `Events for <b>${esc(g.name)}</b>. Everyone in the group sees them, and they can use things from ${groupInventories().length === 1 ? `its inventory, and from any you add to the group later` : `any of its ${groupInventories().length} inventories`}.`
       : runByGroup ? `${esc(ctx.invName())} is part of <b>${esc(runByGroup)}</b>, and its events are run by the group. Anything you’re asked to bring shows on your home screen.`
+      : needsGroup && !ownerHere ? `Events are run by a group. ${esc(ctx.invName())} isn’t in one yet, so ${ownerEmail ? `ask its owner (${esc(ownerEmail)})` : `ask its owner`} to start an event: Paran will put ${esc(ctx.invName())} in a group first.`
       : `List what an event needs, see where each thing is right now and who has it.`}</p>
     ${upcoming.length ? `<div class="label-sm">Coming up</div><div class="cards">${upcoming.map(eventCard).join(``)}</div>`
       : runByGroup ? `` : `<div class="empty">${icon(`calendar`, `big`)}<h3>No events yet</h3>
@@ -195,6 +201,7 @@ export function viewEvents(view) {
   </div>`;
   view.onclick = async (e) => {
     if (e.target.closest(`[data-ev="new"]`)) {
+      if (needsGroup && !(await groupFirst())) return;
       const f = await eventForm(); if (!f) return;
       const { group, ...fields } = f;
       const ev = repo.saveEvent(fields, { group }); if (!ev) return;
@@ -203,7 +210,44 @@ export function viewEvents(view) {
   };
 }
 
-/** Name, date, notes (and, in a group, whole group or only this inventory). Resolves the fields, or null. */
+/**
+ * Events belong to a group, so access stays simple: group people see events, one-inventory people only get their tasks.
+ * An inventory on its own is put in a group (a new one, or one of yours) before its first event. Resolves true when done.
+ */
+function groupFirst() {
+  const repo = R(); const inv = ctx.invName();
+  const mine = Object.entries(loadKnown(repo.user.email).groups || {}).filter(([, g]) => g.owner && g.dirId);
+  return new Promise((resolve) => {
+    let answered = false;
+    sheet(`Events need a group`, (el, close) => {
+      el.innerHTML = `<form class="stack">
+        <p class="muted">Events are run by a group, so it’s clear who sees them. Paran will ${mine.length ? `put` : `create a group and put`} <b>${esc(inv)}</b> in ${mine.length ? `a group` : `it`}, then start your event.</p>
+        <ul class="muted small bullets">
+          <li>Its folder moves into the group’s folder in your Drive. Nothing in it changes.</li>
+          <li>People you shared ${esc(inv)} with keep it; you choose whether to give them the whole group.</li>
+          <li>Later you can add other inventories (a storage unit, a garage) and events can use them all.</li>
+        </ul>
+        ${mine.length ? `<label class="field"><span>Group</span><select name="gid">${mine.map(([id, g]) => `<option value="${esc(id)}">${esc(g.name)}</option>`).join(``)}<option value="">New group…</option></select></label>` : ``}
+        <label class="field" data-newname ${mine.length ? `hidden` : ``}><span>Group name</span><input name="name" value="" placeholder="e.g. Tamil School, Our homes"></label>
+        <div class="row-actions"><button type="button" class="btn ghost" data-no>Cancel</button><button class="btn primary">${mine.length ? `Continue` : `Create group`}</button></div></form>`;
+      const f = $(`form`, el); const sel = f.elements.gid; const nameBox = $(`[data-newname]`, el);
+      if (sel) sel.onchange = () => { nameBox.hidden = Boolean(sel.value); $(`button.primary`, el).textContent = sel.value ? `Continue` : `Create group`; if (!sel.value) f.elements.name.focus(); };
+      $(`[data-no]`, el).onclick = () => { answered = true; resolve(false); close(); };
+      f.onsubmit = async (e) => {
+        e.preventDefault();
+        const gid = sel?.value || ``; const name = f.elements.name.value.trim();
+        if (!gid && !name) { f.elements.name.focus(); return; }
+        const btn = $(`button.primary`, el); btn.disabled = true; btn.textContent = `Setting up…`;
+        answered = true; close();
+        const g = await ctx.putInGroup({ gid, name });
+        if (g) toast(`${inv} is now in ${g.name}`);
+        resolve(Boolean(g));
+      };
+    }, { onClose: () => { if (!answered) resolve(false); } });
+  });
+}
+
+/** Name, date, notes. Resolves the fields, or null. */
 function eventForm(ev = null) {
   const repo = R(); const g = ev ? null : repo.group();
   const group = Boolean(g); // in a group, every event is the group's

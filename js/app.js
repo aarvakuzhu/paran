@@ -56,7 +56,7 @@ async function boot() {
   registerServiceWorker();
   initEvents({
     repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr, invName, switchTo, pickLocation,
-    openGroupInventories: (gid) => (gid ? openGroupInventories(gid) : Promise.resolve()),
+    openGroupInventories: (gid) => (gid ? openGroupInventories(gid) : Promise.resolve()), putInGroup,
     redraw: () => { // another inventory's items arrived: refresh whatever shows events
       if (document.querySelector(`.sheet-wrap.open`)) return redrawOpenAddSheet();
       const n = route().name;
@@ -2491,6 +2491,19 @@ async function bringPeopleIntoGroup(gid) {
   let n = 0;
   for (const m of people) { try { await inviteToGroup(repo.user, gid, m.email, m.role === `viewer` ? `reader` : `writer`); n++; } catch (e) { toast(`Couldn’t add ${m.email}: ${e.message}`); } }
   if (n) toast(`${n} added to ${g.name}`);
+}
+
+/** Put the open inventory (which you own) into a group: an existing one of yours, or a new one. Resolves the group or null. */
+async function putInGroup({ gid = ``, name = `` }) {
+  const user = repo.user;
+  try {
+    if (!gid) { toast(`Creating ${name}…`, { ms: 8000 }); gid = (await createGroup(user, name)).id; }
+    await addToGroup(user, { sheetId: repo.backend.sheetId, folderId: repo.backend.rootFolderId, name: invName() }, gid);
+    const k = loadKnown(user.email);
+    repo.backend.groupDirId = k.groups[gid]?.dirId || null; repo.backend.saveSession();
+    await bringPeopleIntoGroup(gid);
+    return { id: gid, ...k.groups[gid] };
+  } catch (e) { toast(`Couldn’t set up the group: ${e.message}`); return null; }
 }
 
 async function newGroupFlow() {
