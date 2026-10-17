@@ -1151,3 +1151,24 @@ body.readonly .edit-only { display: none !important; }
 .tpl .form-actions { display: flex; gap: 10px; justify-content: space-between; }
 .welcome.tpl { padding: 28px 16px 48px; max-width: 640px; margin: 0 auto; box-sizing: border-box; width: 100%; }
 .tpl-edit { grid-template-columns: minmax(0, 1fr); } .tpl-edit > * { min-width: 0; } .tpl-inv { grid-template-columns: minmax(0, 1fr); }
+
+/* help */
+.help-btn { font-weight: 800; font-size: 1.05rem; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--accent); margin-left: auto; margin-right: 8px; display: grid; place-items: center; }
+.help { display: grid; gap: 10px; }
+.help-list { display: grid; gap: 8px; }
+.help-topic { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.help-topic.open { border-color: var(--accent); }
+.help-q { display: flex; justify-content: space-between; gap: 8px; align-items: center; width: 100%; text-align: left; padding: 12px 14px; border: 0; background: none; font: inherit; font-weight: 600; color: var(--ink); cursor: pointer; }
+.help-q .ic { flex: none; color: var(--ink-3); transition: transform .2s; }
+.help-topic.open .help-q .ic { transform: rotate(90deg); }
+.help-a { padding: 0 14px 14px; display: grid; gap: 10px; }
+.help-a ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--ink-2); }
+.help-acts { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.help-was { display: inline-flex; gap: 6px; align-items: center; font-size: .85rem; color: var(--ink-2); }
+.help-rel { display: grid; gap: 4px; justify-items: start; }
+.help-items { display: flex; gap: 10px; align-items: center; width: 100%; padding: 12px 14px; border: 1px dashed var(--accent); border-radius: var(--radius); background: var(--accent-soft); font: inherit; color: var(--ink); text-align: left; cursor: pointer; }
+.help-items span { flex: 1; }
+.help-tell { padding-top: 4px; }
+@keyframes helpspot { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent); } }
+.help-spot { animation: helpspot 1.1s ease-in-out 3; border-radius: 12px; }
+.help-rel .link { text-align: left; }

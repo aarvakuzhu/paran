@@ -96,3 +96,15 @@ export async function snapshot(snap) {
 
 /** What's kept, for the page that shows it. */
 export function statsData() { return statsOn() ? load() : null; }
+
+// ---------------- help feedback: kept on this phone (even with the counts off, since the person wrote it on purpose)
+const FB_KEY = `paran.feedback`;
+/** { ts, q: what they asked, topic: id or '', helpful: true/false/null, text: what they told us, screen } */
+export function addFeedback(entry) {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(FB_KEY) || `[]`); } catch { /* ignore */ }
+  list.push({ ts: new Date().toISOString(), q: ``, topic: ``, helpful: null, text: ``, screen: ``, ...entry });
+  try { localStorage.setItem(FB_KEY, JSON.stringify(list.slice(-200))); } catch { /* ignore */ }
+}
+export function feedbackList() { try { return JSON.parse(localStorage.getItem(FB_KEY) || `[]`); } catch { return []; } }
+export function clearFeedback() { try { localStorage.removeItem(FB_KEY); } catch { /* ignore */ } }

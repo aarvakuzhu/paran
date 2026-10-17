@@ -1,0 +1,13 @@
+name: checks
+on: [push, pull_request]
+jobs:
+  help-and-modules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Help catalog matches the app
+        run: node tools/help-check.mjs
+      - name: Every module parses
+        run: for f in js/*.js; do node --input-type=module -e "import('./$f').catch(e => { if (!/is not defined|Cannot read/.test(e.message)) { console.error('$f', e.message); process.exit(1); } })" || exit 1; done

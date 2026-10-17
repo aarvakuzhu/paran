@@ -25,3 +25,8 @@ event lines turning ready, price/store/date/warranty captured, one shared receip
 in Drive), the home template as is, and an empty start.
 
     python3 tests/templates_first_run.py
+
+`help_flows.py` (demo mode): ? on every screen with that screen's topics first, search on real phrasings, a question
+about your things handed to item search, **Take me there for every topic** (its screen opens and the button it
+points at exists), and feedback kept and listed in Your activity. `node tools/help-check.mjs` checks the catalog
+against the code without a browser.

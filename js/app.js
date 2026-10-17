@@ -11,7 +11,8 @@ import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeI
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
-import { count as statCount, snapshot as statSnapshot, statsOn, setStatsOn, statsData } from './stats.js';
+import { count as statCount, snapshot as statSnapshot, statsOn, setStatsOn, statsData, addFeedback, feedbackList, clearFeedback } from './stats.js';
+import { searchHelp, topicsFor, topicById } from './help.js';
 import { scanLabel } from './qrscan.js';
 import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml, toggleTaskDone } from './events.js';
 
@@ -258,6 +259,7 @@ function renderShell() {
       ${repo.backend.kind === `google`
         ? `<button type="button" class="logo inv-switch" id="invsw" aria-label="Switch inventory">${icon(`box`)}<span id="invname"></span>${icon(`chevron`, `down`)}</button>`
         : `<a href="#/" class="logo">${icon(`box`)}<span>${esc(CONFIG.APP_NAME)}</span></a>`}
+      <button type="button" class="icon-btn help-btn" id="helpbtn" aria-label="Help">?</button>
       <button class="status" id="status" type="button"></button>
     </header>
     <main id="view" class="view"></main>
@@ -269,6 +271,7 @@ function renderShell() {
       <a href="#/more" data-tab="more">${icon(`more`)}<span>More</span></a>
     </nav>`;
   $(`#status`).onclick = onStatusClick;
+  $(`#helpbtn`).onclick = () => helpSheet();
   $(`#invsw`)?.addEventListener(`click`, inventoriesSheet);
   renderStatus();
 }
@@ -2353,6 +2356,88 @@ function aiConsent(keyOnly = false) {
   });
 }
 
+// ============================================================ Help (? on every screen; catalog and search in help.js)
+const helpScreen = () => { const r = route(); return r.name === `more` && r.id ? `more/${r.id}` : r.name; };
+const POPULAR = [`start`, `find`, `add-item`, `share-inv`, `events-what`, `lend`];
+const ITEM_Q = /^(where('?s| is| are)|find|lost|looking for|have i got|do i have)\b/i;
+
+/** Help: topics for this screen first, then search in your own words; Take me there; did it help; tell us. */
+function helpSheet(startQuery = ``) {
+  const screen = helpScreen();
+  let q = startQuery; let open = ``;
+  sheet(`Help`, (el, close) => {
+    el.innerHTML = `<div class="help">
+      <label class="search sm">${icon(`search`)}<input data-hq type="search" value="${esc(q)}" placeholder="Ask in your own words, e.g. share with my family" autocomplete="off" enterkeyhint="search"></label>
+      <div class="help-list"></div>
+      <div class="help-tell"><button type="button" class="link small" data-tell>${icon(`edit`)} Can’t find it? Tell us what you were trying to do</button></div>
+    </div>`;
+    const list = $(`.help-list`, el); const input = $(`[data-hq]`, el);
+    const card = (t) => `<div class="help-topic${open === t.id ? ` open` : ``}" data-topic="${esc(t.id)}">
+      <button type="button" class="help-q" data-toggle="${esc(t.id)}">${esc(t.q)}${icon(`chevron`)}</button>
+      ${open === t.id ? `<div class="help-a">
+        <ol>${t.steps.map((x) => `<li>${esc(x)}</li>`).join(``)}</ol>
+        ${t.who ? `<p class="fine">${esc(t.who)}</p>` : ``}
+        <div class="help-acts">${t.go ? `<button type="button" class="btn primary small" data-go="${esc(t.id)}">Take me there</button>` : ``}
+          <span class="help-was">Did this help? <button type="button" class="chip" data-yes="${esc(t.id)}">Yes</button><button type="button" class="chip" data-no="${esc(t.id)}">No</button></span></div>
+        ${(t.related || []).length ? `<div class="help-rel">${t.related.map(topicById).filter(Boolean).map((r) => `<button type="button" class="link small" data-toggle="${esc(r.id)}">${esc(r.q)}</button>`).join(``)}</div>` : ``}
+      </div>` : ``}</div>`;
+    const draw = () => {
+      const text = q.trim();
+      if (!text) {
+        const here = topicsFor(screen); const pop = POPULAR.map(topicById).filter((t) => t && !here.includes(t));
+        list.innerHTML = `${here.length ? `<div class="label-sm">On this screen</div>${here.map(card).join(``)}` : ``}
+          <div class="label-sm">${here.length ? `Also asked` : `Often asked`}</div>${pop.map(card).join(``)}`;
+        return;
+      }
+      const hits = searchHelp(text, screen).slice(0, 5);
+      const itemQ = ITEM_Q.test(text) || !hits.length;
+      const what = text.replace(ITEM_Q, ``).replace(/[?.!]+$/, ``).trim().replace(/^((is|are|my|our|the|a|an|i|put|did|kept)\s+)+/i, ``).trim();
+      list.innerHTML = `${itemQ && what ? `<button type="button" class="help-items" data-items="${esc(what)}">${icon(`search`)}<span>Search your things for “${esc(what)}”</span>${icon(`chevron`)}</button>` : ``}
+        ${hits.length ? hits.map((h) => card(h.topic)).join(``) : `<p class="muted small pad">No help topic matches that yet. Tell us below what you were trying to do, so it gets added.</p>`}`;
+    };
+    let timer = 0;
+    input.oninput = () => {
+      q = input.value; open = ``; draw();
+      clearTimeout(timer);
+      timer = setTimeout(() => { const t = q.trim(); if (t.length > 2) { statCount(`help`); if (!searchHelp(t, screen).length) { statCount(`helpNone`); addFeedback({ q: t, screen }); } } }, 1500);
+    };
+    el.onclick = async (e) => {
+      const b = e.target.closest(`button`); if (!b) return;
+      const d = b.dataset;
+      if (d.toggle) { open = open === d.toggle ? `` : d.toggle; draw(); $(`[data-topic="${CSS.escape(open)}"]`, el)?.scrollIntoView({ block: `nearest` }); return; }
+      if (d.go) { const t = topicById(d.go); close(); helpGo(t); return; }
+      if (d.yes || d.no) {
+        const helpful = Boolean(d.yes); statCount(helpful ? `helpYes` : `helpNo`);
+        addFeedback({ q: q.trim(), topic: d.yes || d.no, helpful, screen });
+        b.parentElement.innerHTML = helpful ? `Thanks!` : `Thanks. <button type="button" class="link small" data-tell>Tell us what was missing</button>`;
+        return;
+      }
+      if (d.items !== undefined) { // a question about their things: run the item search
+        close(); findState.q = d.items; findState.filter = ``;
+        if (route().name === `find`) { viewFind($(`#view`)); renderResults(); } else location.hash = `#/`;
+        return;
+      }
+      if (d.tell !== undefined) {
+        const text = await promptSheet(`Tell us`, { label: `What were you trying to do?`, value: q.trim(), placeholder: `e.g. Share the storage unit with my brother`, okLabel: `Save` });
+        if (text) { addFeedback({ q: q.trim(), text, screen }); toast(`Thanks. It’s kept on this phone; More → Your activity has it to share with the Paran team.`, { ms: 6000 }); }
+      }
+    };
+    draw();
+  });
+}
+
+/** Take me there: open the screen, then point at the button (a soft pulse) if it's on it. */
+function helpGo(t) {
+  if (t.go) location.hash = t.go;
+  if (!t.ui) return;
+  setTimeout(() => {
+    const el = document.querySelector(t.ui);
+    if (!el) return;
+    el.scrollIntoView({ block: `center`, behavior: `smooth` });
+    el.classList.add(`help-spot`); setTimeout(() => el.classList.remove(`help-spot`), 3500);
+  }, 350);
+}
+
 // ============================================================ Usage stats (kept on this phone; see stats.js)
 let searchTimer = 0; let lastSearch = ``;
 /** A search counts once the person stops typing for a moment (not every letter). */
@@ -2426,9 +2511,22 @@ function statsPage() {
     ${Object.keys(ai).length ? `<div class="label-sm">AI</div><div class="acc-card">${Object.entries(ai).map(([label, a]) => `<div class="act-ai"><b>${esc(label)}</b><span>${a.uses} time${a.uses === 1 ? `` : `s`}${a.total ? ` · names ${Math.round((a.score / a.total) * 100)}% right` : ``}</span></div>`).join(``)}
       <a class="link small" href="#/more/ai">How accurate AI has been</a></div>` : ``}
     ${groups.length ? `<div class="label-sm">Your groups now</div><div class="acc-card">${groups.map((g) => `<div class="act-ai"><b>${esc(g.name)}</b><span>${g.people} ${g.people === 1 ? `person` : `people`}${g.viewers ? ` (${g.viewers} view only)` : ``} · ${g.invs} inventor${g.invs === 1 ? `y` : `ies`} · ${g.items} items</span></div>`).join(``)}</div>` : ``}
+    ${feedbackHtml()}
     ${switchHtml}
     <details class="raw-wrap"><summary class="small">See exactly what’s kept</summary><pre class="stats-raw">${esc(JSON.stringify(s, null, 1))}</pre></details>`;
 }
+/** What people told Help (questions with no answer, yes/no on topics, notes). Kept here to share with the Paran team. */
+function feedbackHtml() {
+  const fb = feedbackList(); if (!fb.length) return ``;
+  const line = (f) => f.text ? `“${f.text}”` : f.topic ? `${topicById(f.topic)?.q || f.topic}: ${f.helpful ? `helped` : `didn’t help`}${f.q ? ` (asked “${f.q}”)` : ``}` : `No topic found for “${f.q}”`;
+  return `<div class="label-sm">Your help feedback</div><div class="acc-card">
+    ${fb.slice(-5).reverse().map((f) => `<div class="act-ai"><span>${esc(line(f))}</span></div>`).join(``)}
+    ${fb.length > 5 ? `<p class="fine">and ${fb.length - 5} more</p>` : ``}
+    <div class="row-actions left"><button type="button" class="btn primary small" data-fbshare>Share with the Paran team</button><button type="button" class="btn ghost small" data-fbclear>Clear</button></div>
+    <p class="fine">Kept on this phone. Share sends it from your phone (WhatsApp, email…) to whoever you choose.</p></div>`;
+}
+const feedbackText = () => [`Paran help feedback`, ...feedbackList().map((f) => `• ${f.ts.slice(0, 10)} [${f.screen || `?`}] ${f.text ? `Note: ${f.text}` : ``}${f.q ? ` Asked: ${f.q}` : ``}${f.topic ? ` Topic: ${f.topic} (${f.helpful === true ? `helped` : f.helpful === false ? `didn’t help` : `opened`})` : ``}`)].join(`\n`);
+
 const niceDay = (iso) => { try { return new Date(`${iso}T00:00`).toLocaleDateString(undefined, { day: `numeric`, month: `short` }); } catch { return iso; } };
 
 // ============================================================ How accurate AI has been
@@ -2988,6 +3086,8 @@ function viewMore(view, r) {
     finally { btn.disabled = false; }
   };
   $(`[data-aiauto]`, view)?.addEventListener(`change`, (e) => saveAiSettings({ auto: e.target.checked }));
+  $(`[data-fbshare]`, view)?.addEventListener(`click`, () => shareOut({ title: `Paran help feedback`, text: feedbackText() }));
+  $(`[data-fbclear]`, view)?.addEventListener(`click`, async () => { if (await confirmSheet(`Clear help feedback?`, `What you told Help on this phone is deleted.`, `Clear`, true)) { clearFeedback(); render(); } });
   view.querySelectorAll(`[data-period]`).forEach((b) => b.addEventListener(`click`, () => { actPeriod = Number(b.dataset.period); render(); }));
   $(`[data-stats]`, view)?.addEventListener(`change`, (e) => { setStatsOn(e.target.checked); lastSnap = 0; if (e.target.checked) statsSnapshot(); setTimeout(render, 1700); });
   if (r?.params?.get(`ai`) === `1` && !aiReady()) setTimeout(() => aiConsent().then((ok) => ok && render()), 50);
