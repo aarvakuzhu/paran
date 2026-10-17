@@ -59,6 +59,64 @@ function freshen(ids) {
 }
 const otherInvs = (ev) => (ev._g ? R().linesOf(ev.id).flatMap((l) => R().sourcesOf(l).filter((x) => !x.off).map((x) => R().srcInv(x))) : []);
 
+// ------------------------------------------------------------ who can open what (group access vs one inventory)
+/** email -> { group: true if in the group's people, invs: [inventory ids of the group they were given on their own] } */
+function accessMap() {
+  const repo = R(); const g = repo.group(); const map = new Map(); if (!g) return map;
+  const get = (e) => { const k = String(e).toLowerCase(); if (!map.has(k)) map.set(k, { group: false, invs: [] }); return map.get(k); };
+  for (const p of g.people || []) if (p.email && p.role !== `removed`) get(p.email).group = true;
+  for (const inv of groupInventories()) {
+    const members = inv.here ? repo.members : xlocal(inv.id)?.members || [];
+    for (const m of members) if (m.email && m.role !== `removed`) { const a = get(m.email); if (!a.invs.includes(inv.id)) a.invs.push(inv.id); }
+  }
+  return map;
+}
+/** People who can open one or more of the group's inventories but not the group: [{ email, only: "School" }]. */
+function inventoryOnlyPeople() {
+  const out = [];
+  for (const [email, a] of accessMap()) if (!a.group && a.invs.length) out.push({ email, only: a.invs.map(invNameOf).join(`, `) });
+  return out;
+}
+
+/**
+ * Keep the Tasks lists in inventories in step with the group's events: someone assigned who can only open an inventory
+ * (not the group) gets their part of each event written into an inventory they can open. Only what changed is written.
+ */
+const taskIdxKey = () => `paran.taskidx.${R().group()?.dirId}`;
+function taskIndex() { try { return JSON.parse(localStorage.getItem(taskIdxKey()) || `{}`); } catch { return {}; } }
+export function syncTasks() {
+  const repo = R(); const g = repo.group(); if (!g || repo.groupReadOnly) return;
+  const acc = accessMap(); const idx = taskIndex(); const want = {};
+  const byName = (a, b) => invNameOf(a).localeCompare(invNameOf(b));
+  for (const ev of repo.liveEvents().filter((e) => e._g)) {
+    for (const l of repo.linesOf(ev.id)) {
+      const x = lineState(l);
+      for (const b of shares(l)) {
+        const a = b.email && acc.get(b.email); if (!a || a.group || !a.invs.length) continue;
+        const from = repo.sourcesOf(l).filter((y) => !y.off).map((y) => repo.srcInv(y));
+        const inv = a.invs.find((i) => from.includes(i)) || [...a.invs].sort(byName)[0]; // where the thing is, else their first inventory
+        const id = `${l.id}:${b.email}`;
+        want[id] = { inv, row: { id, eventId: ev.id, eventName: ev.name, eventDate: ev.date || ``, lineId: l.id, email: b.email, name: lineName(l, x), qty: b.qty, todo: todoText(ev, l, x), section: l.section || ``, deleted: `` } };
+      }
+    }
+  }
+  let changed = false;
+  for (const [id, w] of Object.entries(want)) {
+    const sig = `${w.inv}|${JSON.stringify(w.row)}`;
+    if (idx[id]?.sig === sig) continue;
+    if (idx[id] && idx[id].inv !== w.inv) repo.saveTask(idx[id].inv, { id, deleted: new Date().toISOString() }); // moved to another inventory
+    repo.saveTask(w.inv, w.row); idx[id] = { inv: w.inv, sig }; changed = true;
+  }
+  for (const id of Object.keys(idx)) if (!want[id]) { repo.saveTask(idx[id].inv, { id, deleted: new Date().toISOString() }); delete idx[id]; changed = true; }
+  if (changed) try { localStorage.setItem(taskIdxKey(), JSON.stringify(idx)); } catch { /* ignore */ }
+}
+/** The task someone marked done (on their own phone), as the organizer sees it. */
+function taskDone(lineId, email) {
+  const t = taskIndex()[`${lineId}:${email}`]; if (!t) return ``;
+  const list = t.inv === R().hereId ? R().tasks : xlocal(t.inv)?.tasks || [];
+  return list.find((x) => x.id === `${lineId}:${email}` && !x.deleted)?.done || ``;
+}
+
 // ------------------------------------------------------------ dates
 function whenText(date) {
   if (!date) return { day: ``, month: ``, main: `No date set`, rel: `` };
@@ -118,17 +176,20 @@ export function eventCard(ev) {
 // ------------------------------------------------------------ Events list
 export function viewEvents(view) {
   const repo = R();
+  syncTasks();
   const { upcoming, past } = splitEvents();
   const g = repo.group();
-  const canNew = g ? !repo.groupReadOnly : !repo.readOnly;
+  const runByGroup = !g && repo.backend.kind === `google` ? repo.backend.inGroupName : ``; // in a group I can't open
+  const canNew = runByGroup ? false : g ? !repo.groupReadOnly : !repo.readOnly;
   const newBtn = (cls) => (canNew ? `<button type="button" class="btn primary ${cls}" data-ev="new">${icon(`plus`)} New event</button>` : ``);
   view.innerHTML = `<div class="events">
     <div class="more-head"><a class="back" href="#/more">${icon(`back`)} More</a></div>
     <div class="page-head"><h1>Events</h1>${newBtn(`small`)}</div>
     <p class="muted small">${g ? `Events for <b>${esc(g.name)}</b>. Everyone in the group sees them, and they can use things from any of its ${groupInventories().length} inventories.`
+      : runByGroup ? `${esc(ctx.invName())} is part of <b>${esc(runByGroup)}</b>, and its events are run by the group. Anything you’re asked to bring shows on your home screen.`
       : `List what an event needs, see where each thing is right now and who has it.`}</p>
     ${upcoming.length ? `<div class="label-sm">Coming up</div><div class="cards">${upcoming.map(eventCard).join(``)}</div>`
-      : `<div class="empty">${icon(`calendar`, `big`)}<h3>No events yet</h3>
+      : runByGroup ? `` : `<div class="empty">${icon(`calendar`, `big`)}<h3>No events yet</h3>
         <p>Graduation, Annual Day, Pongal, a camping trip: anything you gather the same things for.</p>${newBtn(``)}</div>`}
     ${past.length ? `<div class="label-sm">Past</div><div class="cards">${past.map(eventCard).join(``)}</div>` : ``}
   </div>`;
@@ -174,6 +235,7 @@ export function viewEvent(view, r) {
   const ev = repo.eventById(r.id);
   if (!ev) { view.innerHTML = `<div class="empty"><h3>Event not found</h3><a class="btn ghost" href="#/events">All events</a></div>`; return; }
   freshen(otherInvs(ev));
+  syncTasks();
   const canEdit = repo.canEditEvent(ev);
   const st = evView[ev.id] ||= { by: `section`, filter: ``, dayBy: `section`, mode: defaultMode(ev) };
   const lines = repo.linesOf(ev.id);
@@ -914,8 +976,9 @@ function lineSheet(ev, line) {
     /** Add (or update) a person on this line with a number. An email, or a name that belongs to an account, links them. */
     const assign = (typed, email, qty) => {
       const cur = el._cur;
-      const acct = (email || repo.accountFor(typed)).toLowerCase();
-      const name = typed.includes(`@`) ? (repo.bringerNames().find((p) => p.email === acct)?.name || Repo.nameFromEmail(typed)) : typed;
+      const extra = inventoryOnlyPeople();
+      const acct = (email || repo.accountFor(typed, extra)).toLowerCase();
+      const name = typed.includes(`@`) ? (repo.bringerNames(extra).find((p) => p.email === acct)?.name || Repo.nameFromEmail(typed)) : typed;
       const list = shares(cur).filter((b) => b.name.toLowerCase() !== name.toLowerCase() && !(acct && b.email === acct));
       repo.setBringers(cur, [...list, { name, qty, email: acct }]);
       draw();
@@ -1009,6 +1072,21 @@ function lineSheet(ev, line) {
 export function myJobsHtml() {
   const repo = R(); const me = String(repo.user?.email || ``).toLowerCase(); if (!me) return ``;
   const blocks = [];
+  // tasks given to me in inventories I can open (when I can't open the group's events)
+  const seenEv = new Set(repo.liveEvents().map((e) => e.id));
+  const k = known(); const today = ctx.todayStr();
+  const mine = [];
+  for (const [inv, list] of [[repo.hereId, repo.tasks], ...Object.keys(k.inv).filter((id) => id !== repo.hereId).map((id) => [id, xlocal(id)?.tasks || []])]) {
+    for (const t of list || []) if (!t.deleted && String(t.email).toLowerCase() === me && !seenEv.has(t.eventId) && (!t.eventDate || String(t.eventDate) >= today)) mine.push({ ...t, inv });
+  }
+  const byEv = new Map(); for (const t of mine) { if (!byEv.has(t.eventId)) byEv.set(t.eventId, []); byEv.get(t.eventId).push(t); }
+  for (const ts of [...byEv.values()].sort((a, b) => String(a[0].eventDate || `9999`).localeCompare(String(b[0].eventDate || `9999`)))) {
+    const w = whenText(ts[0].eventDate);
+    blocks.push(`<div class="job-card">
+      <div class="jc-head"><b>${esc(ts[0].eventName)}</b><span>${esc(w.rel || w.main)}</span></div>
+      <ul>${ts.map((t) => `<li class="${t.done ? `ok` : ``}"><b>${esc(t.name)}${Number(t.qty) > 1 ? ` ×${esc(t.qty)}` : ``}</b>${t.todo ? `<small>${esc(t.todo)}</small>` : ``}
+        <button type="button" class="btn small ${t.done ? `text` : `ghost`} job-done" data-taskdone="${esc(t.inv)}|${esc(t.id)}">${t.done ? `${icon(`check`)} Done` : `Mark done`}</button></li>`).join(``)}</ul></div>`);
+  }
   for (const ev of splitEvents().upcoming) {
     const p = peopleLists(ev).find((x) => x.email === me); if (!p) continue;
     freshen(otherInvs(ev));
@@ -1019,6 +1097,17 @@ export function myJobsHtml() {
   }
   return blocks.length ? `<section class="dash"><div class="dash-head"><h2>You’re bringing</h2><a class="link small" href="#/events">All events</a></div>
     <div class="cards">${blocks.join(``)}</div></section>` : ``;
+}
+
+/** Home screen: someone without group access marks their task done (or not). */
+export function toggleTaskDone(key) {
+  const repo = R(); const [inv, id] = key.split(`|`);
+  const list = inv === repo.hereId ? repo.tasks : xlocal(inv)?.tasks || [];
+  const t = list.find((x) => x.id === id); if (!t) return;
+  const done = t.done ? `` : new Date().toISOString();
+  repo.saveTask(inv, { id, done });
+  if (inv !== repo.hereId) t.done = done; // the phone's copy of that inventory
+  toast(done ? `Marked done: ${t.name}` : `Not done: ${t.name}`);
 }
 
 /** The signed-in person's part: what they're bringing to this event and what to do for each. */
@@ -1041,12 +1130,12 @@ function whoBlock(line, canEdit) {
       ${need > 1 ? `<p class="who-sum">${sum}</p>` : ``}` : `<p class="fine">Nobody yet.</p>`;
   }
   const taken = new Set(sh.map((b) => b.name.toLowerCase())); const takenEmail = new Set(sh.map((b) => b.email).filter(Boolean));
-  const names = repo.bringerNames();
-  const quick = names.filter((n) => !taken.has(n.name.toLowerCase()) && !(n.email && takenEmail.has(n.email))).slice(0, 8);
+  const names = repo.bringerNames(inventoryOnlyPeople());
+  const quick = names.filter((n) => !taken.has(n.name.toLowerCase()) && !(n.email && takenEmail.has(n.email))).slice(0, 10);
   const start = Math.max(1, left > 0 ? left : need > 1 ? 1 : 1);
   const rows = sh.map((b, i) => `<div class="who-row">
       <span class="who-name">${icon(b.email ? `check` : `users`)} <b>${esc(b.name)}</b>
-        ${b.email ? `<small>${esc(acctLabel(b.email))}</small>` : ``}</span>
+        ${b.email ? `<small>${esc(acctLabel(b.email))}${(() => { const a = accessMap().get(b.email); return a && !a.group && a.invs.length ? ` · ${esc(a.invs.map(invNameOf).join(`, `))} only` : ``; })()}${taskDone(line.id, b.email) ? ` · <b class="done-mark">✓ done</b>` : ``}</small>` : ``}</span>
       ${need > 1 || sh.length > 1 ? `<span class="stepper sm"><button type="button" class="icon-btn" data-wstep="${i}" data-d="-1" aria-label="Fewer">−</button><input type="number" min="1" inputmode="numeric" value="${b.qty}" data-wq="${i}" aria-label="How many ${esc(b.name)} brings"><button type="button" class="icon-btn" data-wstep="${i}" data-d="1" aria-label="More">+</button></span>` : ``}
       <button type="button" class="icon-btn un" data-unbring="${i}" aria-label="Remove ${esc(b.name)}">${icon(`x`)}</button>
     </div>`).join(``);
@@ -1058,8 +1147,8 @@ function whoBlock(line, canEdit) {
       ${need > 1 ? `<input name="wq" type="number" min="1" inputmode="numeric" value="${start}" class="who-qty" aria-label="How many they bring">` : `<input name="wq" type="hidden" value="1">`}
       <button class="btn primary">Add</button></form>
     <datalist id="ev-people">${names.map((n) => `<option value="${esc(n.name)}">${esc(n.email || ``)}</option>`).join(``)}</datalist>
-    ${quick.length ? `<div class="chips who-quick">${quick.map((n) => `<button type="button" class="chip" data-bring="${esc(n.name)}" data-email="${esc(n.email || ``)}">${icon(n.email ? `check` : `plus`)} ${esc(n.email === me ? `Me` : n.name)}</button>`).join(``)}</div>` : ``}
-    <p class="fine">${need > 1 ? `Set how many first, then tap a name or type one. ` : ``}${accounts.length ? `✓ = in ${esc(repo.group()?.name || ctx.invName())}: they see what they’re bringing when they open the app. Anyone else gets their list by message.` : `They get their list by message (Share).`}</p>`}`;
+    ${quick.length ? `<div class="chips who-quick">${quick.map((n) => `<button type="button" class="chip" data-bring="${esc(n.name)}" data-email="${esc(n.email || ``)}">${icon(n.email ? `check` : `plus`)} ${esc(n.email === me ? `Me` : n.name)}${n.only ? ` <small>(${esc(n.only)} only)</small>` : ``}</button>`).join(``)}</div>` : ``}
+    <p class="fine">${need > 1 ? `Set how many first, then tap a name or type one. ` : ``}${accounts.length ? `✓ = has access: they see what they’re bringing on their home screen${repo.group() ? ` (people with only one inventory see just their tasks, not the event)` : ``}. Anyone else gets their list by message.` : `They get their list by message (Share).`}</p>`}`;
 }
 
 /** Pick one item the event can use. Resolves a pool entry { invId, item }, or null. */

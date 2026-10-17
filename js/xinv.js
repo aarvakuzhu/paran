@@ -13,7 +13,7 @@ export function xlocal(id) {
   try {
     const c = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`);
     if (c) {
-      xmem[id] = { ...(xmem[id] || {}), items: (c.items || []).filter((i) => !isRemoved(i.deleted)), locations: c.locations || [], at: Number(localStorage.getItem(`paran.xat.${id}`) || 0) };
+      xmem[id] = { ...(xmem[id] || {}), items: (c.items || []).filter((i) => !isRemoved(i.deleted)), locations: c.locations || [], members: c.members || [], tasks: c.tasks || [], at: Number(localStorage.getItem(`paran.xat.${id}`) || 0) };
       blobs.get(`thumbs:${id}`).then((t) => { if (t) xmem[id].thumbs = t; }).catch(() => {});
       return xmem[id];
     }
@@ -28,12 +28,12 @@ export async function xfetch(id) {
     try {
       const d = await fetchInventory(id);
       const live = d.items.filter((i) => !isRemoved(i.deleted));
-      Object.assign(m, { items: live, locations: d.locations, at: Date.now(), failed: false });
+      Object.assign(m, { items: live, locations: d.locations, members: d.members || m.members || [], tasks: d.tasks || m.tasks || [], at: Date.now(), failed: false });
       // keep it on the phone; never touch changes still waiting to be saved there
       let old = null; try { old = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`); } catch { /* ignore */ }
       if (!old?.outbox?.length) {
         try {
-          localStorage.setItem(`paran.cache.${id}`, JSON.stringify({ ...(old || {}), items: d.items, locations: d.locations, members: old?.members || [], log: old?.log || [], outbox: [] }));
+          localStorage.setItem(`paran.cache.${id}`, JSON.stringify({ ...(old || {}), items: d.items, locations: d.locations, members: d.members || old?.members || [], tasks: d.tasks || old?.tasks || [], log: old?.log || [], outbox: [] }));
           localStorage.setItem(`paran.xat.${id}`, String(m.at));
         } catch { /* storage full: still searchable this session */ }
       }

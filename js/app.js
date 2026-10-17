@@ -10,7 +10,7 @@ import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeI
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { scanLabel } from './qrscan.js';
-import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml } from './events.js';
+import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml, toggleTaskDone } from './events.js';
 
 const MODE_KEY = `paran.mode`;
 const RECENT_LOC_KEY = `paran.recentLocs`;
@@ -1022,6 +1022,7 @@ function viewFind(view) {
     if (xc) { e.preventDefault(); return switchTo(xc.dataset.xinv, { hash: `#/item/${xc.dataset.xitem}` }); }
     const xo = e.target.closest(`[data-xopen]`);
     if (xo) { e.preventDefault(); await openGroupInventories(xo.dataset.xopen); return renderResults(); }
+    const td = e.target.closest(`[data-taskdone]`); if (td) { e.preventDefault(); toggleTaskDone(td.dataset.taskdone); return renderResults(); }
     const p = e.target.closest(`[data-person]`); if (p) { e.preventDefault(); return personSheet(p.dataset.person); }
     const s = e.target.closest(`[data-show]`); if (s) { e.preventDefault(); findState.filter = s.dataset.show; renderResults(); return window.scrollTo(0, 0); }
     const q2 = e.target.closest(`[data-quick]`);
@@ -2485,8 +2486,8 @@ async function bringPeopleIntoGroup(gid) {
   const people = repo.members.filter((m) => m.role !== `removed` && m.role !== `owner` && m.email !== repo.user.email && !inGroup.has(m.email.toLowerCase()));
   if (!people.length) return;
   const list = people.map((m) => `${m.email} (${m.role === `viewer` ? `can view` : `can edit`})`).join(`, `);
-  if (!(await confirmSheet(`Add ${people.length === 1 ? `them` : `${people.length} people`} to ${g.name}?`,
-    `${invName()} is shared with ${list}. In ${g.name}, people have access to the whole group: all its inventories and events. Add ${people.length === 1 ? `them` : `them`} to ${g.name} with the same access?`, `Add to the group`))) return;
+  if (!(await confirmSheet(`Give ${people.length === 1 ? `them` : `${people.length} people`} all of ${g.name}?`,
+    `${invName()} is shared with ${list}. They keep ${invName()} either way. Also give them the whole group (all its inventories and its events) with the same access?`, `Give whole group`))) return;
   let n = 0;
   for (const m of people) { try { await inviteToGroup(repo.user, gid, m.email, m.role === `viewer` ? `reader` : `writer`); n++; } catch (e) { toast(`Couldn’t add ${m.email}: ${e.message}`); } }
   if (n) toast(`${n} added to ${g.name}`);
@@ -2646,21 +2647,27 @@ function viewMore(view, r) {
         <button data-m="join">${icon(`download`)} Open one shared with you</button>
       </div></div>`;
   } else if (page === `people` && g && grp) {
-    // In a group, access is the group's: everyone in it can open all its inventories and events.
+    // Two kinds of access: the whole group (all its inventories and its events), or just this inventory.
     const gp = (grp.people || []).filter((p) => p.role !== `removed`);
     const inGroup = new Set(gp.map((p) => p.email.toLowerCase()));
-    const only = repo.members.filter((m) => m.role !== `removed` && m.role !== `owner` && !inGroup.has(m.email.toLowerCase()));
+    const only = repo.members.filter((m) => m.role !== `removed` && !inGroup.has(m.email.toLowerCase()));
+    const invOwner = repo.backend.canShare; const canInvite = grp.owner || invOwner;
+    const rowFor = (email, role, kind) => { const tap = email !== repo.user.email && role !== `owner` && (kind === `group` ? grp.owner : invOwner);
+      return `<${tap ? `button type="button" ${kind === `group` ? `data-gaccess` : `data-access`}="${esc(email)}"` : `div`} class="list-row${tap ? ` tap` : ``}">${icon(`users`)}<span>${esc(email)}${email === repo.user.email ? ` <small>(you)</small>` : ``}</span><small>${roleLabel(role)}</small>${tap ? icon(`chevron`) : ``}</${tap ? `button` : `div`}>`; };
     view.innerHTML = `<div class="more">${head(`People & access`)}
-      <p class="muted small">${esc(invName())} is in <a href="#/group/${esc(gid)}">${esc(grp.name)}</a>. Everyone below can open all of ${esc(grp.name)}’s inventories and events. ${grp.owner ? `Tap someone to change what they can do.` : ``}</p>
-      <div class="list">${gp.map((p) => { const tap = grp.owner && p.email !== repo.user.email && p.role !== `owner`;
-        return `<${tap ? `button type="button" data-gaccess="${esc(p.email)}"` : `div`} class="list-row${tap ? ` tap` : ``}">${icon(`users`)}<span>${esc(p.email)}${p.email === repo.user.email ? ` <small>(you)</small>` : ``}</span><small>${roleLabel(p.role)}</small>${tap ? icon(`chevron`) : ``}</${tap ? `button` : `div`}>`; }).join(``)}</div>
-      ${grp.owner ? `<form class="inline-new invite-form" id="ginvite"><input type="email" placeholder="Their Google email" required>${roleSelect()}<button class="btn primary">Invite</button></form>
-        <p class="fine"><b>Can edit</b>: add, move, lend and change things. <b>Can view</b>: search and browse only. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick “${esc(grp.name)} – directory”.</p>`
-        : `<p class="fine">${esc(grp.name)}’s owner can invite people.</p>`}
-      ${only.length ? `<div class="label-sm">Only has ${esc(invName())}</div>
-        <div class="list">${only.map((m) => `<div class="list-row">${icon(`users`)}<span>${esc(m.email)}</span><small>${roleLabel(m.role)}</small>
-          ${grp.owner ? `<button type="button" class="btn small ghost" data-togroup="${esc(m.email)}" data-role="${esc(m.role)}">Add to group</button>` : ``}</div>`).join(``)}</div>
-        <p class="fine">They were given ${esc(invName())} before it joined ${esc(grp.name)}. Add them to the group so they see its events too.</p>` : ``}
+      <div class="label-sm first">Everyone in ${esc(grp.name)}</div>
+      <p class="fine">All of <a href="#/group/${esc(gid)}">${esc(grp.name)}</a>’s inventories, and its events.</p>
+      <div class="list">${gp.map((p) => rowFor(p.email, p.role, `group`)).join(``)}</div>
+      <div class="label-sm">Only ${esc(invName())}</div>
+      <p class="fine">Just this inventory. They don’t see ${esc(grp.name)}’s events, but anything they’re asked to bring shows on their home screen.</p>
+      ${only.length ? `<div class="list">${only.map((m) => `<div class="only-row">${rowFor(m.email, m.role, `inv`)}${grp.owner && m.role !== `owner` ? `<button type="button" class="btn small ghost" data-togroup="${esc(m.email)}" data-role="${esc(m.role)}">Give whole group</button>` : ``}</div>`).join(``)}</div>` : `<p class="muted small pad">Nobody yet.</p>`}
+      ${canInvite ? `<div class="label-sm">Invite</div>
+        <form class="invite-form stack" id="pinvite"><input type="email" placeholder="Their Google email" required>
+          <div class="inline-new">
+            <select name="scope" aria-label="Access to">${grp.owner ? `<option value="group">Whole ${esc(grp.name)}</option>` : ``}${invOwner ? `<option value="inv">Only ${esc(invName())}</option>` : ``}</select>
+            ${roleSelect()}<button class="btn primary">Invite</button></div></form>
+        <p class="fine"><b>Can edit</b>: add, move, lend and change things. <b>Can view</b>: search and browse only. They open ${esc(CONFIG.APP_NAME)}, sign in, choose “Open one shared with you” and pick ${grp.owner ? `“${esc(grp.name)} – directory” (whole group) or ` : ``}“${esc(invName())}”.</p>`
+        : `<p class="fine">The owner can invite people.</p>`}
     </div>`;
   } else if (page === `people` && g) {
     const owner = repo.backend.canShare;
@@ -2725,9 +2732,15 @@ function viewMore(view, r) {
   }
 
   view.onsubmit = async (e) => {
-    if (e.target.id === `ginvite`) { // People page of an inventory in a group: invite to the group
+    if (e.target.id === `pinvite`) { // People page of an inventory in a group: invite to the group or just this inventory
       e.preventDefault();
-      const input = e.target.querySelector(`input`); const role = e.target.querySelector(`select`)?.value || `writer`;
+      const input = e.target.querySelector(`input`); const role = e.target.querySelector(`select[name=role]`)?.value || `writer`;
+      if (e.target.querySelector(`select[name=scope]`)?.value === `inv`) {
+        const btn0 = e.target.querySelector(`button`); btn0.disabled = true;
+        try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${invName()} only (${role === `reader` ? `can view` : `can edit`})`); render(); }
+        catch (err) { toast(`Couldn’t invite: ${err.message}`); btn0.disabled = false; }
+        return;
+      }
       const btn = e.target.querySelector(`button`); btn.disabled = true;
       try { await inviteToGroup(repo.user, gid, input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${grp.name} (${role === `reader` ? `can view` : `can edit`})`); render(); }
       catch (err) { toast(`Couldn’t invite: ${err.message}`); btn.disabled = false; }

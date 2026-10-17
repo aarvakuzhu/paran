@@ -157,6 +157,10 @@ export const drive = {
   move(fileId, toParent, fromParents) {
     return api(`${DRIVE}/files/${fileId}?addParents=${toParent}&removeParents=${fromParents}&fields=id,parents`, { method: `PATCH`, ...jsonBody({}) });
   },
+  /** Set some of a file's app properties (others are kept). */
+  setProps(fileId, props) {
+    return api(`${DRIVE}/files/${fileId}?fields=id`, { method: `PATCH`, ...jsonBody({ appProperties: props }) });
+  },
   meta(fileId) {
     return api(`${DRIVE}/files/${fileId}?fields=id,name,owners(emailAddress),parents,appProperties,webViewLink,capabilities(canEdit)`);
   },
