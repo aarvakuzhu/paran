@@ -6,6 +6,7 @@
 // Other inventories are read from this phone's copy (refreshed in the background), the same way search across them works.
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon } from './ui.js';
 import { aiReady, planEvent, aiTally } from './ai.js';
+import { count as statCount } from './stats.js';
 import { search, findDuplicates } from './search.js';
 import { loadKnown } from './inventories.js';
 import { Repo } from './store.js';
@@ -459,6 +460,7 @@ function dayBody(ev, st, canEdit) {
 /** Tick a line (or one person's part of it) as here, or untick it. */
 function tickLine(lineId, who) {
   const repo = R(); const l = repo.eventLines.find((x) => x.id === lineId); if (!l) return;
+  statCount(`dayof`);
   const need = needOf(l); let got = repo.gotOf(l);
   if (who) {
     const share = shares(l).find((b) => b.name.toLowerCase() === who.toLowerCase())?.qty || need;
@@ -602,6 +604,7 @@ function pickPlaceIn(inv, title) {
 
 async function afterAction(ev, lineId, act) {
   const repo = R(); const l = repo.eventLines.find((x) => x.id === lineId); if (!l) return;
+  statCount(`after`);
   const name = lineName(l, lineState(l));
   const { list, notOnPhone } = itemsOfLine(l);
   const later = notOnPhone.length ? ` ${notOnPhone.map(invNameOf).join(`, `)} isn’t on this phone yet: include it to update its items too.` : ``;

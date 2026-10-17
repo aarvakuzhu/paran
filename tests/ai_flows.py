@@ -168,10 +168,14 @@ async def main():
         print('  card:', card)
         await pg.screenshot(path=f'{SP}/a1-card.png', full_page=True)
         check('Event lists used 1 time · 4 of 5 suggestions added' in card, 'event list: offered vs added')
-        check('Matched to your items kept as suggested 4 of 4' in card, 'event list matches counted')
-        check('Receipts used 1 time · 3 of 4 suggestions added' in card and 'Names kept as suggested 2 of 3' in card, 'receipt: renamed line counted as changed')
+        check('Matched to your items 100% right 4 of 4 saved as suggested' in card, 'event list matches counted')
+        check('Receipts used 1 time · 3 of 4 suggestions added' in card and 'Names 92% right 2 of 3 saved as suggested' in card, 'receipt: a word added to one name gets part marks (1 + 1 + 0.77 of 3)')
         check('Receipts that added up 1 of 1' in card, 'receipt total check counted')
-        check('Photos used 1 time · 1 of 1' in card and 'Names kept as suggested 0 of 1' in card and 'What it’s for kept as suggested 1 of 1' in card, 'photo: changed name vs kept purpose')
+        st = await pg.evaluate("JSON.parse(localStorage.getItem('paran.stats'))")
+        d = list(st['days'].values())[0]
+        print('  stats today:', json.dumps(d['c']), json.dumps(d['ai'])[:200])
+        check(d['ai'].get('receipt', {}).get('uses') == 1 and d['ai'].get('plan', {}).get('uses') == 1 and d['c'].get('add', 0) >= 3, 'usage counts picked up AI uses and adds')
+        check('Photos used 1 time · 1 of 1' in card and 'Names 57% right 0 of 1 saved as suggested' in card and 'What it’s for 100% right 1 of 1' in card, 'photo: Stud finder → Stud sensor is half right; purpose kept')
         c = await cache()
         rows = [l for l in c['log'] if l['action'] == 'ai']
         check(len(rows) == 3 and all(r['itemId'] == '' for r in rows), 'one History row per use of AI')

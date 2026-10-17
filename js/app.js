@@ -6,10 +6,11 @@ import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
-import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally } from './ai.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally, aiScore } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
+import { count as statCount, snapshot as statSnapshot, sendStats, statsOn, setStatsOn, statsData } from './stats.js';
 import { scanLabel } from './qrscan.js';
 import { initEvents, viewEvents, viewEvent, eventCard, splitEvents, neededForHtml, linkLineToItem, redrawOpenAddSheet, myJobsHtml, toggleTaskDone } from './events.js';
 
@@ -166,6 +167,7 @@ const roleLabel = (role) => (role === `owner` ? `Owner` : role === `viewer` ? `C
 const roleSelect = () => `<select name="role" aria-label="Access"><option value="writer">Can edit</option><option value="reader">Can view</option></select>`;
 
 function onRepoChange() {
+  statsSnapshot(); // the first one waits for data from Google; then at most every 10 minutes
   const r = route().name;
   if (r === `find`) { renderResults(); return; }
   if (r === `add` || r === `edit`) return; // never wipe a form mid-edit
@@ -309,6 +311,7 @@ function goBack(fallback = `#/`) {
 
 function render() {
   if (!repo || !$(`#view`)) return;
+  statsSnapshot(); // at most every 10 minutes
   const r = route();
   const routeChanged = location.hash !== lastHash;
   if (routeChanged) {
@@ -1014,7 +1017,7 @@ function viewFind(view) {
   const searching = () => top.classList.toggle(`searching`, document.activeElement === q || Boolean(findState.q.trim() || findState.filter.startsWith(`cat:`)));
   q.addEventListener(`focus`, searching);
   q.addEventListener(`blur`, () => setTimeout(searching, 250)); // let a chip tap land first
-  q.addEventListener(`input`, () => { findState.q = q.value; if (!q.value.trim()) xdrop.clear(); renderResults(); });
+  q.addEventListener(`input`, () => { findState.q = q.value; if (!q.value.trim()) xdrop.clear(); renderResults(); countSearchSoon(q.value); });
   $(`#scopes`).addEventListener(`click`, (e) => {
     const c = e.target.closest(`[data-scope]`); if (!c) return;
     const id = c.dataset.scope; if (xdrop.has(id)) xdrop.delete(id); else xdrop.add(id);
@@ -2344,6 +2347,58 @@ function aiConsent(keyOnly = false) {
   });
 }
 
+// ============================================================ Usage stats (kept on this phone; see stats.js)
+let searchTimer = 0; let lastSearch = ``;
+/** A search counts once the person stops typing for a moment (not every letter). */
+function countSearchSoon(v) {
+  clearTimeout(searchTimer);
+  const q = v.trim().toLowerCase(); if (q.length < 2) return;
+  searchTimer = setTimeout(() => { if (q !== lastSearch) { lastSearch = q; statCount(`search`); } }, 1500);
+}
+let appVersion = ``;
+function askVersion() {
+  const c = navigator.serviceWorker?.controller; if (!c || appVersion) return;
+  navigator.serviceWorker.addEventListener(`message`, (e) => { if (e.data?.version) appVersion = e.data.version; });
+  c.postMessage(`version`);
+}
+let lastSnap = 0;
+/** What this phone looks like today: inventories, groups (members, viewers, items, events), AI on. Throttled. */
+function statsSnapshot() {
+  if (!repo || !statsOn() || Date.now() - lastSnap < 10 * 60_000) return;
+  const google = repo.backend.kind === `google`;
+  if (google && !repo.loadedAt) return; // wait until this inventory has loaded from Google
+  lastSnap = Date.now(); askVersion();
+  const k = google ? loadKnown(repo.user.email) : { inv: {}, groups: {} };
+  const itemsOf = (id) => (id === repo.backend.sheetId ? repo.activeItems().length : cachedCount(id) || 0);
+  const groups = Object.entries(k.groups).map(([gid, g]) => {
+    const invs = Object.entries(k.inv).filter(([, i]) => i.groupId === gid).map(([id]) => id);
+    return { id: gid, members: g.people || [], inventories: invs.length, items: invs.reduce((a, id) => a + itemsOf(id), 0),
+      events: repo.group()?.id === gid ? repo.liveEvents().filter((e) => e._g).length : 0 };
+  });
+  setTimeout(() => statSnapshot({ version: appVersion, mode: repo.backend.kind, inventories: google ? Object.keys(k.inv).length : 1, aiOn: aiReady(), groups })
+    .then(() => sendStats()).catch(() => {}), 1500); // the version answer arrives just after asking
+}
+
+function statsPage() {
+  const s = statsData();
+  const days = s ? Object.entries(s.days).sort(([a], [b]) => b.localeCompare(a)) : [];
+  const week = days.slice(0, 7);
+  const sum = (key) => week.reduce((a, [, d]) => a + (d.c?.[key] || 0), 0);
+  const LABEL = { open: `Days opened`, add: `Items added`, addMore: `More of an item`, move: `Moves`, lend: `Lends and reservations`, return: `Returns`, edit: `Edits`, remove: `Removed`,
+    search: `Searches`, event: `Events created`, dayof: `Day-of ticks`, after: `After-event actions` };
+  const aiUses = week.reduce((a, [, d]) => a + Object.values(d.ai || {}).reduce((x, y) => x + y.uses, 0), 0);
+  return `<div class="menu">
+      <label class="menu-switch"><span>Keep usage counts on this phone</span><span class="switch"><input type="checkbox" data-stats ${statsOn() ? `checked` : ``}><i></i></span></label>
+    </div>
+    <p class="fine">Counts only: how often things are added, searched or lent, how many inventories and people a group has, how well AI did. Never names, emails, items, places or photos. They stay on this phone; nothing has been sent${CONFIG.STATS_URL ? `` : `, and nothing will be until Paran says so here first`}.</p>
+    ${s ? `<div class="acc-card">
+      <div class="acc-head"><b>Last 7 days on this phone</b><small>${days.length} day${days.length === 1 ? `` : `s`} kept (up to 120)</small></div>
+      <div class="stat-grid">${Object.keys(LABEL).filter((k) => sum(k)).map((k) => `<div><b>${sum(k)}</b><span>${esc(LABEL[k])}</span></div>`).join(``) || `<p class="muted small">Nothing counted yet.</p>`}
+        ${aiUses ? `<div><b>${aiUses}</b><span>Uses of AI</span></div>` : ``}</div>
+      <details><summary class="small">See exactly what’s kept</summary><pre class="stats-raw">${esc(JSON.stringify(s, null, 1))}</pre></details>
+    </div>` : ``}`;
+}
+
 // ============================================================ How accurate AI has been
 // Added up from the "ai" rows in History (one per use of AI: what it offered and what was kept) and from later edits
 // to fields AI filled, across every inventory with a copy on this phone. Nothing is sent anywhere.
@@ -2358,7 +2413,7 @@ function aiAccuracy() {
       try { const c = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`); if (c?.log?.length) logs.push(c.log); } catch { /* ignore */ }
     }
   }
-  const acc = {}; let aiNamed = 0, renamed = 0;
+  const acc = {}; let aiNamed = 0, renamed = 0, laterScore = 0;
   for (const log of logs) {
     const named = new Set();
     for (const e of [...log].sort((a, b) => String(a.ts).localeCompare(String(b.ts)))) {
@@ -2366,28 +2421,33 @@ function aiAccuracy() {
       if (e.action === `ai` && ch.ai) {
         const g = acc[ACC_GROUP[ch.ai] || ch.ai] ||= { uses: 0, n: 0, t: 0, f: {}, sum: { ok: 0, gap: 0 } };
         g.uses++; g.n += Number(ch.n) || 0; g.t += Number(ch.t) || 0;
-        for (const [k, [kept, changed]] of Object.entries(ch.f || {})) { g.f[k] ||= [0, 0]; g.f[k][0] += kept; g.f[k][1] += changed; }
+        for (const [k, [kept, changed, score]] of Object.entries(ch.f || {})) {
+          g.f[k] ||= [0, 0, 0]; g.f[k][0] += kept; g.f[k][1] += changed; g.f[k][2] += score ?? kept; // older rows: unchanged = right
+        }
         if (ch.sum === `ok` || ch.sum === `gap`) g.sum[ch.sum]++;
       } else if (e.action === `added` && Array.isArray(ch._ai) && ch._ai.includes(`name`)) { named.add(e.itemId); aiNamed++; }
-      else if (e.itemId && named.has(e.itemId) && `name` in ch) { renamed++; named.delete(e.itemId); }
+      else if (e.itemId && named.has(e.itemId) && `name` in ch) { renamed++; laterScore += aiScore(`name`, ch.name[0], ch.name[1]); named.delete(e.itemId); }
     }
   }
-  return { acc, aiNamed, renamed, inventories: logs.length };
+  return { acc, aiNamed, renamed, laterScore, inventories: logs.length };
 }
 function aiAccuracyHtml() {
-  const { acc, aiNamed, renamed, inventories } = aiAccuracy();
+  const { acc, aiNamed, renamed, laterScore, inventories } = aiAccuracy();
   const groups = Object.entries(acc);
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const bar = (label, a, b) => `<div class="acc-row"><span>${esc(label)}</span><b>${a} of ${b}</b><small>${pct(a, b)}%</small><i style="--p:${pct(a, b)}%"></i></div>`;
+  // weighted: how right it was on average; the count says how often it needed no change at all
+  const wbar = (label, kept, total, score, as = `saved as suggested`) => `<div class="acc-row"><span>${esc(label)}</span><b>${pct(score, total)}% right</b><small></small>
+    <i style="--p:${pct(score, total)}%"></i><em>${kept} of ${total} ${as}</em></div>`;
   return `<div class="label-sm">How accurate it’s been</div>
     ${groups.length ? `<div class="acc-card">${groups.map(([label, g]) => `<div class="acc-g">
         <div class="acc-head"><b>${esc(label)}</b><small>used ${g.uses} time${g.uses === 1 ? `` : `s`} · ${g.t} of ${g.n} suggestions added</small></div>
-        ${Object.entries(g.f).map(([k, [kept, changed]]) => bar(`${ACC_FIELD[k] || k} kept as suggested`, kept, kept + changed)).join(``)}
+        ${Object.entries(g.f).map(([k, [kept, changed, score]]) => wbar(ACC_FIELD[k] || k, kept, kept + changed, score)).join(``)}
         ${g.sum.ok + g.sum.gap ? bar(`Receipts that added up`, g.sum.ok, g.sum.ok + g.sum.gap) : ``}
       </div>`).join(``)}
-      ${aiNamed ? `<div class="acc-g">${bar(`AI names not changed later`, aiNamed - renamed, aiNamed)}</div>` : ``}
+      ${aiNamed ? `<div class="acc-g">${wbar(`AI names, weeks later`, aiNamed - renamed, aiNamed, aiNamed - renamed + laterScore, `never renamed`)}</div>` : ``}
       </div>
-      <p class="fine">From History in ${inventories} inventor${inventories === 1 ? `y` : `ies`} on this phone, counting everyone who uses ${inventories === 1 ? `it` : `them`}. “Kept” means saved without changing it. Nothing is sent anywhere.</p>`
+      <p class="fine">From History in ${inventories} inventor${inventories === 1 ? `y` : `ies`} on this phone, counting everyone who uses ${inventories === 1 ? `it` : `them`}. “% right” gives part marks for small fixes (a word added, 9 instead of 10); a different item or a wrong match counts as 0. Nothing is sent anywhere.</p>`
     : `<p class="fine">Nothing yet. Each time AI suggests something (a photo, a receipt, an event list), what you keep or change is noted in the inventory’s History, and the numbers show here.</p>`}`;
 }
 
@@ -2795,6 +2855,8 @@ function viewMore(view, r) {
           <button class="btn primary" data-m="aion">Set it up</button></div></div>`}
       ${aiAccuracyHtml()}
     </div>`;
+  } else if (page === `stats`) {
+    view.innerHTML = `<div class="more">${head(`Usage counts`)}${statsPage()}</div>`;
   } else if (page === `data`) {
     // The sheets are the owner's: only owners get links to them. Data is spread over sheets, so each link says what's in it.
     const b = repo.backend; const grp = g ? repo.group() : null;
@@ -2836,6 +2898,7 @@ function viewMore(view, r) {
         ${g ? (() => { const n = grp ? (grp.people || []).filter((p) => p.role !== `removed`).length : members.length;
           return row(`#/more/people`, `users`, `People & access`, `${n} ${n === 1 ? `person` : `people`}${grp ? ` in ${grp.name}` : ``} · you: ${myRole.toLowerCase()}`); })() : ``}
         ${row(`#/more/ai`, `spark`, `AI suggestions`, aiReady() ? `On` : `Off`)}
+        ${row(`#/more/stats`, `info`, `Usage counts`, statsOn() ? `Kept on this phone, not sent` : `Off`)}
         ${row(`#/more/data`, `sheet`, `Your data`, g && (repo.backend.isOwner || repo.group()?.owner) ? `Google Sheets, download, refresh` : `Download, refresh`)}
         <button data-m="about" class="more-row">${icon(`info`)}<span><b>About ${esc(CONFIG.APP_NAME)}</b></span>${icon(`chevron`)}</button>
       </div>
@@ -2871,6 +2934,7 @@ function viewMore(view, r) {
     finally { btn.disabled = false; }
   };
   $(`[data-aiauto]`, view)?.addEventListener(`change`, (e) => saveAiSettings({ auto: e.target.checked }));
+  $(`[data-stats]`, view)?.addEventListener(`change`, (e) => { setStatsOn(e.target.checked); lastSnap = 0; if (e.target.checked) statsSnapshot(); setTimeout(render, 1700); });
   if (r?.params?.get(`ai`) === `1` && !aiReady()) setTimeout(() => aiConsent().then((ok) => ok && render()), 50);
 
   view.onclick = async (e) => {

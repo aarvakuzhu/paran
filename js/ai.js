@@ -200,9 +200,41 @@ export async function scanPhotos(images, { categories = [], location = `` } = {}
 
 // ---------------- how often suggestions are kept (for the accuracy card; nothing leaves the inventory's History)
 const norm = (v) => String(v ?? ``).trim().toLowerCase().replace(/\s+/g, ` `);
+function editDistance(a, b) {
+  if (a === b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+const CHOICE_FIELDS = new Set([`match`, `line`, `pick`, `category`, `size`]); // picked from a list: right or wrong
+/**
+ * How close a suggestion was to what was saved, 0 to 1. Numbers: 9 for 10 is 0.9. Text: the average of letter-level
+ * closeness and shared words, so "Folding table, 6 ft" saved as "Folding table, 6 ft, Lifetime" scores about 0.8,
+ * and a different thing scores near 0. Choices from a list (which item, which event line) are 1 or 0.
+ */
+export function aiScore(field, suggested, saved) {
+  const a = norm(suggested), b = norm(saved);
+  if (a === b) return 1;
+  if (!a || !b || CHOICE_FIELDS.has(field)) return 0;
+  const na = Number(a), nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return Math.round(Math.max(0, 1 - Math.abs(na - nb) / Math.max(Math.abs(na), Math.abs(nb), 1)) * 1000) / 1000;
+  const chars = 1 - editDistance(a, b) / Math.max(a.length, b.length);
+  const split = (x) => [...new Set(x.split(/[^\p{L}\p{N}]+/u).filter(Boolean))];
+  const wa = split(a), wb = split(b);
+  // a word counts as shared when it's the same or nearly (a typo fixed, a plural): towl ~ towels, but finder ≠ sensor
+  const near = (x, y) => x === y || (Math.min(x.length, y.length) >= 3 && 1 - editDistance(x, y) / Math.max(x.length, y.length) >= 0.6);
+  const shared = wa.filter((w) => wb.some((v) => near(w, v))).length;
+  const words = wa.length + wb.length ? Math.min(1, (2 * shared) / (wa.length + wb.length)) : 0;
+  return Math.round(((chars + words) / 2) * 1000) / 1000;
+}
 /**
  * rows: [{ taken, sug: { field: suggested }, fin: { field: saved } }]. Returns { n: offered, t: taken,
- * f: { field: [kept, changed] } }, counting only fields the AI actually suggested, on rows the person kept.
+ * f: { field: [unchanged, changed, score] } } where score adds up aiScore over the kept rows, counting only fields
+ * the AI actually suggested.
  */
 export function aiTally(rows, fields) {
   const f = {}; let t = 0;
@@ -210,7 +242,8 @@ export function aiTally(rows, fields) {
     if (!r.taken) continue; t++;
     for (const k of fields) {
       const s = r.sug?.[k]; if (s === undefined || s === null || s === ``) continue;
-      f[k] ||= [0, 0]; f[k][norm(s) === norm(r.fin?.[k]) ? 0 : 1]++;
+      const sc = aiScore(k, s, r.fin?.[k]);
+      f[k] ||= [0, 0, 0]; f[k][sc === 1 ? 0 : 1]++; f[k][2] = Math.round((f[k][2] + sc) * 1000) / 1000;
     }
   }
   return { n: rows.length, t, f };

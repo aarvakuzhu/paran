@@ -4,6 +4,7 @@
 import { CONFIG } from './config.js';
 import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
+import { count as statCount, countAi, uncounted } from './stats.js';
 import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow, loadKnown, paranRoot, tidyIntoRoot, discover } from './inventories.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
@@ -454,7 +455,7 @@ export class Repo extends EventTarget {
     this.label = info.label;
     this.loadCache();
     this.emit();
-    if (this.backend.kind === `demo` && !this.items.length && !this.locations.length) this.seedDemo();
+    if (this.backend.kind === `demo` && !this.items.length && !this.locations.length) await uncounted(() => this.seedDemo()); // sample data isn't usage
     this.refresh();
     return info;
   }
@@ -527,6 +528,7 @@ export class Repo extends EventTarget {
         }
         const pendingLog = this.outbox.filter((o) => o.kind === `log` && !o.sheet).map((o) => o.data); // not other inventories' entries
         this.log = [...(data.log || []), ...pendingLog];
+        this.loadedAt = Date.now(); // fresh from Google (usage counts wait for this, not the phone's older copy)
         this.saveCache(); this.emit();
         const t = await this.backend.fetchThumbs();
         if (t) { this.thumbs = { ...this.thumbs, ...t }; this.saveCache(); this.emit(); }
@@ -710,6 +712,10 @@ export class Repo extends EventTarget {
   // ---------------- mutations
   async saveItem(fields, { photo, thumb, logAction, detail, info, noLog = false, aiFields = [] } = {}) {
     const existing = fields.id && this.items.find((i) => i.id === fields.id);
+    { // counted before any await, so the demo's sample data (run uncounted) isn't counted
+      const a = logAction || (existing ? `edited` : `added`);
+      statCount({ added: `add`, moved: `move`, lent: `lend`, reserved: `lend`, returned: `return`, removed: `remove`, missing: `missing`, found: `found` }[a] || (String(a).startsWith(`qty+`) ? `addMore` : `edit`));
+    }
     const before = existing ? { ...existing } : null;
     const item = existing ? { ...existing, ...fields } : {
       id: uid(), name: ``, purpose: ``, category: ``, tags: ``, locationId: ``, qty: 1, status: `home`, lentTo: ``, dueAt: ``, size: ``, photos: ``,
@@ -739,6 +745,7 @@ export class Repo extends EventTarget {
    */
   logAi(kind, stats, info = ``) {
     if (this.readOnly || !stats?.n) return;
+    countAi(kind, stats);
     const entry = { ts: now(), itemId: ``, action: `ai`, detail: kind, by: this.user.email, info, changes: JSON.stringify({ ai: kind, ...stats }) };
     this.log.push(entry); this.outbox.push({ kind: `log`, data: entry });
     this.saveCache(); this.flush();
@@ -952,6 +959,7 @@ export class Repo extends EventTarget {
     const ev = existing ? { ...existing, ...fields } : {
       id: uid(), name: ``, date: ``, notes: ``, createdBy: this.user.email, createdAt: now(), deleted: ``, ...fields, ...(isGroup ? { _g: 1 } : {}),
     };
+    if (!existing) statCount(`event`);
     ev.updatedAt = now(); ev.updatedBy = this.user.email;
     if (existing) Object.assign(existing, ev); else this.events.push(ev);
     this.writeEventRow(`event`, ev);

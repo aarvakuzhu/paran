@@ -6,6 +6,7 @@ export const CONFIG = {
   APP_ID: `329365162340`,          // Google Cloud project NUMBER (digits only), used by the Picker
 
   APP_NAME: `Paran`,
+  STATS_URL: ``, // usage stats endpoint (an Apps Script web app). Empty = kept on the phone, never sent.
   // Names used when creating a NEW inventory. Existing ones are found by their Drive tag
   // (appProperties.stash), never by name, so inventories created as "Stash" keep working unchanged.
   ROOT_FOLDER_NAME: `Paran Inventory`,
