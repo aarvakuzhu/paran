@@ -102,14 +102,15 @@ export async function paranRoot(user) {
 export async function tidyIntoRoot(user) {
   const flag = `paran.tidied.${user.email}`;
   if (localStorage.getItem(flag)) return 0;
-  const rootId = await paranRoot(user);
-  const myDrive = (await drive.meta(rootId)).parents?.[0];
+  // Only what this person owns; nothing to move = no Paran folder made (a viewer's Drive stays untouched).
+  const [groups, invs] = await Promise.all([drive.findTagged(`group`), drive.findTagged(`root`)]);
+  const mine = [...groups, ...invs].filter((f) => f.owners?.some((o) => o.emailAddress === user.email));
   let moved = 0;
-  if (myDrive) {
-    const [groups, invs] = await Promise.all([drive.findTagged(`group`), drive.findTagged(`root`)]);
-    for (const f of [...groups, ...invs]) {
-      if (!f.owners?.some((o) => o.emailAddress === user.email)) continue;
-      if (!(f.parents || []).includes(myDrive)) continue;
+  if (mine.length) {
+    const rootId = await paranRoot(user);
+    const myDrive = (await drive.meta(rootId)).parents?.[0];
+    for (const f of mine) {
+      if (!myDrive || !(f.parents || []).includes(myDrive)) continue;
       await drive.move(f.id, rootId, f.parents.join(`,`)); moved++;
     }
   }

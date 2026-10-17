@@ -1,6 +1,6 @@
 import { CONFIG } from './config.js';
 import { googleConfigured, pickerConfigured, signIn, signOut, hasValidToken, tokenTimeLeft, pickSheets, AuthError } from './google.js';
-import { loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory, groupAccess } from './inventories.js';
+import { paranRoot, loadKnown, saveKnown, rememberInventory, discover, cachedCount, remoteCount, createInventory, createGroup, addToGroup, inviteToGroup, renameInventory, identify, readDirectory, groupAccess } from './inventories.js';
 import { Repo } from './store.js';
 import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 import { blobs } from './idb.js';
@@ -2706,6 +2706,7 @@ function viewMore(view, r) {
     const b = repo.backend; const grp = g ? repo.group() : null;
     const ownInv = g && b.isOwner; const ownGroup = Boolean(grp?.owner);
     let rootId = null; try { rootId = g ? localStorage.getItem(`paran.root.${repo.user.email}`) : null; } catch { /* ignore */ }
+    if ((ownInv || ownGroup) && !rootId) paranRoot(repo.user).then(() => { if (route().name === `more`) render(); }).catch(() => {}); // new phone: find it
     const ext = (href, title, sub, ic = `sheet`) => `<a href="${esc(href)}" target="_blank" rel="noopener">${icon(ic)}<span class="menu-two"><b>${esc(title)}</b><small>${esc(sub)}</small></span></a>`;
     const owner = (repo.members || []).find((m) => m.role === `owner`)?.email;
     view.innerHTML = `<div class="more">${head(`Your data`)}

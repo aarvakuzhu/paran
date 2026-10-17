@@ -4,7 +4,7 @@
 import { CONFIG } from './config.js';
 import { drive, sheets, userinfo, AuthError } from './google.js';
 import { blobs } from './idb.js';
-import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow, loadKnown, paranRoot, tidyIntoRoot } from './inventories.js';
+import { createInventory as createInventoryFiles, readDirectory, rememberInventory, changeAccess, setRoleRow, loadKnown, paranRoot, tidyIntoRoot, discover } from './inventories.js';
 
 export const ITEM_COLS = [`id`, `name`, `purpose`, `category`, `tags`, `locationId`, `qty`, `status`, `lentTo`,
   `photoId`, `photoUrl`, `warranty`, `expiry`, `notes`, `addedBy`, `addedAt`, `updatedAt`, `updatedBy`, `deleted`, `thumb`,
@@ -184,7 +184,17 @@ class GoogleBackend {
     this.rootFolderId = this.isOwner ? (m.parents?.[0] || null) : null;
     this.sheetUrl = `https://docs.google.com/spreadsheets/d/${this.sheetId}/edit`;
     const k = rememberInventory(this.user.email, this.sheetId, { name: this.sheetName, owner: this.isOwner, reachable: true });
-    const g = k.inv[this.sheetId]?.groupId; this.groupDirId = (g && k.groups[g]?.dirId) || this.groupDirId || null;
+    let g = k.inv[this.sheetId]?.groupId; this.groupDirId = (g && k.groups[g]?.dirId) || this.groupDirId || null;
+    // The sheet says it's in a group this phone doesn't know yet (a new phone, or reopened after clearing): look for the
+    // group's directory. Found = this person has the group; not found = they have this inventory only (asked again in an hour).
+    const askKey = `paran.groupask.${this.user.email}.${this.sheetId}`;
+    if (this.inGroupName && !this.groupDirId && Date.now() - Number(localStorage.getItem(askKey) || 0) > 3600_000) {
+      try {
+        const k2 = await discover(this.user);
+        g = k2.inv[this.sheetId]?.groupId; this.groupDirId = (g && k2.groups[g]?.dirId) || null;
+        if (!this.groupDirId) localStorage.setItem(askKey, String(Date.now()));
+      } catch { /* offline: try next time */ }
+    }
     // inventories that joined a group before the label existed: the owner's app adds it
     if (g && this.isOwner && k.groups[g]?.name && this.inGroupName !== k.groups[g].name) {
       drive.setProps(this.sheetId, { groupName: k.groups[g].name }).then(() => { this.inGroupName = k.groups[g].name; }).catch(() => {});
