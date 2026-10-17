@@ -1872,10 +1872,6 @@ function viewPlace(view, r) {
 // ============================================================ Share with anyone (a copy via the phone's share sheet)
 const SHARE_SIGN = `Shared from Paran`;
 // Where this inventory lives, using the sheet's real name (older pilot inventories are still called "Stash").
-const driveWhere = (b) => b.isOwner
-  ? (b.sheetName ? `Everything is in your Google Drive, in the “${esc(b.sheetName)}” sheet and its folder.` : `Everything is in your Google Drive.`)
-  : `Everything is in the shared${b.sheetName ? ` “${esc(b.sheetName)}”` : ``} sheet.`;
-
 /** Phone share sheet → files if supported → text only → clipboard → a sheet to copy from. */
 async function shareOut({ title, text, file, files }) {
   const list = files || (file ? [file] : []);
@@ -2706,13 +2702,25 @@ function viewMore(view, r) {
           <button class="btn primary" data-m="aion">Set up AI suggestions</button></div></div>`}
     </div>`;
   } else if (page === `data`) {
+    // The sheets are the owner's: only owners get links to them. Data is spread over sheets, so each link says what's in it.
+    const b = repo.backend; const grp = g ? repo.group() : null;
+    const ownInv = g && b.isOwner; const ownGroup = Boolean(grp?.owner);
+    let rootId = null; try { rootId = g ? localStorage.getItem(`paran.root.${repo.user.email}`) : null; } catch { /* ignore */ }
+    const ext = (href, title, sub, ic = `sheet`) => `<a href="${esc(href)}" target="_blank" rel="noopener">${icon(ic)}<span class="menu-two"><b>${esc(title)}</b><small>${esc(sub)}</small></span></a>`;
+    const owner = (repo.members || []).find((m) => m.role === `owner`)?.email;
     view.innerHTML = `<div class="more">${head(`Your data`)}
+      ${ownInv || ownGroup ? `<div class="label-sm">In your Google Drive</div><div class="menu">
+        ${ownInv ? ext(b.sheetUrl, `“${b.sheetName || invName()}” sheet`, `Items, places, people, history and tasks for this inventory`) : ``}
+        ${ownGroup ? ext(`https://docs.google.com/spreadsheets/d/${grp.dirId}/edit`, `“${grp.name} – directory” sheet`, `The group’s events, its inventories and its people`) : ``}
+        ${rootId ? ext(`https://drive.google.com/drive/folders/${rootId}`, `Your Paran folder`, `Every group and inventory you own, with their photos`, `cloud`) : ``}
+      </div>
+      <p class="fine">These are the real data: fine to look at, print or keep as a backup. Make changes in ${esc(CONFIG.APP_NAME)}, though; editing rows or columns by hand can confuse the app.</p>` : ``}
       <div class="menu">
-        ${g ? `<a href="${esc(repo.backend.sheetUrl)}" target="_blank" rel="noopener">${icon(`sheet`)} Open the Google Sheet</a>` : ``}
-        <button data-m="csv">${icon(`download`)} Download spreadsheet (CSV)</button>
+        <button data-m="csv">${icon(`download`)} Download this inventory (CSV)</button>
         <button data-m="sync">${icon(`cloud`)} Refresh now</button>
       </div>
-      <p class="fine">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${g ? driveWhere(repo.backend) : `In demo mode, everything stays in this browser.`}</p>
+      <p class="fine">${esc(CONFIG.APP_NAME)} stores nothing on any server. ${!g ? `In demo mode, everything stays in this browser.`
+        : ownInv ? `` : `${esc(invName())} is kept in ${owner ? esc(owner) : `its owner`}’s Google Drive; only the owner opens its sheet. You can download a copy.`}</p>
     </div>`;
   } else {
     const total = repo.activeItems().length;
@@ -2733,7 +2741,7 @@ function viewMore(view, r) {
         ${g ? (() => { const n = grp ? (grp.people || []).filter((p) => p.role !== `removed`).length : members.length;
           return row(`#/more/people`, `users`, `People & access`, `${n} ${n === 1 ? `person` : `people`}${grp ? ` in ${grp.name}` : ``} · you: ${myRole.toLowerCase()}`); })() : ``}
         ${row(`#/more/ai`, `spark`, `AI suggestions`, aiReady() ? `On` : `Off`)}
-        ${row(`#/more/data`, `sheet`, `Your data`, g ? `Google Sheet, download, refresh` : `Download`)}
+        ${row(`#/more/data`, `sheet`, `Your data`, g && (repo.backend.isOwner || repo.group()?.owner) ? `Google Sheets, download, refresh` : `Download, refresh`)}
         <button data-m="about" class="more-row">${icon(`info`)}<span><b>About ${esc(CONFIG.APP_NAME)}</b></span>${icon(`chevron`)}</button>
       </div>
       <div class="menu">

@@ -1037,3 +1037,7 @@ body.readonly .edit-only { display: none !important; }
 .done-mark { color: var(--accent); }
 
 .bullets { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+
+.menu .menu-two { display: grid; gap: 2px; flex: 1; min-width: 0; text-align: left; justify-items: start; }
+.menu .menu-two small { text-align: left; margin: 0; }
+.menu-two small { color: var(--ink-2); font-weight: 400; }
