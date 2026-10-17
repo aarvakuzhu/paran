@@ -5,7 +5,7 @@
 //  - An inventory that isn't in a group keeps its own events in its own sheet (an inventory in a group can too).
 // Other inventories are read from this phone's copy (refreshed in the background), the same way search across them works.
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon } from './ui.js';
-import { aiReady, planEvent } from './ai.js';
+import { aiReady, planEvent, aiTally } from './ai.js';
 import { search, findDuplicates } from './search.js';
 import { loadKnown } from './inventories.js';
 import { Repo } from './store.js';
@@ -900,7 +900,8 @@ function planReview(ev, plan, by) {
     for (const e of searchPool(entries, l.name).slice(0, 3)) names.push(e.item.name);
     const cands = [...new Map(names.map((n) => [n.trim().toLowerCase(), n])).values()].filter((n) => by.has(n.trim().toLowerCase())).slice(0, 5);
     const dup = have.has(l.name.trim().toLowerCase());
-    return { ...l, cands, pick: l.matches[0] || (matchesFor(ev, l.name)[0]?.item.name ?? ``), on: !dup, dup };
+    const pick = l.matches[0] || (matchesFor(ev, l.name)[0]?.item.name ?? ``);
+    return { ...l, cands, pick, on: !dup, dup, _sug: { name: l.name, qty: l.qty, pick: pick || `none` } };
   });
   const where = (name) => {
     const g = by.get(name.trim().toLowerCase()); if (!g) return ``;
@@ -947,6 +948,7 @@ function planReview(ev, plan, by) {
         added.forEach((line, i) => { if (list[i].note && line) repo.saveLine({ id: line.id, note: list[i].note }, { quiet: true }); });
         n += added.length;
       }
+      repo.logAi(`plan`, aiTally(rows.filter((r) => !r.dup).map((r) => ({ taken: r.on, sug: r._sug, fin: { name: r.name, qty: r.qty, pick: r.pick || `none` } })), [`name`, `qty`, `pick`]), ev.name);
       close(); repo.emit?.();
       toast(`${n} added to ${ev.name}`);
     };

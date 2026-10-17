@@ -198,6 +198,24 @@ export async function scanPhotos(images, { categories = [], location = `` } = {}
   return clean(raw, 40).map((it, i) => ({ ...it, photo: Math.max(0, Math.min(n - 1, (parseInt(it._photo, 10) || 1) - 1)) }));
 }
 
+// ---------------- how often suggestions are kept (for the accuracy card; nothing leaves the inventory's History)
+const norm = (v) => String(v ?? ``).trim().toLowerCase().replace(/\s+/g, ` `);
+/**
+ * rows: [{ taken, sug: { field: suggested }, fin: { field: saved } }]. Returns { n: offered, t: taken,
+ * f: { field: [kept, changed] } }, counting only fields the AI actually suggested, on rows the person kept.
+ */
+export function aiTally(rows, fields) {
+  const f = {}; let t = 0;
+  for (const r of rows) {
+    if (!r.taken) continue; t++;
+    for (const k of fields) {
+      const s = r.sug?.[k]; if (s === undefined || s === null || s === ``) continue;
+      f[k] ||= [0, 0]; f[k][norm(s) === norm(r.fin?.[k]) ? 0 : 1]++;
+    }
+  }
+  return { n: rows.length, t, f };
+}
+
 // ---------------- event from words
 const PLAN_SCHEMA = {
   type: `OBJECT`,

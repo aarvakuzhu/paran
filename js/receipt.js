@@ -1,7 +1,7 @@
 // A photo of a receipt → items in the inventory, with price, store and date, matched to what's already there and to
 // event lines still to buy. Nothing is saved until the person checks the list. The receipt photo is kept with the items.
 import { esc, $, toast, sheet, icon } from './ui.js';
-import { aiReady, readReceipt } from './ai.js';
+import { aiReady, readReceipt, aiTally } from './ai.js';
 import { processReceipt } from './image.js';
 import { openNeeds, linkLineToItem } from './events.js';
 
@@ -86,7 +86,9 @@ function review(result, shot, eventId) {
   const rows = result.items.map((it) => {
     const existing = (it.match ? byName.get(it.match.trim().toLowerCase()) : null) || [];
     existing.sort((a, b) => (Number(b.qty) || 1) - (Number(a.qty) || 1));
-    return { ...it, on: !(it.consumable && !it.line), mode: existing.length ? `more:${existing[0].id}` : `new`, existing, line: it.line || `` };
+    const mode = existing.length ? `more:${existing[0].id}` : `new`;
+    return { ...it, on: !(it.consumable && !it.line), mode, existing, line: it.line || ``,
+      _sug: { name: it.name, qty: it.qty, match: mode.split(`:`)[0] === `new` ? `new` : `existing`, line: it.line || `none` } };
   });
   sheet(`Check what you bought`, (el, close) => {
     const draw = () => {
@@ -130,6 +132,10 @@ function review(result, shot, eventId) {
       const save = e.target.closest(`[data-save]`); if (!save) return;
       save.disabled = true; save.textContent = `Saving…`;
       const n = await saveAll(rows.filter((r) => r.on), { result, shot, date, locationId, lineById });
+      const check = totalCheck(result);
+      R().logAi(`receipt`, { ...aiTally(rows.map((r) => ({ taken: r.on, sug: r._sug,
+        fin: { name: r.name, qty: r.qty, match: r.mode === `new` ? `new` : `existing`, line: r.line || `none` } })), [`name`, `qty`, `match`, `line`]),
+        sum: check ? (check.ok ? `ok` : `gap`) : `none` }, result.store || ``);
       close();
       toast(`${n.items} added from ${result.store || `the receipt`}${n.linked ? ` · ${n.linked} ready for events` : ``}`, { ms: 5000 });
       ctx.done?.();
@@ -166,7 +172,7 @@ async function saveAll(rows, { result, shot, date, locationId, lineById }) {
     } else {
       item = await repo.saveItem({
         name: r.name, qty: r.qty, category: r.category, purpose: r.purpose, tags: r.tags, notes: extra, locationId, warranty, price, ...bought,
-      }, { info: `From a receipt: ${result.store || ``} ${date}`.trim(), aiFields: [`category`, `purpose`, `tags`].filter((f) => r[f]) });
+      }, { info: `From a receipt: ${result.store || ``} ${date}`.trim(), aiFields: [`category`, `purpose`, `tags`].filter((f) => r[f]).concat(r.name === r._sug?.name ? [`name`] : []) });
     }
     items++;
     if (r.line && lineById.has(r.line) && linkLineToItem(r.line, item.id)) linked++;

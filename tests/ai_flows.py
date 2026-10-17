@@ -14,7 +14,9 @@ def section(prompt, head):
 
 def gemini(body):
     req = json.loads(body); prompt = req['contents'][0]['parts'][0]['text']; PROMPTS.append(prompt)
-    if "ORGANIZER'S TEXT" in prompt:
+    if 'Identify the distinct physical items in this photo' in prompt:
+        out = {'items': [{'name': 'Stud finder', 'purpose': 'Finding studs behind walls', 'category': 'Tools', 'tags': ['stud', 'wall'], 'qty': 1}]}
+    elif "ORGANIZER'S TEXT" in prompt:
         inv = [re.sub(r' \(×\d+\)$', '', x) for x in section(prompt, 'INVENTORY \\(what the group already has\\)')]
         pick = lambda word: [n for n in inv if word.lower() in n.lower()][:2]
         out = {'name': 'Graduation 2027', 'date': '2027-05-17', 'notes': 'Gym, 200 people', 'lines': [
@@ -115,12 +117,13 @@ async def main():
         print('  options:', opts)
         check(len(modes) == 1 and modes[0].startswith('more:') and sum('Add 10' in o for o in opts) == 2, f'both tablecloth items offered, named by place')
         before_tc = next(i for i in c['items'] if i['id'] == modes[0].split(':')[1])
+        await pg.fill('.rc-review input[data-name="1"]', 'Folding table, 6 ft, Lifetime'); await pg.press('.rc-review input[data-name="1"]', 'Tab')
         await pg.click('[data-save]'); await pg.wait_for_timeout(1500)
         c = await cache()
         new = [i for i in c['items'] if i.get('store') == 'Party City']
         print('  saved:', [(i['name'], i['qty'], i.get('price'), i.get('boughtAt'), i.get('warranty'), (i.get('receipt') or '')[:6]) for i in new])
         check(len(new) == 3, 'three items carry the purchase')
-        tbl = next(i for i in new if 'Folding table, 6 ft' == i['name'])
+        tbl = next(i for i in new if 'Folding table, 6 ft, Lifetime' == i['name'])
         check(tbl['price'] == '99.98 USD' and tbl['boughtAt'] == '2026-10-12' and tbl['warranty'] == '2027-10-12' and 'Lifetime' in tbl['notes'], 'price, date, warranty and brand captured')
         tcn = next(i for i in new if i['id'] == before_tc['id'])
         check(int(tcn['qty']) == int(before_tc['qty']) + 10, f"existing tablecloths +10 ({before_tc['qty']} → {tcn['qty']})")
@@ -149,6 +152,29 @@ async def main():
         print('  warning:', warn)
         check('add up to $121.46' in warn and '$24.99 short' in warn, 'missing line flagged with the gap')
         await pg.screenshot(path=f'{SP}/r5-warn.png')
+        await pg.click('.sheet-wrap.open [data-close]'); await pg.wait_for_timeout(400)
+
+        print('5. A photo on Add; the name is changed before saving')
+        await pg.goto('http://localhost:8080/#/add'); await pg.wait_for_timeout(600)
+        await pg.set_input_files('#photo', f'{SP}/receipt.jpg'); await pg.wait_for_timeout(6000)
+        check(await pg.input_value('#f [name=name]') == 'Stud finder', 'AI filled the name')
+        await pg.fill('#f [name=name]', 'Stud sensor'); await pg.wait_for_timeout(100)
+        await pg.click('#f .form-actions .btn.primary'); await pg.wait_for_timeout(1500)
+        if await pg.query_selector('.sheet-wrap.open [data-new]'): await pg.click('.sheet-wrap.open [data-new]'); await pg.wait_for_timeout(1000)
+
+        print('6. Accuracy card')
+        await pg.goto('http://localhost:8080/#/more/ai'); await pg.wait_for_timeout(800)
+        card = T(await pg.inner_text('.acc-card')) if await pg.query_selector('.acc-card') else ''
+        print('  card:', card)
+        await pg.screenshot(path=f'{SP}/a1-card.png', full_page=True)
+        check('Event lists used 1 time · 4 of 5 suggestions added' in card, 'event list: offered vs added')
+        check('Matched to your items kept as suggested 4 of 4' in card, 'event list matches counted')
+        check('Receipts used 1 time · 3 of 4 suggestions added' in card and 'Names kept as suggested 2 of 3' in card, 'receipt: renamed line counted as changed')
+        check('Receipts that added up 1 of 1' in card, 'receipt total check counted')
+        check('Photos used 1 time · 1 of 1' in card and 'Names kept as suggested 0 of 1' in card and 'What it’s for kept as suggested 1 of 1' in card, 'photo: changed name vs kept purpose')
+        c = await cache()
+        rows = [l for l in c['log'] if l['action'] == 'ai']
+        check(len(rows) == 3 and all(r['itemId'] == '' for r in rows), 'one History row per use of AI')
         print('errors', errs)
         await b.close()
     print('\nFAILURES:', FAILS or 'none')

@@ -1112,3 +1112,10 @@ body.readonly .edit-only { display: none !important; }
 .rc-check.warn .ic { color: var(--amber); }
 .rc-check.warn div { display: grid; gap: 2px; }
 .rc-check.warn small { color: var(--ink-2); }
+.acc-card { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.acc-g { display: grid; gap: 8px; }
+.acc-head { display: grid; gap: 2px; }
+.acc-head small { color: var(--ink-2); }
+.acc-row { display: grid; grid-template-columns: 1fr auto 3em; gap: 2px 8px; align-items: baseline; font-size: .9rem; }
+.acc-row small { color: var(--ink-2); text-align: right; }
+.acc-row i { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--accent) var(--p), var(--surface-2) var(--p)); }

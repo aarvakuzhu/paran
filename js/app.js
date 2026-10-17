@@ -6,7 +6,7 @@ import { XFRESH_MS, xmem, xlocal, xfetch, xpath } from './xinv.js';
 import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
-import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES } from './ai.js';
+import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
 import { captureScan } from './scan.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
@@ -1394,6 +1394,7 @@ function viewEdit(view, r) {
   };
   let locationId = item.locationId;
   let photo = null, thumb = null;
+  const aiSug = {}; // what AI put in each field (the latest suggestion), to count what was kept when saving
   const cats = repo.categories();
 
   view.innerHTML = `
@@ -1550,7 +1551,7 @@ function viewEdit(view, r) {
 
   function applySuggestion(sug, { quietIfNone = false, mergeNotes = false } = {}) {
     const f = $(`#f`); let n = 0;
-    if (sug.size && (!sizeInput().value || $(`#sizes`).classList.contains(`suggested`)) && sizeInput().value !== sug.size) { sizeInput().value = sug.size; drawSizes(); $(`#sizes`).classList.add(`suggested`); n++; }
+    if (sug.size && (!sizeInput().value || $(`#sizes`).classList.contains(`suggested`)) && sizeInput().value !== sug.size) { sizeInput().value = sug.size; drawSizes(); $(`#sizes`).classList.add(`suggested`); aiSug.size = sug.size; n++; }
     if (mergeNotes && sug.notes) { // keep what's in Notes; add the model/specs line if it isn't there yet
       const el = f.elements.notes;
       if (el.value && !el.classList.contains(`suggested`) && !el.value.toLowerCase().includes(sug.notes.toLowerCase())) { el.value = `${el.value}\n${sug.notes}`; n++; }
@@ -1561,7 +1562,7 @@ function viewEdit(view, r) {
       if (!el || !value) return;
       const untouched = !el.value || el.classList.contains(`suggested`) || (name === `qty` && String(el.value) === `1`);
       if (!untouched || el.value === String(value)) return; // never overwrite what the user typed
-      el.value = value; el.classList.add(`suggested`); n++;
+      el.value = value; el.classList.add(`suggested`); aiSug[name] = String(value); n++;
       el.addEventListener(`input`, () => el.classList.remove(`suggested`), { once: true });
     };
     set(`name`, sug.name); set(`purpose`, sug.purpose); set(`category`, sug.category);
@@ -1655,6 +1656,7 @@ function viewEdit(view, r) {
 
       const aiFields = editing ? [] : [...$$(`#f .suggested`, view).map((el) => el.name), ...($(`#sizes`).classList.contains(`suggested`) ? [`size`] : [])].filter(Boolean);
       const saved = await repo.saveItem(fields, { photo, thumb, aiFields });
+      if (!editing && Object.keys(aiSug).length) repo.logAi(`photo`, aiTally([{ taken: true, sug: aiSug, fin: fields }], [`name`, `qty`, `purpose`, `category`, `tags`, `size`, `notes`]), saved.name);
       for (const x of pendingExtras) await repo.addExtraPhoto(saved.id, x, { log: false });
       rememberLoc(locationId);
       toast(editing ? `Saved` : `Added ${saved.name}`, editing ? {} : { action: `View`, onAction: () => { location.hash = `#/item/${saved.id}`; } });
@@ -1708,6 +1710,7 @@ function duplicatePrompt(fields, dups) {
  */
 function reviewItems(items, canvas, startLoc, { scan = false } = {}) {
   const canvases = Array.isArray(canvas) ? canvas : [canvas];
+  const asSuggested = items.map((it) => ({ name: it.name, qty: it.qty })); // to count what was kept
   return new Promise((resolve) => {
     let done = false;
     let locationId = startLoc;
@@ -1779,9 +1782,11 @@ function reviewItems(items, canvas, startLoc, { scan = false } = {}) {
             const it = items[i];
             if (!it.name.trim()) continue;
             b.textContent = `Adding ${++n} of ${picks.length}…`;
+            const renamed = it.name.trim() !== asSuggested[i].name;
             await repo.saveItem({ name: it.name.trim(), purpose: it.purpose, category: it.category, tags: it.tags, qty: it.qty, notes: it.notes, size: it.size || ``, locationId: locOf(i) },
-              { photo: crops[i].photo, thumb: crops[i].thumb, info: scan ? `AI scan` : `AI from photo`, aiFields: [`name`, `purpose`, `category`, `tags`, `size`, `notes`].filter((k) => it[k]) });
+              { photo: crops[i].photo, thumb: crops[i].thumb, info: scan ? `AI scan` : `AI from photo`, aiFields: [`name`, `purpose`, `category`, `tags`, `size`, `notes`].filter((k) => it[k] && !(k === `name` && renamed)) });
           }
+          repo.logAi(scan ? `scan` : `photo`, aiTally(items.map((it, i) => ({ taken: picks.includes(i) && Boolean(it.name.trim()), sug: asSuggested[i], fin: { name: it.name.trim(), qty: it.qty } })), [`name`, `qty`]), repo.pathText(locationId));
           rememberLoc(locationId);
           toast(`Added ${n} item${n === 1 ? `` : `s`} to ${repo.pathText(locationId)}`);
           finish({ added: picks.length, locationId }); close();
@@ -2339,6 +2344,53 @@ function aiConsent(keyOnly = false) {
   });
 }
 
+// ============================================================ How accurate AI has been
+// Added up from the "ai" rows in History (one per use of AI: what it offered and what was kept) and from later edits
+// to fields AI filled, across every inventory with a copy on this phone. Nothing is sent anywhere.
+const ACC_FIELD = { name: `Names`, qty: `Counts`, purpose: `What it’s for`, category: `Categories`, tags: `Search words`, size: `Sizes`, notes: `Notes`,
+  match: `Matched to what you have`, line: `Matched to event needs`, pick: `Matched to your items` };
+const ACC_GROUP = { photo: `Photos`, scan: `Photos`, receipt: `Receipts`, plan: `Event lists` };
+function aiAccuracy() {
+  const logs = [repo.log];
+  if (repo.backend.kind === `google`) {
+    for (const id of Object.keys(loadKnown(repo.user.email).inv)) {
+      if (id === repo.backend.sheetId) continue;
+      try { const c = JSON.parse(localStorage.getItem(`paran.cache.${id}`) || `null`); if (c?.log?.length) logs.push(c.log); } catch { /* ignore */ }
+    }
+  }
+  const acc = {}; let aiNamed = 0, renamed = 0;
+  for (const log of logs) {
+    const named = new Set();
+    for (const e of [...log].sort((a, b) => String(a.ts).localeCompare(String(b.ts)))) {
+      const ch = Repo.parseChanges(e.changes);
+      if (e.action === `ai` && ch.ai) {
+        const g = acc[ACC_GROUP[ch.ai] || ch.ai] ||= { uses: 0, n: 0, t: 0, f: {}, sum: { ok: 0, gap: 0 } };
+        g.uses++; g.n += Number(ch.n) || 0; g.t += Number(ch.t) || 0;
+        for (const [k, [kept, changed]] of Object.entries(ch.f || {})) { g.f[k] ||= [0, 0]; g.f[k][0] += kept; g.f[k][1] += changed; }
+        if (ch.sum === `ok` || ch.sum === `gap`) g.sum[ch.sum]++;
+      } else if (e.action === `added` && Array.isArray(ch._ai) && ch._ai.includes(`name`)) { named.add(e.itemId); aiNamed++; }
+      else if (e.itemId && named.has(e.itemId) && `name` in ch) { renamed++; named.delete(e.itemId); }
+    }
+  }
+  return { acc, aiNamed, renamed, inventories: logs.length };
+}
+function aiAccuracyHtml() {
+  const { acc, aiNamed, renamed, inventories } = aiAccuracy();
+  const groups = Object.entries(acc);
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const bar = (label, a, b) => `<div class="acc-row"><span>${esc(label)}</span><b>${a} of ${b}</b><small>${pct(a, b)}%</small><i style="--p:${pct(a, b)}%"></i></div>`;
+  return `<div class="label-sm">How accurate it’s been</div>
+    ${groups.length ? `<div class="acc-card">${groups.map(([label, g]) => `<div class="acc-g">
+        <div class="acc-head"><b>${esc(label)}</b><small>used ${g.uses} time${g.uses === 1 ? `` : `s`} · ${g.t} of ${g.n} suggestions added</small></div>
+        ${Object.entries(g.f).map(([k, [kept, changed]]) => bar(`${ACC_FIELD[k] || k} kept as suggested`, kept, kept + changed)).join(``)}
+        ${g.sum.ok + g.sum.gap ? bar(`Receipts that added up`, g.sum.ok, g.sum.ok + g.sum.gap) : ``}
+      </div>`).join(``)}
+      ${aiNamed ? `<div class="acc-g">${bar(`AI names not changed later`, aiNamed - renamed, aiNamed)}</div>` : ``}
+      </div>
+      <p class="fine">From History in ${inventories} inventor${inventories === 1 ? `y` : `ies`} on this phone, counting everyone who uses ${inventories === 1 ? `it` : `them`}. “Kept” means saved without changing it. Nothing is sent anywhere.</p>`
+    : `<p class="fine">Nothing yet. Each time AI suggests something (a photo, a receipt, an event list), what you keep or change is noted in the inventory’s History, and the numbers show here.</p>`}`;
+}
+
 // ============================================================ Search across inventories
 // Inventories with a copy on this phone are searched at once; the rest are fetched in the background
 // (online) and kept on the phone for next time. Offline, a banner says what wasn't checked.
@@ -2734,13 +2786,14 @@ function viewMore(view, r) {
   } else if (page === `ai`) {
     view.innerHTML = `<div class="more">${head(`AI suggestions`)}
       ${aiReady() ? `<div class="menu">
-          <div class="menu-info">${icon(`spark`)}<div><b>On</b><small>Model: ${esc(aiSettings().model)}</small><small>${aiUsageToday()} photo${aiUsageToday() === 1 ? `` : `s`} analyzed today on this device · resets 3 AM ET</small></div></div>
+          <div class="menu-info">${icon(`spark`)}<div><b>On</b><small>Model: ${esc(aiSettings().model)}</small><small>${aiUsageToday()} AI request${aiUsageToday() === 1 ? `` : `s`} today on this device (photos, receipts, lists) · resets 3 AM ET</small></div></div>
           <label class="menu-switch"><span>Suggest details from photos</span><span class="switch"><input type="checkbox" data-aiauto ${aiSettings().auto ? `checked` : ``}><i></i></span></label>
           <button data-m="aikey">${icon(`edit`)} Change Gemini key</button>
           <button data-m="aioff" class="danger">${icon(`x`)} Turn off and remove key</button>
         </div>`
         : `<div class="ai-card">${icon(`spark`)}<div><b>Name things from a photo</b><p>Snap a shelf or a bin and get the list of what’s in it. Free, about a minute to set up.</p>
           <button class="btn primary" data-m="aion">Set it up</button></div></div>`}
+      ${aiAccuracyHtml()}
     </div>`;
   } else if (page === `data`) {
     // The sheets are the owner's: only owners get links to them. Data is spread over sheets, so each link says what's in it.

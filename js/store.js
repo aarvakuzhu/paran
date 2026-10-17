@@ -733,6 +733,17 @@ export class Repo extends EventTarget {
     return item;
   }
 
+  /**
+   * One History row per use of AI (photo, scan, receipt, event list): how much it offered, how much was kept, and per
+   * field how often the suggestion was saved unchanged. Lives in the inventory's own Log tab, like every other change.
+   */
+  logAi(kind, stats, info = ``) {
+    if (this.readOnly || !stats?.n) return;
+    const entry = { ts: now(), itemId: ``, action: `ai`, detail: kind, by: this.user.email, info, changes: JSON.stringify({ ai: kind, ...stats }) };
+    this.log.push(entry); this.outbox.push({ kind: `log`, data: entry });
+    this.saveCache(); this.flush();
+  }
+
   /** Exact before/after of the descriptive fields (kept whole, up to 4,000 characters each) so they can be restored. */
   changesJson(before, item, aiFields) {
     if (!before) return aiFields.length ? JSON.stringify({ _ai: aiFields }) : ``;
