@@ -4,7 +4,7 @@
   "shots": [
    {
     "f": "activity-1.webp",
-    "v": "2c0d6c18",
+    "v": "9b2d853e",
     "cap": "More \u2192 Your activity"
    }
   ]
@@ -14,12 +14,12 @@
   "shots": [
    {
     "f": "add-item-1.webp",
-    "v": "ade22b20",
+    "v": "3b1da4dc",
     "cap": "The + button"
    },
    {
     "f": "add-item-2.webp",
-    "v": "4f610dbc",
+    "v": "3f0a480f",
     "cap": "Name it, then choose where it is"
    }
   ]
@@ -29,7 +29,7 @@
   "shots": [
    {
     "f": "ai-accuracy-1.webp",
-    "v": "91c05c07",
+    "v": "51410bd5",
     "cap": "More \u2192 AI suggestions"
    }
   ]
@@ -39,7 +39,7 @@
   "shots": [
    {
     "f": "data-1.webp",
-    "v": "96500a21",
+    "v": "1070c3fe",
     "cap": "More \u2192 Your data"
    }
   ]
@@ -49,7 +49,7 @@
   "shots": [
    {
     "f": "demo-1.webp",
-    "v": "dcc34284",
+    "v": "0a282004",
     "cap": "More \u2192 Clear demo data"
    }
   ]
@@ -59,7 +59,7 @@
   "shots": [
    {
     "f": "edit-item-1.webp",
-    "v": "d8279b75",
+    "v": "d49a4943",
     "cap": "On the item: the pencil"
    }
   ]
@@ -69,7 +69,7 @@
   "shots": [
    {
     "f": "event-add-1.webp",
-    "v": "9d7f5a29",
+    "v": "f0c51e58",
     "cap": "On the event: Add items"
    }
   ]
@@ -79,7 +79,7 @@
   "shots": [
    {
     "f": "event-after-1.webp",
-    "v": "6fe778d7",
+    "v": "84e6dbe8",
     "cap": "After: Back in place, Somewhere else, Missing\u2026"
    }
   ]
@@ -89,12 +89,12 @@
   "shots": [
    {
     "f": "event-assign-1.webp",
-    "v": "89c0af71",
+    "v": "ee91017c",
     "cap": "Tap a line"
    },
    {
     "f": "event-assign-2.webp",
-    "v": "41ff5b39",
+    "v": "a5844489",
     "cap": "Who\u2019s bringing it: a name and how many"
    }
   ]
@@ -104,7 +104,7 @@
   "shots": [
    {
     "f": "event-copy-1.webp",
-    "v": "0cd54ccc",
+    "v": "598fe909",
     "cap": "\u22ef \u2192 Copy for next time"
    }
   ]
@@ -114,12 +114,12 @@
   "shots": [
    {
     "f": "event-dayof-1.webp",
-    "v": "7616cf57",
+    "v": "0b286e06",
     "cap": "Day of"
    },
    {
     "f": "event-dayof-2.webp",
-    "v": "79f256a3",
+    "v": "cf26b87a",
     "cap": "Tick each thing as it arrives"
    }
   ]
@@ -129,12 +129,12 @@
   "shots": [
    {
     "f": "event-readiness-1.webp",
-    "v": "63cc8592",
+    "v": "d0ee9286",
     "cap": "Ready so far, and filters"
    },
    {
     "f": "event-readiness-2.webp",
-    "v": "456fc49c",
+    "v": "65a37b2e",
     "cap": "Still needed: Share or Print"
    }
   ]
@@ -144,7 +144,7 @@
   "shots": [
    {
     "f": "event-reserve-1.webp",
-    "v": "914db597",
+    "v": "a4fe82fe",
     "cap": "\u22ef \u2192 Reserve its items"
    }
   ]
@@ -154,7 +154,7 @@
   "shots": [
    {
     "f": "event-sections-1.webp",
-    "v": "bb608652",
+    "v": "691816d1",
     "cap": "\u22ef \u2192 Rename a section"
    }
   ]
@@ -164,7 +164,7 @@
   "shots": [
    {
     "f": "event-share-1.webp",
-    "v": "f6c780c6",
+    "v": "085334c1",
     "cap": "The share button at the top"
    }
   ]
@@ -174,7 +174,7 @@
   "shots": [
    {
     "f": "event-words-1.webp",
-    "v": "d4eac059",
+    "v": "80ccb5f6",
     "cap": "On the event: From a list"
    }
   ]
@@ -184,7 +184,7 @@
   "shots": [
    {
     "f": "events-what-1.webp",
-    "v": "fc78d5d4",
+    "v": "b6a5718a",
     "cap": "More \u2192 Events \u2192 New event"
    }
   ]
@@ -194,7 +194,7 @@
   "shots": [
    {
     "f": "find-1.webp",
-    "v": "158de03b",
+    "v": "1cf4661f",
     "cap": "Find: type a word"
    }
   ]
@@ -204,7 +204,7 @@
   "shots": [
    {
     "f": "fresh-1.webp",
-    "v": "79eb74d7",
+    "v": "cf22ef91",
     "cap": "More \u2192 Your data \u2192 Start fresh on this phone"
    }
   ]
@@ -214,12 +214,12 @@
   "shots": [
    {
     "f": "group-1.webp",
-    "v": "4a9fb10b",
+    "v": "9dde3f52",
     "cap": "New group"
    },
    {
     "f": "group-2.webp",
-    "v": "65b78d34",
+    "v": "84cd92dc",
     "cap": "The group page"
    }
   ]
@@ -229,7 +229,7 @@
   "shots": [
    {
     "f": "help-1.webp",
-    "v": "a5f2f3c4",
+    "v": "22d8fdda",
     "cap": "? at the top of every screen"
    }
   ]
@@ -239,7 +239,7 @@
   "shots": [
    {
     "f": "history-1.webp",
-    "v": "515ddff2",
+    "v": "3d46d892",
     "cap": "On the item: History"
    }
   ]
@@ -249,7 +249,7 @@
   "shots": [
    {
     "f": "inventories-1.webp",
-    "v": "1c60e83c",
+    "v": "ded24fb6",
     "cap": "Tap the inventory name \u2192 New inventory"
    }
   ]
@@ -259,7 +259,7 @@
   "shots": [
    {
     "f": "join-1.webp",
-    "v": "1e898666",
+    "v": "517af328",
     "cap": "Open one shared with you"
    }
   ]
@@ -269,17 +269,17 @@
   "shots": [
    {
     "f": "lend-1.webp",
-    "v": "08a7c119",
+    "v": "4a9de94d",
     "cap": "On the item: Lend or reserve"
    },
    {
     "f": "lend-2.webp",
-    "v": "9d32b730",
+    "v": "126a0d60",
     "cap": "Type or pick who has it, then Lend"
    },
    {
     "f": "lend-3.webp",
-    "v": "7f4f33ff",
+    "v": "cf64e434",
     "cap": "When it\u2019s back: Got it back"
    }
   ]
@@ -289,7 +289,7 @@
   "shots": [
    {
     "f": "missing-1.webp",
-    "v": "281b3aca",
+    "v": "57a4ab38",
     "cap": "\u22ef \u2192 Mark as missing"
    }
   ]
@@ -299,12 +299,12 @@
   "shots": [
    {
     "f": "move-1.webp",
-    "v": "eeff5a5c",
+    "v": "37d91144",
     "cap": "On the item: Move"
    },
    {
     "f": "move-2.webp",
-    "v": "8718d3be",
+    "v": "9a03b38f",
     "cap": "Several at once: Select, tick them, then Move"
    }
   ]
@@ -314,12 +314,12 @@
   "shots": [
    {
     "f": "move-inventory-1.webp",
-    "v": "938b3df5",
+    "v": "935e9b8a",
     "cap": "Move \u2192 Other inventories in your group"
    },
    {
     "f": "move-inventory-2.webp",
-    "v": "62f2194c",
+    "v": "05fabd63",
     "cap": "Pick the place there"
    }
   ]
@@ -329,7 +329,7 @@
   "shots": [
    {
     "f": "offline-1.webp",
-    "v": "975b3141",
+    "v": "0818ddeb",
     "cap": "Refresh now"
    }
   ]
@@ -339,7 +339,7 @@
   "shots": [
    {
     "f": "out-1.webp",
-    "v": "ae745eee",
+    "v": "8c8c1516",
     "cap": "Out tab: by person"
    }
   ]
@@ -349,7 +349,7 @@
   "shots": [
    {
     "f": "people-change-1.webp",
-    "v": "8aed3587",
+    "v": "5ce69e09",
     "cap": "Tap the person to change their access"
    }
   ]
@@ -359,7 +359,7 @@
   "shots": [
    {
     "f": "photo-ai-1.webp",
-    "v": "9e20822d",
+    "v": "030f3fd6",
     "cap": "More \u2192 AI suggestions \u2192 Set it up"
    }
   ]
@@ -369,7 +369,7 @@
   "shots": [
    {
     "f": "photos-1.webp",
-    "v": "156c6eeb",
+    "v": "fef7c4a6",
     "cap": "On the item: Add a photo, or More photos"
    }
   ]
@@ -379,7 +379,7 @@
   "shots": [
    {
     "f": "place-edit-1.webp",
-    "v": "249990e4",
+    "v": "3f757517",
     "cap": "Open the place \u2192 \u22ef \u2192 Rename, Move or Remove place"
    }
   ]
@@ -389,12 +389,12 @@
   "shots": [
    {
     "f": "places-setup-1.webp",
-    "v": "80d2e2eb",
+    "v": "9434d3e0",
     "cap": "Places tab \u2192 Add a place"
    },
    {
     "f": "places-setup-2.webp",
-    "v": "c119675a",
+    "v": "ec3cbb60",
     "cap": "Inside a place: Add a place inside"
    }
   ]
@@ -404,12 +404,12 @@
   "shots": [
    {
     "f": "qr-1.webp",
-    "v": "f9cc7246",
+    "v": "0d8d1b77",
     "cap": "Place \u2192 \u22ef \u2192 Print QR label"
    },
    {
     "f": "qr-2.webp",
-    "v": "2480ee99",
+    "v": "153a0029",
     "cap": "Later: Scan label"
    }
   ]
@@ -419,7 +419,7 @@
   "shots": [
    {
     "f": "qty-1.webp",
-    "v": "db46caf5",
+    "v": "596b016d",
     "cap": "How many: \u2212 and +"
    }
   ]
@@ -429,12 +429,12 @@
   "shots": [
    {
     "f": "receipt-1.webp",
-    "v": "1ab32d57",
+    "v": "91254a67",
     "cap": "On Add: Bought a few things?"
    },
    {
     "f": "receipt-2.webp",
-    "v": "d0a48e4d",
+    "v": "c0ce9c7a",
     "cap": "On an event: Bought some? Scan the receipt"
    }
   ]
@@ -444,7 +444,7 @@
   "shots": [
    {
     "f": "remove-item-1.webp",
-    "v": "0090f8c0",
+    "v": "3effc305",
     "cap": "\u22ef \u2192 Remove from inventory"
    }
   ]
@@ -454,7 +454,7 @@
   "shots": [
    {
     "f": "rename-inv-1.webp",
-    "v": "9ec6770e",
+    "v": "e206c83a",
     "cap": "More \u2192 the inventory \u2192 Rename this inventory"
    }
   ]
@@ -464,7 +464,7 @@
   "shots": [
    {
     "f": "reserve-1.webp",
-    "v": "072fa22c",
+    "v": "db34a2de",
     "cap": "Lend or reserve \u2192 Reserve, then a pick-up date"
    }
   ]
@@ -474,7 +474,7 @@
   "shots": [
    {
     "f": "roles-1.webp",
-    "v": "1df5f3e2",
+    "v": "7273fb9d",
     "cap": "Choose Can edit or Can view when inviting"
    }
   ]
@@ -484,7 +484,7 @@
   "shots": [
    {
     "f": "scan-many-1.webp",
-    "v": "717a5ea6",
+    "v": "11d096a5",
     "cap": "Open the shelf or bin \u2192 Scan many"
    }
   ]
@@ -494,7 +494,7 @@
   "shots": [
    {
     "f": "share-group-1.webp",
-    "v": "bfd38035",
+    "v": "26cdf795",
     "cap": "On the group page: invite to the whole group"
    }
   ]
@@ -504,7 +504,7 @@
   "shots": [
    {
     "f": "share-inv-1.webp",
-    "v": "1df5f3e2",
+    "v": "7273fb9d",
     "cap": "More \u2192 People & access: their Google email, then Invite"
    }
   ]
@@ -514,7 +514,7 @@
   "shots": [
    {
     "f": "share-item-1.webp",
-    "v": "f42a2355",
+    "v": "cf202845",
     "cap": "On the item: share"
    }
   ]
@@ -524,7 +524,7 @@
   "shots": [
    {
     "f": "signout-1.webp",
-    "v": "5d5c157b",
+    "v": "c00a9fe1",
     "cap": "More \u2192 Sign out"
    }
   ]
@@ -534,7 +534,7 @@
   "shots": [
    {
     "f": "start-1.webp",
-    "v": "68632d1c",
+    "v": "ed406343",
     "cap": "Places tab \u2192 Quick-add rooms and places"
    }
   ]
@@ -544,12 +544,12 @@
   "shots": [
    {
     "f": "switch-1.webp",
-    "v": "add47ac6",
+    "v": "327dee38",
     "cap": "Tap the inventory name at the top"
    },
    {
     "f": "switch-2.webp",
-    "v": "281a39e4",
+    "v": "00f5ef72",
     "cap": "Pick one from Your inventories"
    }
   ]
