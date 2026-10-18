@@ -1212,3 +1212,11 @@ input, select, textarea { max-width: 100%; }
 .help-shot figcaption { font-size: 13px; color: var(--ink-2); }
 .help-shot figcaption b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; margin-right: 4px; }
 .help-zoom { display: block; width: 100%; height: auto; border-radius: 12px; }
+
+/* a ? beside a message that blocks or fails: tap for why and what to do (never opens by itself) */
+.toast .toast-why, .why-btn { flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; padding: 0;
+  font: 700 13px/1 inherit; cursor: pointer; vertical-align: middle; }
+.toast .toast-why { border: 1.5px solid currentColor; color: var(--accent-soft); }
+.why-btn { border: 1.5px solid var(--accent); color: var(--accent); background: transparent; margin-left: 4px; }
+.help-said { display: grid; gap: 4px; }
+.help-said p { margin: 0; color: var(--ink-2); font-size: 14px; }

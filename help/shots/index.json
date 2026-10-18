@@ -324,6 +324,16 @@
    }
   ]
  },
+ "no-edit": {
+  "sig": "42c4abf66d",
+  "shots": [
+   {
+    "f": "no-edit-1.webp",
+    "v": "71b82f76",
+    "cap": "More \u2192 People & access: who the owner is"
+   }
+  ]
+ },
  "offline": {
   "sig": "e1154cf6f3",
   "shots": [

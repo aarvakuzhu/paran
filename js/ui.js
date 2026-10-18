@@ -3,13 +3,22 @@ export const esc = (s) => String(s ?? ``).replace(/[&<>"']/g, (c) => ({ '&': `&a
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
-export function toast(msg, { action, onAction, ms = 3200 } = {}) {
+// A message that blocks or fails can carry a help topic: it gets a small ? (nothing opens by itself), and Help
+// remembers it for a few minutes, so the ? at the top still explains it after the message has gone.
+let helpHook = null; let lastExplained = null;
+export function setToastHelp(fn) { helpHook = fn; }
+export function explained() { return lastExplained && Date.now() - lastExplained.at < 5 * 60_000 ? lastExplained : null; }
+export function noteExplained(msg, topic) { lastExplained = { msg, topic, at: Date.now() }; }
+
+export function toast(msg, { action, onAction, ms = 3200, help } = {}) {
   const host = $(`#toasts`);
   host.querySelectorAll(`.toast`).forEach((t) => t.remove()); // one message at a time: the newest wins
   const el = document.createElement(`div`);
-  el.className = `toast`;
-  el.innerHTML = `<span>${esc(msg)}</span>${action ? `<button type="button">${esc(action)}</button>` : ``}`;
-  if (action) el.querySelector(`button`).onclick = () => { onAction?.(); el.remove(); };
+  el.className = `toast${help ? ` has-help` : ``}`;
+  if (help) { noteExplained(msg, help); ms = Math.max(ms, 6000); }
+  el.innerHTML = `<span>${esc(msg)}</span>${help && helpHook ? `<button type="button" class="toast-why" aria-label="Why? More about this">?</button>` : ``}${action ? `<button type="button" class="toast-act">${esc(action)}</button>` : ``}`;
+  if (action) el.querySelector(`.toast-act`).onclick = () => { onAction?.(); el.remove(); };
+  if (help && helpHook) el.querySelector(`.toast-why`).onclick = () => { el.remove(); helpHook(help, msg); };
   host.appendChild(el);
   setTimeout(() => el.classList.add(`out`), ms);
   setTimeout(() => el.remove(), ms + 400);

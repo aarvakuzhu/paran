@@ -48,3 +48,8 @@ deleted one.
 Select (one lent, still lent there): details and history come along with a *Moved to* line, the item is removed from
 Main building with a History line saying where it went, a group event's line follows it, *Open Storage unit* shows
 it there; and a move into an inventory you can only view is refused with nothing changed.
+
+`help_why_share.py` (demo, stand-in Gemini): an AI key Google refuses shows a ? beside the error (nothing opens by
+itself) that opens Help on the message and its topic; a message with ? explains itself when tapped, and Help's ?
+still explains it after the message has gone; Share these steps sends the steps with a link; the link opens those
+steps in Paran (and is tidied away), and before sign-in shows them on the welcome screen and again once Paran is open.

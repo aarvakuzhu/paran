@@ -33,7 +33,7 @@ async def main():
         print('2. Search in your own words')
         await pg.goto('http://localhost:8080/#/'); await pg.wait_for_timeout(400); await open_help()
         for q, want in [('how do i share with my wife', 'How do I share an inventory'), ('lend my ladder to a friend', 'How do I lend'), ('print a label for a box', 'QR labels'),
-                        ('my key doesnt work', 'let AI fill in'), ('graduation list from whatsapp', 'from a description'), ('undo a change', 'undo a change'), ('can my kids only view', 'only view')]:
+                        ('my key doesnt work', 'AI didn’t work'), ('graduation list from whatsapp', 'from a description'), ('undo a change', 'undo a change'), ('can my kids only view', 'only view')]:
             await pg.fill('[data-hq]', q); await pg.wait_for_timeout(150)
             first = T(await pg.inner_text('.help-list .help-topic >> nth=0')) if await pg.query_selector('.help-list .help-topic') else ''
             check(want.lower() in first.lower(), f'“{q}” → {first[:60]}')

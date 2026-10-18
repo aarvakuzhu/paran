@@ -8,7 +8,7 @@ import { blobs } from './idb.js';
 import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
 import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally, aiScore, askHelp } from './ai.js';
-import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo } from './ui.js';
+import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo, setToastHelp, explained, noteExplained } from './ui.js';
 import { captureScan } from './scan.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
 import { count as statCount, snapshot as statSnapshot, statsOn, setStatsOn, statsData, addFeedback, feedbackList, clearFeedback } from './stats.js';
@@ -58,6 +58,14 @@ function registerServiceWorker() {
 // ============================================================ boot
 async function boot() {
   registerServiceWorker();
+  setToastHelp((topic, msg) => helpSheet(``, { topic, said: msg }));
+  takeHelpLink();
+  document.addEventListener(`click`, (e) => { // a small ? beside a message: why, and what to do
+    const w = e.target.closest(`[data-why]`); if (!w) return;
+    e.preventDefault(); e.stopPropagation();
+    const said = w.closest(`.error-box, .why-host, p`)?.textContent.replace(/\?\s*$/, ``).trim() || ``;
+    helpSheet(``, { topic: w.dataset.why, said });
+  }, true);
   initEvents({
     repo: () => repo, thumbHtml, goBack, shareOut, shareSign: SHARE_SIGN, todayStr, invName, switchTo, pickLocation,
     openGroupInventories: (gid) => (gid ? openGroupInventories(gid) : Promise.resolve()), putInGroup,
@@ -70,7 +78,7 @@ async function boot() {
   });
   initReceipts({ repo: () => repo, aiSetup: () => aiConsent(false), pickLocation, todayStr, invName,
     done: () => { if ([`add`].includes(route().name)) location.hash = `#/`; else render(); } });
-  window.addEventListener(`hashchange`, () => { if (sel.on) selStop(); render(); });
+  window.addEventListener(`hashchange`, () => { if (takeHelpLink()) return openHelpLink(); if (sel.on) selStop(); render(); });
   installSelectionGestures();
   window.addEventListener(`online`, () => repo?.refresh());
   window.addEventListener(`offline`, () => { if (!repo) return; if (repo.backend.kind === `google`) repo.setStatus(`offline`); if (route().name === `find`) renderResults(); }); // search shows the offline note at once
@@ -99,6 +107,7 @@ async function start(kind, { interactive = false, choice } = {}) {
   repo.addEventListener(`readonly`, onReadOnly);
     repo.addEventListener(`groupdenied`, onGroupDenied);
     renderShell();
+    setTimeout(openHelpLink, 400);
     if (choice?.template) { location.hash = `#/places`; render(); await applyTemplate(choice.template); }
     else if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
@@ -119,6 +128,7 @@ function resumeGoogle() {
   repo.addEventListener(`readonly`, onReadOnly);
   repo.addEventListener(`groupdenied`, onGroupDenied);
   renderShell(); render();
+  setTimeout(openHelpLink, 400);
   if (hasValidToken()) repo.refresh();
   else repo.setStatus(navigator.onLine ? `auth` : `offline`);
   installQuietRenew();
@@ -140,7 +150,7 @@ async function renewNow({ quiet = true } = {}) {
       return true;
     } catch (e) {
       lastRenewFail = Date.now();
-      if (!quiet) toast(`Couldn’t reach Google: ${e.message}`);
+      if (!quiet) toast(`Couldn’t reach Google: ${e.message}`, { help: `offline` });
       repo.setStatus(`auth`);
       return false;
     } finally { renewing = null; }
@@ -160,10 +170,10 @@ function installQuietRenew() {
 let roToastAt = 0;
 function onReadOnly() {
   renderStatus(); document.body.classList.add(`readonly`);
-  if (Date.now() - roToastAt > 4000) { roToastAt = Date.now(); toast(`You can view ${invName()}, but not change it. Ask its owner for edit access.`, { ms: 5000 }); }
+  if (Date.now() - roToastAt > 4000) { roToastAt = Date.now(); toast(`You can view ${invName()}, but not change it. Ask its owner for edit access.`, { ms: 5000, help: `no-edit` }); }
 }
 function onGroupDenied() {
-  toast(`Google didn’t let you change ${repo.group()?.name || `the group`}’s events. Ask the group’s owner for edit access.`, { ms: 6000 });
+  toast(`Google didn’t let you change ${repo.group()?.name || `the group`}’s events. Ask the group’s owner for edit access.`, { ms: 6000, help: `no-edit` });
   repo.refresh();
 }
 const roleLabel = (role) => (role === `owner` ? `Owner` : role === `viewer` ? `Can view` : role === `pending-owner` ? `Owner (waiting to accept)` : `Can edit`);
@@ -181,6 +191,7 @@ function onRepoChange() {
 // ============================================================ pre-app screens
 function renderWelcome(error) {
   window.__paranStarted = true; // something is on screen: the startup watchdog in index.html stands down
+  setTimeout(openHelpLink, 400);
   const g = googleConfigured();
   app.innerHTML = `
   <main class="welcome">
@@ -292,9 +303,10 @@ function renderStatus() {
 }
 
 async function onStatusClick() {
+  if (repo.readOnly && [`synced`, `idle`].includes(repo.status)) return toast(`You can view ${invName()}, not change it.`, { help: `no-edit` });
   if (repo.backend.kind === `demo`) return toast(`Demo mode: data stays in this browser. Sign in with Google from More.`);
   if (repo.status === `auth` || needsRenew()) { await renewNow({ quiet: false }); return; }
-  if (repo.status === `error`) return toast(`Sync failed: ${repo.lastError?.message || `unknown error`}`, { action: `Retry`, onAction: () => repo.refresh() });
+  if (repo.status === `error`) return toast(`Sync failed: ${repo.lastError?.message || `unknown error`}`, { action: `Retry`, onAction: () => repo.refresh(), help: `offline` });
   repo.refresh();
 }
 
@@ -330,7 +342,7 @@ function render() {
   const nm = $(`#invname`); if (nm) nm.textContent = invName();
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
   document.body.classList.toggle(`readonly`, Boolean(repo.readOnly)); // "Can view": edit actions are hidden
-  if (repo.readOnly && [`add`, `edit`, `setup`].includes(r.name)) { toast(`You can view ${invName()}, not change it`); location.replace(`#/`); return; }
+  if (repo.readOnly && [`add`, `edit`, `setup`].includes(r.name)) { toast(`You can view ${invName()}, not change it`, { help: `no-edit` }); location.replace(`#/`); return; }
   document.body.classList.toggle(`focus-mode`, r.name === `add` || r.name === `edit` || r.name === `setup`); // no tab bar while filling a form
   if (routeChanged && (r.name === `add` || r.name === `edit`)) $$(`#toasts .toast`).forEach((t) => t.remove()); // an Undo from another screen doesn't belong here
   updateOutBadge();
@@ -548,8 +560,8 @@ async function moveAnywhere(items, to) {
   try {
     await repo.moveToInventory(items, to.inv, to.locId, { here: invName(), there, path: to.path });
   } catch (e) {
-    if (e instanceof AuthError) { toast(`Sign in again, then try the move once more.`, { ms: 6000 }); return false; }
-    toast(/permission|forbidden|caller does not have/i.test(e?.message || ``) ? `${there} didn’t accept the change: you need edit access to it. Ask its owner.` : e.message || `Couldn’t move it`, { ms: 7000 });
+    if (e instanceof AuthError) { toast(`Sign in again, then try the move once more.`, { ms: 6000, help: `signin-again` }); return false; }
+    toast(/permission|forbidden|caller does not have/i.test(e?.message || ``) ? `${there} didn’t accept the change: you need edit access to it. Ask its owner.` : e.message || `Couldn’t move it`, { ms: 7000, help: /permission|forbidden|caller does not have|view .*not change/i.test(e?.message || ``) ? `no-edit` : /connection|online/i.test(e?.message || ``) ? `offline` : `move-inventory` });
     return false;
   }
   delete xmem[to.inv]; // read that inventory's copy again (now with the items)
@@ -846,7 +858,7 @@ async function aiMergeIntoItem(itemId) {
     if (!said.length) { toast(`AI found nothing new in the photos`); return; }
     await repo.saveItem({ id: itemId, ...patch }, { info: `Updated by AI (${imgs.length} photo${imgs.length > 1 ? `s` : ``}): ${said.join(`, `)}` });
     toast(`AI updated ${said.join(`, `)}. You can restore earlier text from History.`, { action: `Undo`, ms: 9000, onAction: () => repo.saveItem({ id: itemId, ...before }, { info: `Undid the AI update` }) });
-  } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000 }); }
+  } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000, help: `ai-trouble` }); }
 }
 
 // ---------------- full-screen photos, inside the app (no Drive page, no second login); swipe between them
@@ -1579,7 +1591,7 @@ function viewEdit(view, r) {
       const current = Object.fromEntries([`name`, `purpose`, `category`, `notes`, `size`].map((k) => [k, f.elements[k]?.value || ``]));
       const r = await describeItem(imgs.slice(0, MAX_PHOTOS), current, { categories: cats });
       applySuggestion({ ...r, notes: specLine(r) }, { quietIfNone: true, mergeNotes: true });
-    } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000 }); }
+    } catch (err) { toast(err instanceof AiError ? err.message : `AI couldn’t read the photos this time`, { ms: 5000, help: `ai-trouble` }); }
     finally { busy(false); }
   }
   const drawAiRow = () => {
@@ -1608,7 +1620,7 @@ function viewEdit(view, r) {
     busy(true);
     try {
       const items = await analyzePhoto(await shot.aiImage(), { categories: cats, location: locationId ? repo.pathText(locationId) : `` });
-      if (!items.length) { toast(`AI couldn’t recognize anything. Fill in the details yourself.`); return; }
+      if (!items.length) { toast(`AI couldn’t recognize anything. Fill in the details yourself.`, { help: `ai-trouble` }); return; }
       if (items.length === 1) { applySuggestion(items[0]); return; }
       const choice = await reviewItems(items, shot.canvas, locationId);
       if (choice?.single) {
@@ -1619,7 +1631,7 @@ function viewEdit(view, r) {
         location.hash = `#/place/${choice.locationId}`;
       }
     } catch (err) {
-      toast(err instanceof AiError ? err.message : `AI suggestion failed. Fill in the details yourself.`, { ms: 5000 });
+      toast(err instanceof AiError ? err.message : `AI suggestion failed. Fill in the details yourself.`, { ms: 5000, help: `ai-trouble` });
     } finally { busy(false); }
   }
 
@@ -2284,11 +2296,11 @@ async function scanPlace(locId) {
     items = await scanPhotos(blobs, { categories: repo.categories(), location: where });
   } catch (err) {
     wait.remove();
-    toast(err instanceof AiError ? err.message : `Scan failed. Try again, or add items one by one.`, { ms: 6000 });
+    toast(err instanceof AiError ? err.message : `Scan failed. Try again, or add items one by one.`, { ms: 6000, help: `ai-trouble` });
     return;
   }
   wait.remove();
-  if (!items.length) { toast(`AI couldn’t recognize anything. Try again closer, with more light.`, { ms: 5000 }); return; }
+  if (!items.length) { toast(`AI couldn’t recognize anything. Try again closer, with more light.`, { ms: 5000, help: `ai-trouble` }); return; }
   const res = await reviewItems(items, shots, locId, { scan: true });
   if (res?.added) render();
 }
@@ -2338,7 +2350,7 @@ async function printLabel(loc) {
     });
     const qr = window.qrcode(0, `M`); qr.addData(url); qr.make();
     svg = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
-  } catch { return toast(`QR needs a connection the first time`); }
+  } catch { return toast(`QR needs a connection the first time`, { help: `offline` }); }
   const items = repo.itemsIn(loc.id, true);
   const w = window.open(``, `_blank`);
   if (!w) return toast(`Allow pop-ups to print labels`);
@@ -2412,7 +2424,7 @@ function aiConsent(keyOnly = false) {
           done = true; resolve(true); close();
           toast(keyOnly ? `Key updated` : `AI is on. Try it: take a photo when you add something`);
         } catch (ex) {
-          err.textContent = ex.message || String(ex); err.hidden = false;
+          err.innerHTML = `${esc(ex.message || String(ex))} ${whyBtn(`ai-trouble`)}`; err.hidden = false;
           on.disabled = false; on.textContent = keyOnly ? `Save key` : `Turn on`;
         }
       };
@@ -2477,9 +2489,40 @@ function shotsHtml(t) {
   }).join(``)}</div>`;
 }
 
-function helpSheet(startQuery = ``) {
+/** A small ? to put beside a message (handled by one listener in boot). */
+const whyBtn = (topic) => `<button type="button" class="why-btn" data-why="${esc(topic)}" aria-label="Why? More about this">?</button>`;
+
+// ---- shared help steps: a link ".../#/help/<topic>" opens those steps in Paran. Before sign-in they show at once
+// and again once the app is open (so they can follow them), then the link is forgotten.
+const HELP_LINK = `paran.helpLink`;
+function takeHelpLink() {
+  const m = /^#\/help\/([\w-]+)/.exec(location.hash || ``);
+  if (!m) return false;
+  if (topicById(m[1])) try { localStorage.setItem(HELP_LINK, JSON.stringify({ id: m[1], at: Date.now() })); } catch { /* ignore */ }
+  history.replaceState(null, ``, `${location.pathname}${location.search}#/`);
+  return true;
+}
+function openHelpLink() {
+  let p = null; try { p = JSON.parse(localStorage.getItem(HELP_LINK) || `null`); } catch { /* ignore */ }
+  if (!p || Date.now() - p.at > 7 * 86400_000 || !topicById(p.id)) { try { localStorage.removeItem(HELP_LINK); } catch { /* ignore */ } return; }
+  if (document.querySelector(`.sheet-wrap.open [data-topic="${CSS.escape(p.id)}"]`)) return;
+  if (repo && $(`#view`)) { try { localStorage.removeItem(HELP_LINK); } catch { /* ignore */ } }
+  else if (p.shown) return; // before sign-in: once; it opens again when the app is open
+  else try { localStorage.setItem(HELP_LINK, JSON.stringify({ ...p, shown: true })); } catch { /* ignore */ }
+  helpSheet(``, { topic: p.id, shared: true });
+}
+function helpLinkFor(t) { return `${location.origin}${location.pathname}#/help/${t.id}`; }
+async function shareSteps(t) {
+  const text = `${t.q}\n\n${t.steps.map((x, i) => `${i + 1}. ${x}`).join(`\n`)}\n\nOpen these steps in Paran: ${helpLinkFor(t)}`;
+  if (await shareOut({ title: `Paran help: ${t.q}`, text })) statCount(`helpShare`);
+}
+
+function helpSheet(startQuery = ``, { topic = ``, said = ``, shared = false } = {}) {
   const screen = helpScreen();
-  let q = startQuery; let open = ``;
+  let q = startQuery; let open = topic;
+  const just = !topic && !startQuery ? explained() : null; // a message they saw a moment ago, if it has help
+  if (just) open = just.topic;
+  if (said && topic) noteExplained(said, topic);
   let ask = null; // { q, busy, res: { found, answer, topics }, err, prior, rated }
   sheet(`Help`, (el, close) => {
     el.innerHTML = `<div class="help">
@@ -2500,7 +2543,8 @@ function helpSheet(startQuery = ``) {
         ${shotsHtml(t)}
         <ol>${t.steps.map((x) => `<li>${esc(x)}</li>`).join(``)}</ol>
         ${t.who ? `<p class="fine">${esc(t.who)}</p>` : ``}
-        <div class="help-acts">${t.go ? `<button type="button" class="btn primary small" data-go="${esc(t.id)}">Take me there</button>` : ``}
+        <div class="help-acts">${t.go && repo ? `<button type="button" class="btn primary small" data-go="${esc(t.id)}">Take me there</button>` : ``}
+          <button type="button" class="btn ghost small" data-hshare="${esc(t.id)}">${icon(`share`)} Share these steps</button>
           <span class="help-was">Did this help? <button type="button" class="chip" data-yes="${esc(t.id)}">Yes</button><button type="button" class="chip" data-no="${esc(t.id)}">No</button></span></div>
         ${(t.related || []).length ? `<div class="help-rel">${t.related.map(topicById).filter(Boolean).map((r) => `<button type="button" class="link small" data-toggle="${esc(r.id)}">${esc(r.q)}</button>`).join(``)}</div>` : ``}
       </div>` : ``}</div>`;
@@ -2508,6 +2552,9 @@ function helpSheet(startQuery = ``) {
       const text = q.trim();
       if (!text) {
         const here = topicsFor(screen); const pop = POPULAR.map(topicById).filter((t) => t && !here.includes(t));
+        const why = (said || just) && topicById(open) ? `<div class="help-said"><div class="label-sm">${said ? `About this message` : `The message you just saw`}</div><p>“${esc(said || just.msg)}”</p></div>${card(topicById(open))}` : ``;
+        const sent = shared && topicById(open) ? `<div class="help-said"><div class="label-sm">Steps shared with you</div>${repo ? `` : `<p class="fine">Sign in (or try the demo) to follow them; they open again once Paran is open.</p>`}</div>${card(topicById(open))}` : ``;
+        if (why || sent) { list.innerHTML = `${why || sent}<div class="label-sm">${here.length ? `On this screen` : `Often asked`}</div>${(here.length ? here : pop).filter((t) => t.id !== open).map(card).join(``)}`; return; }
         list.innerHTML = `${here.length ? `<div class="label-sm">On this screen</div>${here.map(card).join(``)}` : ``}
           <div class="label-sm">${here.length ? `Also asked` : `Often asked`}</div>${pop.map(card).join(``)}`;
         return;
@@ -2566,6 +2613,7 @@ function helpSheet(startQuery = ``) {
       const d = b.dataset;
       if (d.toggle) { open = open === d.toggle ? `` : d.toggle; draw(); $(`[data-topic="${CSS.escape(open)}"]`, el)?.scrollIntoView({ block: `nearest` }); return; }
       if (d.go) { const t = topicById(d.go); close(); helpGo(t); return; }
+      if (d.hshare) { shareSteps(topicById(d.hshare)); return; }
       if (d.zoom) { sheet(d.cap || `Picture`, (z) => { z.innerHTML = `<img class="help-zoom" src="${esc(d.zoom)}" alt="${esc(d.cap || ``)}">`; }); return; }
       if (d.ask !== undefined) { const t = ask?.err ? ask.q : q.trim(); if (t) runAsk(t, ask?.err ? ask.prior : null); return; }
       if (d.aion !== undefined) { close(); if (await aiConsent(false)) helpSheet(q); return; }
@@ -2921,7 +2969,7 @@ async function newInventoryFlow({ groupId } = {}) {
     const inv = await createInventory(user, name, gid || ``);
     switchTo(inv.sheetId, { hash: `#/setup` });
   } catch (e) {
-    toast(gid && !k.groups[gid]?.owner ? `Only the group’s owner can add inventories to it for now.` : `Couldn’t create it: ${e.message}`, { ms: 6000 });
+    toast(gid && !k.groups[gid]?.owner ? `Only the group’s owner can add inventories to it for now.` : `Couldn’t create it: ${e.message}`, { ms: 6000, help: gid && !k.groups[gid]?.owner ? `no-edit` : `inventories` });
   }
 }
 
@@ -3101,8 +3149,8 @@ function viewGroup(view, r) {
     e.preventDefault();
     const input = e.target.querySelector(`input`); const btn = e.target.querySelector(`button`); btn.disabled = true;
     const role = e.target.querySelector(`select`)?.value || `writer`;
-    try { await inviteToGroup(user, gid, input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${k.groups[gid].name} (${role === `reader` ? `can view` : `can edit`})`); k = loadKnown(user.email); draw(); }
-    catch (err) { toast(`Couldn’t invite: ${err.message}`); btn.disabled = false; }
+    try { await inviteToGroup(user, gid, input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${k.groups[gid].name} (${role === `reader` ? `can view` : `can edit`})`, { action: `Send how to join`, onAction: () => shareSteps(topicById(`join`)), ms: 8000 }); k = loadKnown(user.email); draw(); }
+    catch (err) { toast(`Couldn’t invite: ${err.message}`, { help: `share-inv` }); btn.disabled = false; }
   };
 }
 
@@ -3239,21 +3287,21 @@ function viewMore(view, r) {
       const input = e.target.querySelector(`input`); const role = e.target.querySelector(`select[name=role]`)?.value || `writer`;
       if (e.target.querySelector(`select[name=scope]`)?.value === `inv`) {
         const btn0 = e.target.querySelector(`button`); btn0.disabled = true;
-        try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${invName()} only (${role === `reader` ? `can view` : `can edit`})`); render(); }
-        catch (err) { toast(`Couldn’t invite: ${err.message}`); btn0.disabled = false; }
+        try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${invName()} only (${role === `reader` ? `can view` : `can edit`})`, { action: `Send how to join`, onAction: () => shareSteps(topicById(`join`)), ms: 8000 }); render(); }
+        catch (err) { toast(`Couldn’t invite: ${err.message}`, { help: `share-inv` }); btn0.disabled = false; }
         return;
       }
       const btn = e.target.querySelector(`button`); btn.disabled = true;
-      try { await inviteToGroup(repo.user, gid, input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${grp.name} (${role === `reader` ? `can view` : `can edit`})`); render(); }
-      catch (err) { toast(`Couldn’t invite: ${err.message}`); btn.disabled = false; }
+      try { await inviteToGroup(repo.user, gid, input.value.trim(), role); toast(`Invited ${input.value.trim()} to ${grp.name} (${role === `reader` ? `can view` : `can edit`})`, { action: `Send how to join`, onAction: () => shareSteps(topicById(`join`)), ms: 8000 }); render(); }
+      catch (err) { toast(`Couldn’t invite: ${err.message}`, { help: `share-inv` }); btn.disabled = false; }
       return;
     }
     if (e.target.id !== `invite`) return;
     e.preventDefault();
     const input = e.target.querySelector(`input`); const role = e.target.querySelector(`select`)?.value || `writer`;
     const btn = e.target.querySelector(`button`); btn.disabled = true;
-    try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} (${role === `reader` ? `can view` : `can edit`})`); input.value = ``; render(); }
-    catch (err) { toast(`Couldn’t invite: ${err.message}`); }
+    try { await repo.invite(input.value.trim(), role); toast(`Invited ${input.value.trim()} (${role === `reader` ? `can view` : `can edit`})`, { action: `Send how to join`, onAction: () => shareSteps(topicById(`join`)), ms: 8000 }); input.value = ``; render(); }
+    catch (err) { toast(`Couldn’t invite: ${err.message}`, { help: `share-inv` }); }
     finally { btn.disabled = false; }
   };
   $(`[data-aiauto]`, view)?.addEventListener(`change`, (e) => saveAiSettings({ auto: e.target.checked }));

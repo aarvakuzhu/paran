@@ -75,6 +75,7 @@ async def main():
         await A.goto('http://localhost:8080/#/more/people'); await A.wait_for_timeout(800)
         await A.fill('#invite input[type=email]', HELPER); await A.click('#invite button'); await A.wait_for_timeout(1500)
         check(G.FILES[S]['perms'].get(HELPER) == 'writer', 'Helper can edit the School sheet')
+        check('Send how to join' in T(await A.inner_text('#toasts')), 'the invite offers to send them how to join')
         check(any(r['email'] == HELPER for r in G.rows(S, 'Members')), 'Helper listed in Members')
 
         # ================= 3. Owner starts an event -> group first

@@ -202,8 +202,8 @@ export function viewEvents(view) {
     <div class="more-head"><a class="back" href="#/more">${icon(`back`)} More</a></div>
     <div class="page-head"><h1>Events</h1>${newBtn(`small`)}</div>
     <p class="muted small">${g ? `Events for <b>${esc(g.name)}</b>. Everyone in the group sees them, and they can use things from ${groupInventories().length === 1 ? `its inventory, and from any you add to the group later` : `any of its ${groupInventories().length} inventories`}.`
-      : runByGroup ? `${esc(ctx.invName())} is part of <b>${esc(runByGroup)}</b>, and its events are run by the group. Anything you’re asked to bring shows on your home screen.`
-      : needsGroup && !ownerHere ? `Events are run by a group. ${esc(ctx.invName())} isn’t in one yet, so ${ownerEmail ? `ask its owner (${esc(ownerEmail)})` : `ask its owner`} to start an event: Paran will put ${esc(ctx.invName())} in a group first.`
+      : runByGroup ? `${esc(ctx.invName())} is part of <b>${esc(runByGroup)}</b>, and its events are run by the group. Anything you’re asked to bring shows on your home screen. <button type="button" class="why-btn" data-why="events-what" aria-label="Why? More about this">?</button>`
+      : needsGroup && !ownerHere ? `Events are run by a group. ${esc(ctx.invName())} isn’t in one yet, so ${ownerEmail ? `ask its owner (${esc(ownerEmail)})` : `ask its owner`} to start an event: Paran will put ${esc(ctx.invName())} in a group first. <button type="button" class="why-btn" data-why="events-what" aria-label="Why? More about this">?</button>`
       : `List what an event needs, see where each thing is right now and who has it.`}</p>
     ${upcoming.length ? `<div class="label-sm">Coming up</div><div class="cards">${upcoming.map(eventCard).join(``)}</div>`
       : runByGroup ? `` : `<div class="empty">${icon(`calendar`, `big`)}<h3>No events yet</h3>
@@ -866,9 +866,9 @@ async function listFromWords(ev, preset = ``, { fresh = false } = {}) {
   let plan;
   try {
     plan = await planEvent(text, { inventory: [...by.values()].map(({ name, qty }) => ({ name, qty })), sections: repo.sectionsOf(ev.id).filter(Boolean), eventName: fresh ? `` : ev.name, today: ctx.todayStr() });
-  } catch (e) { wait?.(); toast(e.message || String(e), { ms: 6000 }); return; }
+  } catch (e) { wait?.(); toast(e.message || String(e), { ms: 6000, help: `ai-trouble` }); return; }
   wait?.();
-  if (!plan.lines.length) { toast(`Couldn’t find things to gather in that. Try listing them, one per line.`, { ms: 6000 }); return; }
+  if (!plan.lines.length) { toast(`Couldn’t find things to gather in that. Try listing them, one per line.`, { ms: 6000, help: `event-words` }); return; }
   // fill in what the organizer left empty
   const patch = {};
   if (fresh && plan.name) patch.name = plan.name;

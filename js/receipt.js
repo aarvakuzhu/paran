@@ -35,9 +35,9 @@ export async function scanReceipt({ eventId = `` } = {}) {
     const lines = openNeeds(eventId);
     result = await readReceipt(shot.ai, { inventory, lines, categories: repo.categories() });
     result.lines = lines;
-  } catch (e) { wait?.(); toast(e.message || String(e), { ms: 6000 }); return; }
+  } catch (e) { wait?.(); toast(e.message || String(e), { ms: 6000, help: `ai-trouble` }); return; }
   wait?.();
-  if (!result.items.length) { toast(`Couldn’t read any products on that. Try a flatter, closer photo in good light.`, { ms: 6000 }); return; }
+  if (!result.items.length) { toast(`Couldn’t read any products on that. Try a flatter, closer photo in good light.`, { ms: 6000, help: `ai-trouble` }); return; }
   review(result, shot, eventId);
 }
 
