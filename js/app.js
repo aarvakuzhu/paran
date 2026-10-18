@@ -426,9 +426,11 @@ function kindFor(parentId) {
 }
 
 /** Location picker as a bottom sheet. Resolves with a location id or null. */
-function pickLocation(startId = ``, title = `Where does it live?`, { exclude = null, inside = null } = {}) {
+function pickLocation(startId = ``, title = `Where does it live?`, { exclude = null, inside = null, elsewhere = false } = {}) {
   return new Promise((resolve) => {
     let current = inside ?? (startId ? (repo.locById(startId)?.parentId || ``) : ``);
+    let other = ``; // browsing another inventory of the group (elsewhere: resolves { inv, locId, path })
+    const others = elsewhere ? otherGroupInventories() : [];
     if (exclude?.has(current)) current = ``;
     let done = false;
     const ok = (l) => !exclude || !exclude.has(l.id);
@@ -443,7 +445,29 @@ function pickLocation(startId = ``, title = `Where does it live?`, { exclude = n
         if (loc && ok(loc)) finish(loc.id);
         else if (loc) toast(`Can’t put it there`);
       });
+      const drawOther = () => {
+        const name = others.find((o) => o.id === other)?.name || `Inventory`;
+        const m = xlocal(other);
+        const head = `<div class="picker-crumbs"><button type="button" class="link" data-oback>${esc(invName())}</button><span class="sep">›</span><b>${esc(name)}</b></div>`;
+        if (!m?.locations) {
+          if (xmem[other]?.failed) { body.innerHTML = `${head}<p class="muted pad">Couldn’t open ${esc(name)}. Open it once from Inventories, then try again.</p>`; return; }
+          body.innerHTML = `${head}<p class="muted pad">Getting ${esc(name)}’s places…</p>`;
+          xfetch(other).then(() => { if (other) drawOther(); });
+          return;
+        }
+        const locs = m.locations.filter((l) => !l.deleted);
+        const terms = qEl.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const all = locs.map((l) => ({ id: l.id, path: xpath(locs, l.id).join(` › `) })).sort((a, b) => a.path.localeCompare(b.path))
+          .filter((x) => terms.every((t) => x.path.toLowerCase().includes(t)));
+        body.innerHTML = `${head}<div class="list">${all.slice(0, 80).map((x) => `<div class="list-row"><button type="button" class="list-main" data-opick="${esc(x.id)}">${icon(`place`)}<span>${esc(x.path)}</span></button></div>`).join(``)
+          || `<p class="muted pad">${locs.length ? `No place matches.` : `${esc(name)} has no places yet.`}</p>`}</div>
+          <div class="row-actions"><button type="button" class="btn ghost" data-opick="">Put in ${esc(name)}, no place yet</button></div>`;
+      };
+      const othersHtml = () => (others.length ? `<div class="label-sm">Other inventories in ${esc(repo.group()?.name || `the group`)}</div>
+        <div class="list">${others.map((o) => `<div class="list-row"><button type="button" class="list-main" data-oinv="${esc(o.id)}">${icon(`box`)}<span>${esc(o.name)}</span></button>
+          <button type="button" class="icon-btn" data-oinv="${esc(o.id)}" aria-label="Open ${esc(o.name)}">${icon(`chevron`)}</button></div>`).join(``)}</div>` : ``);
       const draw = () => {
+        if (other) return drawOther();
         const q = qEl.value.trim().toLowerCase();
         if (q) {
           const terms = q.split(/\s+/);
@@ -473,11 +497,17 @@ function pickLocation(startId = ``, title = `Where does it live?`, { exclude = n
           <div class="row-actions">
             <button type="button" class="btn ghost" data-new>${icon(`plus`)} New place${current ? ` in ${esc(here?.name || ``)}` : ``}</button>
             ${current ? `<button type="button" class="btn primary" data-pick="${esc(current)}">Put in ${esc(here?.name || ``)}</button>` : ``}
-          </div>`;
+          </div>${othersHtml()}`;
       };
       qEl.addEventListener(`input`, draw);
       body.addEventListener(`click`, async (e) => {
         const b = e.target.closest(`button`); if (!b) return;
+        if (b.dataset.oinv) { other = b.dataset.oinv; qEl.value = ``; qEl.placeholder = `Search places in ${others.find((o) => o.id === other)?.name || `it`}`; return draw(); }
+        if (b.dataset.oback !== undefined) { other = ``; qEl.value = ``; qEl.placeholder = `Search places`; return draw(); }
+        if (b.dataset.opick !== undefined) {
+          const locs = xlocal(other)?.locations || [];
+          done = true; resolve({ inv: other, locId: b.dataset.opick, path: b.dataset.opick ? xpath(locs, b.dataset.opick).join(` › `) : `` }); close(); return;
+        }
         if (b.dataset.pick !== undefined) return finish(b.dataset.pick);
         if (b.dataset.go !== undefined) { current = b.dataset.go; return draw(); }
         if (b.dataset.create !== undefined) {
@@ -496,6 +526,39 @@ function pickLocation(startId = ``, title = `Where does it live?`, { exclude = n
 }
 
 // ============================================================ Moving (single, bulk, undo)
+/** The group's other inventories this person can open: [{ id, name }]. Empty when not in a group (or in demo). */
+function otherGroupInventories() {
+  if (repo?.backend.kind !== `google` || repo.readOnly) return [];
+  const g = repo.group(); if (!g) return [];
+  const k = loadKnown(repo.user.email);
+  return Object.entries(k.inv).filter(([id, i]) => i.groupId === g.id && id !== repo.hereId && i.reachable !== false)
+    .map(([id, i]) => ({ id, name: i.name || `Inventory` })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Move items, here or (to = { inv, locId, path }) into another inventory of the group. */
+async function moveAnywhere(items, to) {
+  if (typeof to === `string`) return moveWithUndo(items, to);
+  const there = otherGroupInventories().find((o) => o.id === to.inv)?.name || `Inventory`;
+  const label = items.length === 1 ? items[0].name : `${items.length} items`;
+  const it = items.length === 1;
+  const ok = await confirmSheet(`Move ${label} to ${there}?`,
+    `${it ? `It moves` : `They move`} with photo, details and history, to ${to.path || `no place yet`}. Events that use ${it ? `it` : `them`} will look for ${it ? `it` : `them`} there. ${invName()} keeps a History line saying where ${it ? `it` : `they`} went.`, `Move`);
+  if (!ok) return false;
+  toast(`Moving ${label} to ${there}…`, { ms: 20000 });
+  try {
+    await repo.moveToInventory(items, to.inv, to.locId, { here: invName(), there, path: to.path });
+  } catch (e) {
+    if (e instanceof AuthError) { toast(`Sign in again, then try the move once more.`, { ms: 6000 }); return false; }
+    toast(/permission|forbidden|caller does not have/i.test(e?.message || ``) ? `${there} didn’t accept the change: you need edit access to it. Ask its owner.` : e.message || `Couldn’t move it`, { ms: 7000 });
+    return false;
+  }
+  delete xmem[to.inv]; // read that inventory's copy again (now with the items)
+  toast(`Moved ${label} to ${there}${to.path ? ` › ${to.path}` : ``}`, {
+    action: `Open ${there}`, ms: 7000,
+    onAction: () => switchTo(to.inv, { hash: items.length === 1 ? `#/item/${items[0].id}` : `#/` }),
+  });
+  return true;
+}
 /** Move items and offer Undo. Moving a lent item means it's back home. */
 async function moveWithUndo(items, toId) {
   const moving = items.filter((i) => i && (i.locationId !== toId || i.status === `lent`));
@@ -593,9 +656,9 @@ async function onSelBar(e) {
   if (s === `move`) {
     const items = [...sel.ids].map((id) => repo.items.find((i) => i.id === id)).filter(Boolean);
     const common = items.every((i) => i.locationId === items[0]?.locationId) ? items[0]?.locationId : ``;
-    const id = await pickLocation(common, `Move ${items.length} item${items.length > 1 ? `s` : ``} to…`);
-    if (!id) return;
-    selStop(); await moveWithUndo(items, id);
+    const to = await pickLocation(common, `Move ${items.length} item${items.length > 1 ? `s` : ``} to…`, { elsewhere: true });
+    if (!to) return;
+    selStop(); await moveAnywhere(items, to);
   }
 }
 function installSelectionGestures() {
@@ -1354,8 +1417,9 @@ function viewItem(view, r) {
     else if (a === `menu`) itemMenu(item);
     else if (a === `share`) shareItem(item);
     else if (a === `move`) {
-      const id = await pickLocation(item.locationId, `Move to…`);
-      if (id) await moveWithUndo([item], id);
+      const to = await pickLocation(item.locationId, `Move to…`, { elsewhere: true });
+      if (typeof to === `object` && to) { if (await moveAnywhere([item], to)) goBack(`#/`); }
+      else if (to) await moveWithUndo([item], to);
     } else if (a === `lend`) {
       await lendOrSave(item);
     } else if (a === `pickup`) {

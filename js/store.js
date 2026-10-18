@@ -362,6 +362,7 @@ class GoogleBackend {
           .filter(([f]) => ITEM_COLS.includes(f)).map(([f, v]) => ({ range: `Items!${colLetterOf(ITEM_COLS.indexOf(f))}${r}`, values: [[v ?? ``]] })));
         continue;
       }
+      if (op.kind === `logrows`) { if (op.data.length) await sheets.append(op.sheet || this.sheetId, `Log!A1`, op.data.map((d) => objectToRow(d, LOG_COLS))); continue; }
       if (op.kind === `member`) { await sheets.append(this.sheetId, `Members!A1`, [objectToRow(op.data, MEMBER_COLS)]); continue; }
       const target = op.sheet || this.sheetId; // group events go to the group's directory sheet
       if ((op.kind === `event` || op.kind === `eline`) && !this.tabsOk.has(target)) { if (await this.ensureEventTabs(target)) this.tabsOk.add(target); }
@@ -1066,6 +1067,63 @@ export class Repo extends EventTarget {
     this.outbox.push({ kind: `xitem`, sheet: invId, data: { id: item.id, fields: patch } });
     if (log) this.outbox.push({ kind: `log`, sheet: invId, data: { ts, itemId: item.id, action: log.action, detail: log.detail || ``, by: this.user.email, info: log.info || ``, changes: `` } });
     this.saveCache(); this.flush(); this.emit();
+  }
+
+  /**
+   * Move items from this inventory into another inventory of the group (the school's storage → "Ravi's garage").
+   * The item keeps its id, photo, details, status (lent stays lent) and history; it's written there first, and only
+   * then removed here, so a refusal from Google leaves it where it was. Needs a connection and edit access to both.
+   * names: { here, there, path } for the History lines. Resolves the moved items (as they are now there).
+   */
+  async moveToInventory(items, invId, locationId, names) {
+    if (this.backend.kind !== `google`) throw new Error(`Moving between inventories needs Google sign-in.`);
+    if (!invId || invId === this.hereId) throw new Error(`That’s this inventory.`);
+    if (this.readOnly) throw new Error(`You can view ${names.here}, but not change it.`);
+    if (!navigator.onLine) throw new Error(`Moving to another inventory needs a connection. Try again when you’re online.`);
+    let canEdit = null;
+    try { canEdit = (await drive.meta(invId)).capabilities?.canEdit; }
+    catch (e) { if (e instanceof AuthError) throw e; throw new Error(`Couldn’t reach ${names.there}. Open it once from Inventories, then try again.`); }
+    if (canEdit === false) throw new Error(`You can view ${names.there}, but not change it. Ask its owner for edit access.`);
+    await this.flush(); // a new photo or edit still on its way here goes first, so the copy there is complete
+    const ids = new Set(items.map((i) => i.id));
+    if (this.outbox.some((o) => ids.has(o.data?.id) || ids.has(o.itemId))) throw new Error(`Still saving changes to ${items.length > 1 ? `these items` : items[0].name}. Try again in a moment.`);
+    const ts = now(); const me = this.user.email;
+    const fromText = (i) => [names.here, this.pathText(i.locationId)].filter(Boolean).join(` › `);
+    const toText = [names.there, names.path].filter(Boolean).join(` › `);
+    const moved = items.map((i) => ({ ...i, locationId, updatedAt: ts, updatedBy: me, deleted: `` }));
+    const rows = []; const logs = [];
+    for (const it of moved) {
+      rows.push({ kind: `item`, sheet: invId, data: { ...it, thumb: this.thumbs[it.id] || ``, photos: this.photosForSheet(it.photos) } });
+      // its history comes along (oldest first), then the move itself
+      logs.push(...this.log.filter((e) => e.itemId === it.id).sort((a, b) => String(a.ts).localeCompare(String(b.ts))));
+      logs.push({ ts, itemId: it.id, action: `moved`, detail: toText, by: me, info: `from ${fromText(items.find((x) => x.id === it.id))}`, changes: `` });
+    }
+    await this.backend.writeOps([...rows, { kind: `logrows`, sheet: invId, data: logs }]); // throws if Google refuses: nothing changed here
+    try { // that inventory's copy on this phone, so it shows there at once (and offline)
+      const key = `paran.cache.${invId}`; const c = JSON.parse(localStorage.getItem(key) || `null`);
+      if (c) {
+        c.items = [...moved.map(({ thumb, ...x }) => x), ...(c.items || []).filter((x) => !ids.has(x.id))];
+        c.log = [...(c.log || []), ...logs];
+        localStorage.setItem(key, JSON.stringify(c));
+      }
+      const t = (await blobs.get(`thumbs:${invId}`).catch(() => null)) || {};
+      for (const it of moved) {
+        if (this.thumbs[it.id]) t[it.id] = this.thumbs[it.id];
+        for (const p of this.photosOf(it)) if (this.thumbs[`x:${p.pid}`]) t[`x:${p.pid}`] = this.thumbs[`x:${p.pid}`];
+      }
+      await blobs.put(`thumbs:${invId}`, t).catch(() => {});
+    } catch { /* storage full: it's in that inventory's sheet anyway */ }
+    for (const it of items) {
+      await this.saveItem({ id: it.id, deleted: ts }, { logAction: `moved`, detail: toText, info: `from ${fromText(it)}` });
+    }
+    // group events that use these items now look for them there
+    for (const l of this.eventLines.filter((x) => !x.deleted)) {
+      const src = this.sourcesOf(l);
+      if (!src.some((s) => ids.has(s.id) && s.inv === this.hereId)) continue;
+      this.setSources(l, src.map((s) => (ids.has(s.id) && s.inv === this.hereId ? { ...s, inv: invId } : s)));
+    }
+    this.emit();
+    return moved;
   }
 
   /** Copy an event for next time: same sections, items, quantities and notes (and, if asked, who brings what). */
