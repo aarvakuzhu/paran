@@ -29,6 +29,9 @@ async def main():
             await pg.goto('http://localhost:8080/#/'); await pg.wait_for_timeout(300); await pg.click('#helpbtn'); await pg.wait_for_timeout(300)
             await pg.fill('[data-hq]', 'how do I share an inventory with my whole family and friends'); await pg.wait_for_timeout(200)
             m = await pg.evaluate(WIDTH); check(m['sw'] <= m['W'], f'{w}px Help sheet with a long question')
+            await pg.fill('[data-hq]', 'move an item to another place'); await pg.wait_for_timeout(200)
+            await pg.click('[data-toggle="move"] >> nth=0'); await pg.wait_for_timeout(800)  # two pictures side by side
+            m = await pg.evaluate(WIDTH); check(m['sw'] <= m['W'] and bool(await pg.query_selector('.help-shots.many img')), f'{w}px Help topic with pictures')
             await pg.click('.sheet-wrap.open [data-close]'); await pg.wait_for_timeout(300)
             # the tab bar stays at the bottom while scrolling
             await pg.goto('http://localhost:8080/#/places'); await pg.wait_for_timeout(400)

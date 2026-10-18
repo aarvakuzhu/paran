@@ -28,7 +28,7 @@ in Drive), the home template as is, and an empty start.
 
 `help_flows.py` (demo mode): ? on every screen with that screen's topics first, search on real phrasings, a question
 about your things handed to item search, **Take me there for every topic** (its screen opens and the button it
-points at exists), and feedback kept and listed in Your activity. `node tools/help-check.mjs` checks the catalog
+points at exists), feedback kept and listed in Your activity, and a topic's pictures (all load, with captions, tap to enlarge, and an offline note when they can't load). `node tools/help-check.mjs` checks the catalog
 against the code without a browser.
 
 `help_ask.py` (demo, stand-in Gemini): Ask AI only with AI on; the answer with its source topics and Take me there;

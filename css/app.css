@@ -1201,3 +1201,14 @@ input, select, textarea { max-width: 100%; }
 .place-add { grid-template-columns: minmax(0, 1fr) auto; }
 .place-add > * { min-width: 0; }
 @media (max-width: 340px) { .place-add { grid-template-columns: 1fr; } }
+
+/* help pictures (tools/help-shots.py) */
+.help-shots { display: grid; gap: 10px; min-width: 0; }
+.help-shots.many { grid-auto-flow: column; grid-auto-columns: 86%; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; overscroll-behavior-x: contain; }
+.help-shot { margin: 0; min-width: 0; scroll-snap-align: start; display: grid; gap: 6px; }
+.help-shot-img { display: block; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); width: 100%; cursor: zoom-in; }
+.help-shot-img img { display: block; width: 100%; height: auto; }
+.help-shot.off .help-shot-img { display: none; }
+.help-shot figcaption { font-size: 13px; color: var(--ink-2); }
+.help-shot figcaption b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; margin-right: 4px; }
+.help-zoom { display: block; width: 100%; height: auto; border-radius: 12px; }

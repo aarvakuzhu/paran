@@ -2457,6 +2457,26 @@ function askTopics(text, screen, prior) {
   return out;
 }
 
+// Pictures for help topics: made from the app by tools/help-shots.py; index.json says which topic has which.
+// Loaded when Help opens (not with the app); a picture not on the phone yet just isn't shown offline.
+let shotIndex = null; let shotLoading = null;
+function loadShots() {
+  if (shotIndex || shotLoading) return shotLoading || Promise.resolve(shotIndex);
+  shotLoading = fetch(`help/shots/index.json`).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
+    .then((x) => { shotIndex = x || {}; return shotIndex; }).finally(() => { shotLoading = null; });
+  return shotLoading;
+}
+function shotsHtml(t) {
+  const list = shotIndex?.[t.id]?.shots || [];
+  if (!list.length) return ``;
+  return `<div class="help-shots${list.length > 1 ? ` many` : ``}">${list.map((x, i) => {
+    const src = `help/shots/${esc(x.f)}?v=${esc(x.v)}`;
+    return `<figure class="help-shot"><button type="button" class="help-shot-img" data-zoom="${src}" data-cap="${esc(x.cap || t.q)}" aria-label="Enlarge picture${list.length > 1 ? ` ${i + 1}` : ``}">
+      <img src="${src}" alt="${esc(x.cap || ``)}" loading="lazy" width="560" height="420"></button>
+      ${x.cap ? `<figcaption>${list.length > 1 ? `<b>${i + 1}</b> ` : ``}${esc(x.cap)}</figcaption>` : ``}</figure>`;
+  }).join(``)}</div>`;
+}
+
 function helpSheet(startQuery = ``) {
   const screen = helpScreen();
   let q = startQuery; let open = ``;
@@ -2468,9 +2488,16 @@ function helpSheet(startQuery = ``) {
       <div class="help-tell"><button type="button" class="link small" data-tell>${icon(`edit`)} Can’t find it? Tell us what you were trying to do</button></div>
     </div>`;
     const list = $(`.help-list`, el); const input = $(`[data-hq]`, el);
+    if (!shotIndex) loadShots().then(() => { if (open && el.isConnected) draw(); });
+    // a picture that can't load (offline, not on the phone yet): say so instead of a broken image
+    el.addEventListener(`error`, (e) => {
+      const fig = e.target.tagName === `IMG` && e.target.closest(`.help-shot`);
+      if (fig && !fig.classList.contains(`off`)) { fig.classList.add(`off`); e.target.closest(`button`).insertAdjacentHTML(`afterend`, `<p class="fine">The picture shows when you’re online.</p>`); }
+    }, true);
     const card = (t) => `<div class="help-topic${open === t.id ? ` open` : ``}" data-topic="${esc(t.id)}">
       <button type="button" class="help-q" data-toggle="${esc(t.id)}">${esc(t.q)}${icon(`chevron`)}</button>
       ${open === t.id ? `<div class="help-a">
+        ${shotsHtml(t)}
         <ol>${t.steps.map((x) => `<li>${esc(x)}</li>`).join(``)}</ol>
         ${t.who ? `<p class="fine">${esc(t.who)}</p>` : ``}
         <div class="help-acts">${t.go ? `<button type="button" class="btn primary small" data-go="${esc(t.id)}">Take me there</button>` : ``}
@@ -2539,6 +2566,7 @@ function helpSheet(startQuery = ``) {
       const d = b.dataset;
       if (d.toggle) { open = open === d.toggle ? `` : d.toggle; draw(); $(`[data-topic="${CSS.escape(open)}"]`, el)?.scrollIntoView({ block: `nearest` }); return; }
       if (d.go) { const t = topicById(d.go); close(); helpGo(t); return; }
+      if (d.zoom) { sheet(d.cap || `Picture`, (z) => { z.innerHTML = `<img class="help-zoom" src="${esc(d.zoom)}" alt="${esc(d.cap || ``)}">`; }); return; }
       if (d.ask !== undefined) { const t = ask?.err ? ask.q : q.trim(); if (t) runAsk(t, ask?.err ? ask.prior : null); return; }
       if (d.aion !== undefined) { close(); if (await aiConsent(false)) helpSheet(q); return; }
       if (d.askyes !== undefined || d.askno !== undefined) {

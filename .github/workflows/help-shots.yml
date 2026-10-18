@@ -1,0 +1,35 @@
+name: help-pictures
+# Re-makes the Help pictures (help/shots) from the app after every change to it, and commits the ones that changed.
+# The pictures are never edited by hand: see tools/help-shots.py.
+on:
+  push:
+    branches: [main]
+    paths: ['js/**', 'css/**', 'index.html', 'tools/help-shots.py', 'tests/fake_google.py', 'tests/access_e2e.py']
+  workflow_dispatch:
+concurrency: { group: help-pictures, cancel-in-progress: true }
+permissions: { contents: write, pages: write }
+jobs:
+  pictures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Install browser
+        run: pip install playwright pillow && python -m playwright install --with-deps chromium
+      - name: Make the pictures
+        run: |
+          python -m http.server 8080 >/dev/null 2>&1 &
+          sleep 2
+          python -u tools/help-shots.py
+      - name: Commit the ones that changed
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          git add help/shots
+          if git diff --cached --quiet; then echo "Pictures unchanged"; exit 0; fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m "Help pictures re-made from the app"
+          git pull --rebase origin main && git push origin HEAD:main
+          # a push made by this workflow doesn't start a Pages build by itself
+          gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "Pages build not requested (it may build on its own)"

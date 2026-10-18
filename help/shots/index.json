@@ -1,0 +1,557 @@
+{
+ "activity": {
+  "sig": "9711690db2",
+  "shots": [
+   {
+    "f": "activity-1.webp",
+    "v": "2c0d6c18",
+    "cap": "More \u2192 Your activity"
+   }
+  ]
+ },
+ "add-item": {
+  "sig": "54300e4ab4",
+  "shots": [
+   {
+    "f": "add-item-1.webp",
+    "v": "ade22b20",
+    "cap": "The + button"
+   },
+   {
+    "f": "add-item-2.webp",
+    "v": "4f610dbc",
+    "cap": "Name it, then choose where it is"
+   }
+  ]
+ },
+ "ai-accuracy": {
+  "sig": "34184b2f25",
+  "shots": [
+   {
+    "f": "ai-accuracy-1.webp",
+    "v": "91c05c07",
+    "cap": "More \u2192 AI suggestions"
+   }
+  ]
+ },
+ "data": {
+  "sig": "c072b08788",
+  "shots": [
+   {
+    "f": "data-1.webp",
+    "v": "96500a21",
+    "cap": "More \u2192 Your data"
+   }
+  ]
+ },
+ "demo": {
+  "sig": "1ae9a8c659",
+  "shots": [
+   {
+    "f": "demo-1.webp",
+    "v": "dcc34284",
+    "cap": "More \u2192 Clear demo data"
+   }
+  ]
+ },
+ "edit-item": {
+  "sig": "91a4bfd11a",
+  "shots": [
+   {
+    "f": "edit-item-1.webp",
+    "v": "d8279b75",
+    "cap": "On the item: the pencil"
+   }
+  ]
+ },
+ "event-add": {
+  "sig": "f3a7c19c30",
+  "shots": [
+   {
+    "f": "event-add-1.webp",
+    "v": "9d7f5a29",
+    "cap": "On the event: Add items"
+   }
+  ]
+ },
+ "event-after": {
+  "sig": "856da94477",
+  "shots": [
+   {
+    "f": "event-after-1.webp",
+    "v": "6fe778d7",
+    "cap": "After: Back in place, Somewhere else, Missing\u2026"
+   }
+  ]
+ },
+ "event-assign": {
+  "sig": "96a84b9d95",
+  "shots": [
+   {
+    "f": "event-assign-1.webp",
+    "v": "89c0af71",
+    "cap": "Tap a line"
+   },
+   {
+    "f": "event-assign-2.webp",
+    "v": "41ff5b39",
+    "cap": "Who\u2019s bringing it: a name and how many"
+   }
+  ]
+ },
+ "event-copy": {
+  "sig": "e0addfba4f",
+  "shots": [
+   {
+    "f": "event-copy-1.webp",
+    "v": "0cd54ccc",
+    "cap": "\u22ef \u2192 Copy for next time"
+   }
+  ]
+ },
+ "event-dayof": {
+  "sig": "565a0a14e6",
+  "shots": [
+   {
+    "f": "event-dayof-1.webp",
+    "v": "7616cf57",
+    "cap": "Day of"
+   },
+   {
+    "f": "event-dayof-2.webp",
+    "v": "79f256a3",
+    "cap": "Tick each thing as it arrives"
+   }
+  ]
+ },
+ "event-readiness": {
+  "sig": "c1225e2885",
+  "shots": [
+   {
+    "f": "event-readiness-1.webp",
+    "v": "63cc8592",
+    "cap": "Ready so far, and filters"
+   },
+   {
+    "f": "event-readiness-2.webp",
+    "v": "456fc49c",
+    "cap": "Still needed: Share or Print"
+   }
+  ]
+ },
+ "event-reserve": {
+  "sig": "813c969456",
+  "shots": [
+   {
+    "f": "event-reserve-1.webp",
+    "v": "914db597",
+    "cap": "\u22ef \u2192 Reserve its items"
+   }
+  ]
+ },
+ "event-sections": {
+  "sig": "6f6fb63b80",
+  "shots": [
+   {
+    "f": "event-sections-1.webp",
+    "v": "bb608652",
+    "cap": "\u22ef \u2192 Rename a section"
+   }
+  ]
+ },
+ "event-share": {
+  "sig": "545f0de50d",
+  "shots": [
+   {
+    "f": "event-share-1.webp",
+    "v": "f6c780c6",
+    "cap": "The share button at the top"
+   }
+  ]
+ },
+ "event-words": {
+  "sig": "b6fdc90f34",
+  "shots": [
+   {
+    "f": "event-words-1.webp",
+    "v": "d4eac059",
+    "cap": "On the event: From a list"
+   }
+  ]
+ },
+ "events-what": {
+  "sig": "4159dab4b4",
+  "shots": [
+   {
+    "f": "events-what-1.webp",
+    "v": "fc78d5d4",
+    "cap": "More \u2192 Events \u2192 New event"
+   }
+  ]
+ },
+ "find": {
+  "sig": "7838f557e5",
+  "shots": [
+   {
+    "f": "find-1.webp",
+    "v": "158de03b",
+    "cap": "Find: type a word"
+   }
+  ]
+ },
+ "fresh": {
+  "sig": "6e6c0db953",
+  "shots": [
+   {
+    "f": "fresh-1.webp",
+    "v": "79eb74d7",
+    "cap": "More \u2192 Your data \u2192 Start fresh on this phone"
+   }
+  ]
+ },
+ "group": {
+  "sig": "753ba41ff5",
+  "shots": [
+   {
+    "f": "group-1.webp",
+    "v": "4a9fb10b",
+    "cap": "New group"
+   },
+   {
+    "f": "group-2.webp",
+    "v": "65b78d34",
+    "cap": "The group page"
+   }
+  ]
+ },
+ "help": {
+  "sig": "3cc565929d",
+  "shots": [
+   {
+    "f": "help-1.webp",
+    "v": "a5f2f3c4",
+    "cap": "? at the top of every screen"
+   }
+  ]
+ },
+ "history": {
+  "sig": "759fcac329",
+  "shots": [
+   {
+    "f": "history-1.webp",
+    "v": "515ddff2",
+    "cap": "On the item: History"
+   }
+  ]
+ },
+ "inventories": {
+  "sig": "511db6aa3b",
+  "shots": [
+   {
+    "f": "inventories-1.webp",
+    "v": "1c60e83c",
+    "cap": "Tap the inventory name \u2192 New inventory"
+   }
+  ]
+ },
+ "join": {
+  "sig": "1e8200d251",
+  "shots": [
+   {
+    "f": "join-1.webp",
+    "v": "1e898666",
+    "cap": "Open one shared with you"
+   }
+  ]
+ },
+ "lend": {
+  "sig": "3c2796dbb3",
+  "shots": [
+   {
+    "f": "lend-1.webp",
+    "v": "08a7c119",
+    "cap": "On the item: Lend or reserve"
+   },
+   {
+    "f": "lend-2.webp",
+    "v": "9d32b730",
+    "cap": "Type or pick who has it, then Lend"
+   },
+   {
+    "f": "lend-3.webp",
+    "v": "7f4f33ff",
+    "cap": "When it\u2019s back: Got it back"
+   }
+  ]
+ },
+ "missing": {
+  "sig": "8212e3543d",
+  "shots": [
+   {
+    "f": "missing-1.webp",
+    "v": "281b3aca",
+    "cap": "\u22ef \u2192 Mark as missing"
+   }
+  ]
+ },
+ "move": {
+  "sig": "030fdd3b2d",
+  "shots": [
+   {
+    "f": "move-1.webp",
+    "v": "eeff5a5c",
+    "cap": "On the item: Move"
+   },
+   {
+    "f": "move-2.webp",
+    "v": "8718d3be",
+    "cap": "Several at once: Select, tick them, then Move"
+   }
+  ]
+ },
+ "move-inventory": {
+  "sig": "df0e62d6df",
+  "shots": [
+   {
+    "f": "move-inventory-1.webp",
+    "v": "938b3df5",
+    "cap": "Move \u2192 Other inventories in your group"
+   },
+   {
+    "f": "move-inventory-2.webp",
+    "v": "62f2194c",
+    "cap": "Pick the place there"
+   }
+  ]
+ },
+ "offline": {
+  "sig": "e1154cf6f3",
+  "shots": [
+   {
+    "f": "offline-1.webp",
+    "v": "975b3141",
+    "cap": "Refresh now"
+   }
+  ]
+ },
+ "out": {
+  "sig": "dbb7275b89",
+  "shots": [
+   {
+    "f": "out-1.webp",
+    "v": "ae745eee",
+    "cap": "Out tab: by person"
+   }
+  ]
+ },
+ "people-change": {
+  "sig": "2aa5f10296",
+  "shots": [
+   {
+    "f": "people-change-1.webp",
+    "v": "8aed3587",
+    "cap": "Tap the person to change their access"
+   }
+  ]
+ },
+ "photo-ai": {
+  "sig": "9a5e839640",
+  "shots": [
+   {
+    "f": "photo-ai-1.webp",
+    "v": "9e20822d",
+    "cap": "More \u2192 AI suggestions \u2192 Set it up"
+   }
+  ]
+ },
+ "photos": {
+  "sig": "095a0082d9",
+  "shots": [
+   {
+    "f": "photos-1.webp",
+    "v": "156c6eeb",
+    "cap": "On the item: Add a photo, or More photos"
+   }
+  ]
+ },
+ "place-edit": {
+  "sig": "e5be1b205e",
+  "shots": [
+   {
+    "f": "place-edit-1.webp",
+    "v": "249990e4",
+    "cap": "Open the place \u2192 \u22ef \u2192 Rename, Move or Remove place"
+   }
+  ]
+ },
+ "places-setup": {
+  "sig": "9c963cdf26",
+  "shots": [
+   {
+    "f": "places-setup-1.webp",
+    "v": "80d2e2eb",
+    "cap": "Places tab \u2192 Add a place"
+   },
+   {
+    "f": "places-setup-2.webp",
+    "v": "c119675a",
+    "cap": "Inside a place: Add a place inside"
+   }
+  ]
+ },
+ "qr": {
+  "sig": "08f4f83071",
+  "shots": [
+   {
+    "f": "qr-1.webp",
+    "v": "f9cc7246",
+    "cap": "Place \u2192 \u22ef \u2192 Print QR label"
+   },
+   {
+    "f": "qr-2.webp",
+    "v": "2480ee99",
+    "cap": "Later: Scan label"
+   }
+  ]
+ },
+ "qty": {
+  "sig": "d881b3dde8",
+  "shots": [
+   {
+    "f": "qty-1.webp",
+    "v": "db46caf5",
+    "cap": "How many: \u2212 and +"
+   }
+  ]
+ },
+ "receipt": {
+  "sig": "5250820876",
+  "shots": [
+   {
+    "f": "receipt-1.webp",
+    "v": "1ab32d57",
+    "cap": "On Add: Bought a few things?"
+   },
+   {
+    "f": "receipt-2.webp",
+    "v": "d0a48e4d",
+    "cap": "On an event: Bought some? Scan the receipt"
+   }
+  ]
+ },
+ "remove-item": {
+  "sig": "06cef6a62a",
+  "shots": [
+   {
+    "f": "remove-item-1.webp",
+    "v": "0090f8c0",
+    "cap": "\u22ef \u2192 Remove from inventory"
+   }
+  ]
+ },
+ "rename-inv": {
+  "sig": "196207d332",
+  "shots": [
+   {
+    "f": "rename-inv-1.webp",
+    "v": "9ec6770e",
+    "cap": "More \u2192 the inventory \u2192 Rename this inventory"
+   }
+  ]
+ },
+ "reserve": {
+  "sig": "f9ea12d7cf",
+  "shots": [
+   {
+    "f": "reserve-1.webp",
+    "v": "072fa22c",
+    "cap": "Lend or reserve \u2192 Reserve, then a pick-up date"
+   }
+  ]
+ },
+ "roles": {
+  "sig": "4ad4e25728",
+  "shots": [
+   {
+    "f": "roles-1.webp",
+    "v": "1df5f3e2",
+    "cap": "Choose Can edit or Can view when inviting"
+   }
+  ]
+ },
+ "scan-many": {
+  "sig": "5c40f70ae6",
+  "shots": [
+   {
+    "f": "scan-many-1.webp",
+    "v": "717a5ea6",
+    "cap": "Open the shelf or bin \u2192 Scan many"
+   }
+  ]
+ },
+ "share-group": {
+  "sig": "66906be713",
+  "shots": [
+   {
+    "f": "share-group-1.webp",
+    "v": "bfd38035",
+    "cap": "On the group page: invite to the whole group"
+   }
+  ]
+ },
+ "share-inv": {
+  "sig": "fdf0180cfd",
+  "shots": [
+   {
+    "f": "share-inv-1.webp",
+    "v": "1df5f3e2",
+    "cap": "More \u2192 People & access: their Google email, then Invite"
+   }
+  ]
+ },
+ "share-item": {
+  "sig": "efc5eede13",
+  "shots": [
+   {
+    "f": "share-item-1.webp",
+    "v": "f42a2355",
+    "cap": "On the item: share"
+   }
+  ]
+ },
+ "signout": {
+  "sig": "69e4705217",
+  "shots": [
+   {
+    "f": "signout-1.webp",
+    "v": "5d5c157b",
+    "cap": "More \u2192 Sign out"
+   }
+  ]
+ },
+ "start": {
+  "sig": "39fa17cd7a",
+  "shots": [
+   {
+    "f": "start-1.webp",
+    "v": "68632d1c",
+    "cap": "Places tab \u2192 Quick-add rooms and places"
+   }
+  ]
+ },
+ "switch": {
+  "sig": "839e1b14b9",
+  "shots": [
+   {
+    "f": "switch-1.webp",
+    "v": "add47ac6",
+    "cap": "Tap the inventory name at the top"
+   },
+   {
+    "f": "switch-2.webp",
+    "v": "281a39e4",
+    "cap": "Pick one from Your inventories"
+   }
+  ]
+ }
+}

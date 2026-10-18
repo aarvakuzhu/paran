@@ -51,6 +51,10 @@ for (const t of HELP) {
   if (!t.q || !t.steps?.length) problems.push(`Topic "${t.id}" needs a question and steps.`);
   if (t.go && !screens.has(routeOf(t.go)) && routeOf(t.go) !== `more`) problems.push(`Topic "${t.id}" opens ${t.go}, which isn't a screen.`);
   for (const s of t.screens || []) if (!screens.has(s) && s !== `more`) problems.push(`Topic "${t.id}" is offered on "${s}", which isn't a screen.`);
+  for (const [n, sh] of (t.shots || []).entries()) {
+    if (typeof sh !== `object` || (sh.at && !screens.has(routeOf(sh.at)) && routeOf(sh.at) !== `more`)) problems.push(`Topic "${t.id}" picture ${n + 1} opens ${sh?.at}, which isn't a screen.`);
+    if (sh.tap && !Array.isArray(sh.tap)) problems.push(`Topic "${t.id}" picture ${n + 1}: tap must be a list of selectors.`);
+  }
   if (t.ui) {
     const attr = /^\[([a-z-]+)(?:="([^"]+)")?\]$/.exec(t.ui); const id = /^#([\w-]+)$/.exec(t.ui);
     const ok = attr ? all.includes(attr[2] ? `${attr[1]}="${attr[2]}"` : attr[1]) : id ? all.includes(`id="${id[1]}"`) : false;
@@ -61,8 +65,20 @@ for (const t of HELP) for (const r of t.related || []) if (!ids.has(r)) problems
 const offered = new Set(HELP.flatMap((t) => t.screens || []));
 for (const s of screens) if (!offered.has(s)) problems.push(`Screen "${s}" has no help topic (add it to a topic's screens).`);
 
+// 4. pictures (tools/help-shots.py makes them; GitHub re-makes them after every push, so out of date is only a note)
+let shotNote = ``;
+try {
+  const idx = JSON.parse(readFileSync(join(root, `help/shots/index.json`), `utf8`));
+  const want = HELP.filter((t) => t.shots?.length || (t.go && t.ui && t.shots === undefined));
+  const missing = want.filter((t) => !idx[t.id]?.shots?.length).map((t) => t.id);
+  for (const [id, v] of Object.entries(idx)) for (const sh of v.shots || []) {
+    try { readFileSync(join(root, `help/shots`, sh.f)); } catch { problems.push(`help/shots/index.json lists ${sh.f} for "${id}", but the file isn't there. Run python3 tools/help-shots.py.`); }
+  }
+  shotNote = `, pictures for ${want.length - missing.length} of ${want.length} topics${missing.length ? ` (not made yet: ${missing.join(`, `)})` : ``}`;
+} catch { shotNote = `, no pictures yet (python3 tools/help-shots.py)`; }
+
 if (problems.length) {
   console.error(`Help catalog is out of step with the app (${problems.length}):\n- ${problems.join(`\n- `)}`);
   process.exit(1);
 }
-console.log(`Help catalog OK: ${HELP.length} topics, ${actions.size} actions covered, ${screens.size} screens.`);
+console.log(`Help catalog OK: ${HELP.length} topics, ${actions.size} actions covered, ${screens.size} screens${shotNote}.`);
