@@ -59,3 +59,12 @@ photos kept only on the phone and nothing added to the inventory; back online, A
 two things, nothing); Save … as AI named them saves only the clear one, with its photo and AI accuracy; Check one by
 one (the two-things review, then an empty form for the photo AI found nothing in); Fill in later on Add and the offer
 when AI can't be reached; automatic off, then Select → Fill in with AI, and Delete.
+
+`licensing_e2e.py` (strict fake Google + a local Urimam server with test identity tokens, see the file's header):
+licensing off changes nothing (no requests, no banner, the old switch); the notice once, nothing sent before it;
+identity on a tap with an openid-email token and the Drive token never sent; the owner's report (group, directory,
+inventories; hashes only, no names); people counted once across a group and an inventory, *Added in Google Drive*;
+a member matched to the owner's licence; usage counts sent once each, AI feedback only when turned on; enforced: grace
+banner, invites stopped at the limit except for people already shared with, Remove from everything; restricted:
+keepers, a member not kept blocked, the owner never; the stand-in (`stub`), the check date on the Paran folder, sharing
+paused after 9 days unchecked and back on with Check now; nothing wider than a 320px phone.

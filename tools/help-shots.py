@@ -14,7 +14,8 @@
 #   at:  route, with {item} {lent} {reserved} {place} {spot} {event} filled from the sample data (default: the topic's go)
 #   tap: selectors to click first, in order ("fill:<selector>=<text>" types instead; "wait:<ms>" waits; "go:<route>" opens a screen)
 #   ui:  what to ring (default: the topic's ui; any Playwright selector); none = the top of the screen
-#   mode: 'google' to use the fake-Google group (default: the topic's google flag, else demo)
+#   mode: 'google' to use the fake-Google group (default: the topic's google flag, else demo); 'lic' = the same group
+#         with licensing on, against the in-browser stand-in (for topics marked lic)
 #   cap: caption under the picture
 import asyncio, hashlib, io, json, os, re, subprocess, sys
 from playwright.async_api import async_playwright
@@ -108,13 +109,22 @@ async def demo_page(b):
     await pg.reload(); await pg.wait_for_timeout(1500)
     return ctx, pg
 
-async def google_page(b):
+async def licensing_on(ctx, pg):
+    """Serve js/config.js with licensing on (the in-browser stand-in), and the privacy notice already seen."""
+    async def cfg(route):
+        r = await route.fetch(); body = (await r.text()).replace('LICENSE_URL: ``', 'LICENSE_URL: `stub`')
+        await route.fulfill(status=200, content_type='text/javascript', body=body)
+    await ctx.route('**/js/config.js*', cfg)
+    await pg.evaluate("localStorage.setItem('paran.lic.consent', JSON.stringify({ at: '2026-10-20T10:00:00Z', feedback: false })); localStorage.setItem('paran.lic.hideTest', '1')")
+
+async def google_page(b, lic=False):
     """The owner of a school group (Main building + Storage unit) with a few things, against the fake Google."""
     sys.path.insert(0, os.path.join(ROOT, 'tests'))
     src = open(os.path.join(ROOT, 'tests', 'access_e2e.py')).read().split('\nasync def main():')[0]
     env = {}; exec(src.replace("import os; SP = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, SP)", "import os"), env)
     G = env['G']; G.FILES.clear(); G.SHEETS.clear(); G.PICKED.clear()
     ctx, pg, _ = await env['phone'](b, env['OWNER'])
+    if lic: await licensing_on(ctx, pg); await pg.reload(); await pg.wait_for_timeout(2000)
     await pg.clock.set_fixed_time(FIXED_NOW)
     await pg.add_style_tag(content=NO_MOTION)
     await pg.click('#create'); await pg.wait_for_timeout(300); await pg.click('[data-tpl="group"]'); await pg.wait_for_timeout(300)
@@ -144,7 +154,7 @@ async def main(only):
             try:
                 for n, s in enumerate(specs(t), 1):
                     mode = s.get('mode') or ('google' if t.get('google') else 'demo')
-                    if mode not in pages: pages[mode] = await (google_page(b) if mode == 'google' else demo_page(b))
+                    if mode not in pages: pages[mode] = await (google_page(b, lic=mode == 'lic') if mode in ('google', 'lic') else demo_page(b))
                     pg = pages[mode][1]
                     data = await shoot(pg, t, n, s)
                     name = f"{t['id']}-{n}.webp"

@@ -11,6 +11,13 @@ export const CONFIG = {
   ROOT_FOLDER_NAME: `Paran Inventory`,
   SHEET_NAME: `Paran Inventory`,
   LEGACY_SHEET_NAME: `Stash Inventory`, // early pilot inventories; still offered when joining
+
+  // Licensing (Urimam): usage counts, the people an owner shares with, and the owner's plan.
+  // Empty = off: nothing is sent and the app behaves as before. `stub` = an in-browser stand-in for testing.
+  LICENSE_URL: ``,
+  LICENSE_APP_ID: `paran`,
+  LICENSE_KEYS: [],              // the server's public signing key(s) (JWKS entries), so checks verify on first open offline
+  LICENSE_FAIL_OPEN_DAYS: null,  // pilot: no limit. Once enforced, an owner unchecked for 7 days has sharing paused.
 };
 
 export const SCOPES = [

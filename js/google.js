@@ -67,6 +67,36 @@ export function hasValidToken() {
   return Boolean(token && token.expires_at > Date.now());
 }
 
+/**
+ * A separate Google token that only proves who the person is (openid + email), for Paran's licensing server.
+ * include_granted_scopes=false keeps Drive access out of it, so that server never holds a token that can read anyone's
+ * inventory. Needs a user gesture (it may open a popup that closes by itself: the scopes are already granted).
+ * Resolves to the token string, or null if it couldn't be had or carries more than identity.
+ */
+let idPending = null;
+export async function getIdentityToken({ hint = `` } = {}) {
+  if (!CONFIG.CLIENT_ID) return null;
+  if (idPending) return idPending;
+  idPending = (async () => {
+    await loadScript(`https://accounts.google.com/gsi/client`);
+    return new Promise((resolve) => {
+      const done = (v) => { idPending = null; resolve(v); };
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: CONFIG.CLIENT_ID,
+        scope: `openid email`,
+        include_granted_scopes: false,
+        callback: (resp) => {
+          const extra = String(resp?.scope || ``).split(/\s+/).filter((x) => x && !/^(openid|email|profile)$|userinfo\.(email|profile)$/.test(x));
+          done(resp?.access_token && !resp.error && !extra.length ? resp.access_token : null);
+        },
+        error_callback: () => done(null),
+      });
+      client.requestAccessToken({ prompt: ``, ...(hint ? { hint, login_hint: hint } : {}) });
+    });
+  })();
+  return idPending;
+}
+
 export function signOut() {
   if (token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token.access_token, () => {});
   token = null;
@@ -140,6 +170,16 @@ export const drive = {
   },
   permissions(fileId) {
     return api(`${DRIVE}/files/${fileId}/permissions?fields=permissions(id,type,emailAddress,role,pendingOwner)`).then((r) => r.permissions || []);
+  },
+  /** Everyone with access, every page, including link and domain sharing (for counting people). */
+  async allPermissions(fileId) {
+    const out = []; let page = ``;
+    do {
+      const r = await api(`${DRIVE}/files/${fileId}/permissions?pageSize=100&fields=nextPageToken,permissions(id,type,role,emailAddress,domain,deleted)${page ? `&pageToken=${page}` : ``}`);
+      out.push(...(r.permissions || []));
+      page = r.nextPageToken || ``;
+    } while (page);
+    return out;
   },
   updatePermission(fileId, permId, body) {
     return api(`${DRIVE}/files/${fileId}/permissions/${permId}?fields=id,role,pendingOwner`, { method: `PATCH`, ...jsonBody(body) });

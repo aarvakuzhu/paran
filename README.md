@@ -172,6 +172,31 @@ Rules for editing the sheet by hand: it's fine to edit cell values and to sort o
 - AI suggestions use each user's own Gemini quota; the "photos analyzed today" count is per device, while Google's limit is per key's project.
 - Google accounts only.
 
+## Licensing (off by default)
+
+Paran can report to **Urimam**, the licensing server shared by AarvaKuzhu's apps (github.com/aarvakuzhu/urimam). It is
+off until `LICENSE_URL` is set in `js/config.js`; with it empty nothing is sent and nothing on screen changes.
+
+- **The licence is the owner's and counts people, not inventories.** Seats are the owner plus everyone who can open
+  anything they own in Paran (a group, a single inventory), once each, read from Google Drive's sharing. Groups and
+  inventories are only read; licensing never moves, shares or relabels them, and writes no ids into sheets (the server
+  matches an inventory to its owner's licence from the owner's report). Pilot: every feature is on; only people count.
+- **Who you are:** a separate Google token with only `openid email` (no Drive access), asked on a tap about every two
+  weeks, exchanged for a 14-day licensing session. Paran's Drive token never leaves the phone.
+- **What's sent:** the counts on Your activity (what's new, about every 6 hours and when the app closes), and the owner's
+  sharing as one-way hashes. Never items, notes, places, photos, file names or emails. A notice says so once (OK only).
+  With licensing on, Your activity's off switch becomes **Share AI feedback** (per-field AI accuracy, optional, off).
+- **On screen:** People & access and group pages get **Everyone you share with** (owners): everyone once, when they last
+  opened Paran, *Added in Google Drive*, **Remove** from everything you own, and **Choose who keeps access** when over.
+  A banner under the top bar carries the server's messages. Invites stop at the limit (people already shared with can
+  always be added elsewhere). Someone not kept sees a screen saying so, with Check again and Switch inventory.
+- **Observe vs enforce** is the server's setting: in observe (the pilot) nothing is applied; what would have been shown
+  is counted. Fail open: an owner the server never answered for is allowed; once enforced, an owner unchecked for 7 days
+  has sharing paused until a check succeeds (the date is kept on their Paran folder in Drive). Members are never locked
+  out because the server can't be reached.
+- `LICENSE_URL = 'stub'` runs an in-browser stand-in with test switches on Your activity (mode, limit, grace, force a
+  state, server unreachable).
+
 ## Files
 
 ```
@@ -189,6 +214,10 @@ js/ai.js                optional Gemini suggestions (consent, key check, pacing,
 js/image.js             on-device photo resize + thumbnail
 js/ui.js                sheets, toasts, icons
 js/app.js               screens and routing
+js/stats.js             usage counts (Your activity)
+js/licensing.js         licensing client (off unless LICENSE_URL is set)
+js/licensing-stub.js    in-browser stand-in for the licensing server (LICENSE_URL = `stub`)
+js/licensing-rules.js   the licensing server's rules, vendored from Urimam (used by the stand-in)
 icons/                  app icons
 ```
 
