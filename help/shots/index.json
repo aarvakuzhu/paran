@@ -264,6 +264,16 @@
    }
   ]
  },
+ "keep-access": {
+  "sig": "c720ddb594",
+  "shots": [
+   {
+    "f": "keep-access-1.webp",
+    "v": "75386b2a",
+    "cap": "Everyone you share with: Remove, or Choose who keeps access when over"
+   }
+  ]
+ },
  "lend": {
   "sig": "3c2796dbb3",
   "shots": [
@@ -409,6 +419,16 @@
    }
   ]
  },
+ "plan-people": {
+  "sig": "bf1491091b",
+  "shots": [
+   {
+    "f": "plan-people-1.webp",
+    "v": "098986d6",
+    "cap": "More \u2192 People & access \u2192 Everyone you share with"
+   }
+  ]
+ },
  "qr": {
   "sig": "08f4f83071",
   "shots": [
@@ -526,6 +546,16 @@
     "f": "scan-many-1.webp",
     "v": "47476379",
     "cap": "Open the shelf or bin \u2192 Scan many"
+   }
+  ]
+ },
+ "sends": {
+  "sig": "e4561446d2",
+  "shots": [
+   {
+    "f": "sends-1.webp",
+    "v": "9c007ea2",
+    "cap": "More \u2192 Your activity \u2192 What Paran sends"
    }
   ]
  },

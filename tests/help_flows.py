@@ -46,7 +46,7 @@ async def main():
         check('No help topic matches that yet' in T(await pg.inner_text('.help-list')), 'no match says so')
         await close_help()
         print('3. Take me there, for every topic that has one')
-        for t in [t for t in HELP if t.get('go')]:
+        for t in [t for t in HELP if t.get('go') and not t.get('lic')]:  # plan topics are only offered with licensing on
             await pg.goto('http://localhost:8080/#/'); await pg.wait_for_timeout(250)
             await open_help(); await pg.fill('[data-hq]', t['q']); await pg.wait_for_timeout(150)
             await pg.click(f'[data-toggle="{t["id"]}"] >> nth=0'); await pg.wait_for_timeout(150)

@@ -1,5 +1,7 @@
-// Usage stats, collected on this phone only and never sent (how they might be shared later is still to be decided).
-// Counts only: no names, emails, item names, places, photos or text, ever. Shown to the person in More → Your activity.
+// Usage stats: counts only (no names, emails, item names, places, photos or text, ever). Shown to the person in
+// More → Your activity. With licensing off they stay on this phone and the person can turn them off. With licensing on
+// (CONFIG.LICENSE_URL) they're part of using Paran: always kept, and licensing.js sends what's new to Paran's server
+// (per-field AI accuracy only if the person turns on Share AI feedback).
 //
 // Kept in localStorage under paran.stats:
 //   { id: random install id, days: { 'YYYY-MM-DD': Day } }
@@ -19,8 +21,13 @@ let paused = 0;
 /** Run fn without counting anything (the demo's sample data, for one). */
 export async function uncounted(fn) { paused++; try { return await fn(); } finally { paused--; } }
 
-export const statsOn = () => { try { return localStorage.getItem(OFF_KEY) !== `1`; } catch { return false; } };
+let required = false;
+/** Licensing on: counts can't be turned off (the switch on Your activity becomes Share AI feedback). */
+export function requireStats() { required = true; try { localStorage.removeItem(OFF_KEY); } catch { /* ignore */ } }
+export const statsRequired = () => required;
+export const statsOn = () => { if (required) return true; try { return localStorage.getItem(OFF_KEY) !== `1`; } catch { return false; } };
 export function setStatsOn(on) {
+  if (required) return;
   try {
     if (on) localStorage.removeItem(OFF_KEY);
     else { localStorage.setItem(OFF_KEY, `1`); localStorage.removeItem(KEY); } // off = nothing kept

@@ -1255,3 +1255,32 @@ input, select, textarea { max-width: 100%; }
 .draft-note { display: flex; gap: 6px; align-items: center; margin: -4px 0 0; }
 .review-selbar .btn { color: var(--bg); border-color: rgb(255 255 255 / 40%); }
 .review-selbar .btn:disabled { opacity: .45; }
+
+/* ---------- Licensing (only shown when CONFIG.LICENSE_URL is set) ---------- */
+.licbar { display: flex; align-items: center; gap: 10px; margin: 8px 16px 0; padding: 10px 12px; border-radius: 12px; font-size: 0.9rem;
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink-2); min-width: 0; }
+.licbar[hidden] { display: none; }
+.licbar > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.licbar > .ic, .licbar .btn, .licbar .icon-btn { flex: none; }
+.licbar.warning { background: var(--amber-soft); color: var(--amber); border-color: transparent; }
+.licbar.critical { background: var(--red-soft); color: var(--red); border-color: transparent; }
+.seats-row > span { display: grid; }
+.seats-row small { display: block; }
+.seats-row.over { background: var(--amber-soft); color: var(--amber); }
+.list.people .person > span { display: grid; gap: 1px; padding: 8px 0; }
+.list.people .person small { display: block; white-space: normal; overflow-wrap: anywhere; }
+.list.people .person b { overflow: hidden; text-overflow: ellipsis; }
+.tag { white-space: nowrap; font-style: normal; font-size: 0.74rem; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--amber-soft); color: var(--amber); }
+.tag.bad { background: var(--red-soft); color: var(--red); }
+.list-row.check { cursor: pointer; }
+.list-row.check > span { display: grid; padding: 8px 0; }
+.list-row.check input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.blocked { text-align: center; padding: 48px 8px; display: grid; gap: 12px; justify-items: center; }
+.blocked .stack { width: 100%; max-width: 320px; }
+.dbg .dbg-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.dbg .dbg-row select, .dbg .dbg-row input { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); max-width: 140px; min-width: 0; }
+.dbg-json { font-size: 0.78rem; white-space: pre-wrap; word-break: break-word; background: var(--surface); padding: 12px; border-radius: 12px; border: 1px solid var(--line); }
+.consent .menu-switch { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.consent .menu-switch small, .menu-switch small { display: block; color: var(--ink-3); font-size: 0.82rem; margin-top: 2px; font-weight: 400; }
+.menu-switch > span:first-child { display: grid; gap: 2px; padding: 10px 0; min-width: 0; }
+.menu-switch > span:first-child small { margin-left: 0; text-align: left; }

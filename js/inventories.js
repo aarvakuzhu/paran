@@ -258,3 +258,91 @@ export async function groupAccess(user, groupId, email, action) {
   if (g?.dirId) await setRoleRow(g.dirId, `People`, email, role);
   if (g) { g.people = (g.people || []).map((p) => (p.email === email ? { ...p, role } : p)).filter((p) => p.role !== `removed`); saveKnown(user.email, k); }
 }
+
+// ---------------------------------------------------------------- licensing (read-only on groups and inventories)
+/**
+ * Everything this person owns in Paran and who can open each, for the licensing server (people are hashed there,
+ * never sent as emails). Licensing only reads: nothing here moves, shares or relabels anything.
+ * → null when they own nothing (no licence), else { files, listed, props }:
+ *   files  [{ fileId, kind: group|directory|folder|inventory, name, general, people: [{ email, role, type }] }]
+ *   listed emails on the People lists (a group's People tab, an inventory's Members tab): invited through Paran
+ *   props  the licence check dates kept on their Paran folder ({ licOk, licMode })
+ * Their own photo folders inherit access from the inventory folder, so they add no one and aren't listed.
+ */
+export async function ownedAccess(user) {
+  const me = String(user.email).toLowerCase();
+  const mine = (fs) => fs.filter((f) => (f.owners || []).some((o) => String(o.emailAddress || ``).toLowerCase() === me));
+  const [groups, dirs, roots, invs, paran] = await Promise.all([`group`, `directory`, `root`, `sheet`, `paran`].map((r) => drive.findTagged(r)));
+  const owned = [...mine(groups).map((f) => [f.id, `group`, f.name]), ...mine(dirs).map((f) => [f.id, `directory`, f.name]),
+    ...mine(roots).map((f) => [f.id, `folder`, f.name]), ...mine(invs).map((f) => [f.id, `inventory`, f.name])];
+  if (!owned.length) return null;
+  const files = []; const listed = new Set([me]);
+  const ROLE = { owner: `owner`, organizer: `writer`, fileOrganizer: `writer`, writer: `writer`, commenter: `commenter`, reader: `reader` };
+  for (let i = 0; i < owned.length; i += 4) { // a few at a time
+    await Promise.all(owned.slice(i, i + 4).map(async ([fileId, kind, name]) => {
+      const perms = await drive.allPermissions(fileId);
+      const general = perms.some((p) => p.type === `anyone`) ? `anyoneWithLink` : perms.some((p) => p.type === `domain`) ? `domain` : `restricted`;
+      const people = perms.filter((p) => (p.type === `user` || p.type === `group`) && p.emailAddress && !p.deleted)
+        .map((p) => ({ email: String(p.emailAddress).toLowerCase(), role: ROLE[p.role] || `reader`, type: p.type }));
+      files.push({ fileId, kind, name, general, people }); // name stays on the phone (shown on Everyone you share with)
+      if (kind === `inventory` || kind === `directory`) {
+        const tab = kind === `inventory` ? `Members` : `People`;
+        const r = await sheets.get(fileId, `${tab}!A:B`).catch(() => null);
+        for (const row of (r?.values || []).slice(1)) if (row[0] && row[1] !== `removed`) listed.add(String(row[0]).toLowerCase());
+      }
+    }));
+  }
+  const root = mine(paran)[0];
+  let props = null;
+  if (root) { try { const m = await drive.meta(root.id); props = { licOk: m.appProperties?.licOk || null, licMode: m.appProperties?.licMode || null, rootId: root.id }; } catch { /* ignore */ } }
+  return { files, listed: [...listed], props };
+}
+
+/** The day the owner's plan was last checked, kept on their Paran folder (so clearing the phone doesn't reset it). */
+export async function recordLicenceCheck(user, mode) {
+  const key = `paran.lic.okDay.${user.email}`;
+  const today = new Date().toISOString().slice(0, 10);
+  if (localStorage.getItem(key) === `${today}|${mode}`) return; // once a day
+  const found = (await drive.findTagged(`paran`)).find((f) => (f.owners || []).some((o) => o.emailAddress === user.email));
+  if (!found) return;
+  await drive.setProps(found.id, { licOk: today, licMode: mode });
+  try { localStorage.setItem(key, `${today}|${mode}`); } catch { /* ignore */ }
+}
+
+/**
+ * Remove someone from everything this person owns in Paran (every group and inventory), so they no longer take a
+ * seat. Uses the same removal as People & access, including their row on each People list.
+ * → { places: [{ kind: group|inventory, id, folderId, name, role }] they were taken off (for Undo), failed: [names] }
+ */
+export async function removeEverywhere(user, email) {
+  const lower = email.toLowerCase(); const me = user.email.toLowerCase();
+  const mine = (fs) => fs.filter((f) => (f.owners || []).some((o) => String(o.emailAddress || ``).toLowerCase() === me));
+  const [groups, roots, invs] = await Promise.all([`group`, `root`, `sheet`].map((r) => drive.findTagged(r)));
+  const perm = async (id) => (id ? (await drive.permissions(id).catch(() => [])).find((p) => String(p.emailAddress || ``).toLowerCase() === lower && p.role !== `owner`) : null);
+  const places = []; const failed = [];
+  for (const g of mine(groups)) {
+    const p = await perm(g.id); if (!p) continue;
+    try { await groupAccess(user, g.id, email, `remove`); places.push({ kind: `group`, id: g.id, name: g.name, role: p.role }); } catch { failed.push(g.name); }
+  }
+  for (const s of mine(invs)) {
+    const folder = mine(roots).find((r) => (s.parents || []).includes(r.id));
+    const p = await perm(s.id); const pf = await perm(folder?.id);
+    if (!p && !pf) continue;
+    try {
+      await changeAccess([{ id: s.id, kind: `sheet` }, { id: folder?.id, kind: `folder` }], email, `remove`);
+      await setRoleRow(s.id, `Members`, email, `removed`);
+      places.push({ kind: `inventory`, id: s.id, folderId: pf ? folder.id : ``, name: s.name, role: p?.role || `` });
+    } catch { failed.push(s.name); }
+  }
+  return { places, failed };
+}
+
+/** Undo removeEverywhere: share each place again the way it was. */
+export async function restoreEverywhere(user, email, places) {
+  for (const p of places) {
+    const role = p.role === `reader` ? `reader` : `writer`;
+    if (p.kind === `group`) { await groupAccess(user, p.id, email, role); continue; }
+    if (p.role) { await changeAccess([{ id: p.id, kind: `sheet` }], email, role); await setRoleRow(p.id, `Members`, email, role === `reader` ? `viewer` : `member`); }
+    if (p.folderId) await drive.share(p.folderId, email, `reader`, false);
+  }
+}

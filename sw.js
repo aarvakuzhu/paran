@@ -1,10 +1,10 @@
 // App shell served from the device instantly (cache first). Google API calls are never cached here.
 // Updating: bump VERSION (keep the paran- prefix: other apps on this site, like the Stash pilot, have their own caches). The new version is downloaded in the background as one complete set,
 // then the page offers "Reload" (or picks it up on the next open). Files are never mixed across versions.
-const VERSION = `paran-v38`;
+const VERSION = `paran-v39`;
 const SHELL = [
   `./`, `./index.html`, `./css/app.css`, `./manifest.webmanifest`,
-  `./js/app.js`, `./js/config.js`, `./js/google.js`, `./js/store.js`, `./js/search.js`, `./js/image.js`, `./js/ui.js`, `./js/idb.js`, `./js/ai.js`, `./js/scan.js`, `./js/qrscan.js`, `./js/inventories.js`, `./js/events.js`, `./js/xinv.js`, `./js/receipt.js`, `./js/stats.js`, `./js/templates.js`, `./js/help.js`, `./js/drafts.js`, `./js/vendor/jsQR.min.js`,
+  `./js/app.js`, `./js/config.js`, `./js/google.js`, `./js/store.js`, `./js/search.js`, `./js/image.js`, `./js/ui.js`, `./js/idb.js`, `./js/ai.js`, `./js/scan.js`, `./js/qrscan.js`, `./js/inventories.js`, `./js/events.js`, `./js/xinv.js`, `./js/receipt.js`, `./js/stats.js`, `./js/templates.js`, `./js/help.js`, `./js/drafts.js`, `./js/licensing.js`, `./js/licensing-stub.js`, `./js/licensing-rules.js`, `./js/vendor/jsQR.min.js`,
   `./icons/icon-192.png`, `./icons/icon-512.png`,
 ];
 

@@ -14,6 +14,7 @@
 //            or if a topic's ui/covers no longer exist in the code. That's what keeps this file up to date.
 //   who      who it's for, when it isn't everyone (shown under the answer)
 //   google   true when the button only exists when signed in with Google (not in demo mode)
+//   lic      true for topics about plans and what Paran sends: offered only when licensing is on (CONFIG.LICENSE_URL)
 //   shots    the pictures shown with the answer, made from the app by tools/help-shots.py (never by hand):
 //            [{ at: route, tap: [selectors], ui: what to ring, cap: caption, mode: 'google' }]. See that file.
 //
@@ -218,7 +219,7 @@ export const HELP = [
 
   // ---------------------------------------------------------------- data, account, app
   { id: `data`, q: `Where is my data, and can I get a copy?`, also: [`google drive`, `sheet`, `backup`, `export`, `csv`, `download`, `privacy`, `spreadsheet`],
-    steps: [`Everything is in your own Google Drive, in a Paran folder; Paran has no server.`, `More → Your data has the sheets (for owners) and Download this inventory (CSV).`],
+    steps: [`Everything you put in Paran is in your own Google Drive, in a Paran folder; Paran never sees what’s in it.`, `More → Your data has the sheets (for owners) and Download this inventory (CSV).`],
     go: `#/more/data`, shots: [{ at: `#/more/data`, ui: `[data-m="csv"]`, cap: `More → Your data` }],
     screens: [`more/data`], covers: [`m:csv`], related: [`offline`] },
   { id: `fresh`, q: `How do I start over from scratch?`, also: [`start over`, `reset`, `clean up`, `delete everything`, `restart`, `wipe`, `test data`, `fresh start`],
@@ -230,9 +231,27 @@ export const HELP = [
     shots: [{ at: `#/more/data`, ui: `[data-m="sync"]`, cap: `Refresh now` }],
     screens: [`more/data`], covers: [`m:sync`], related: [`data`] },
   { id: `activity`, q: `What does Your activity show?`, also: [`stats`, `usage`, `how much`, `counts`, `tracking`],
-    steps: [`More → Your activity shows what you’ve done in Paran: days used, items added, searches, events and AI.`, `It stays on this phone and isn’t sent anywhere; the switch there turns it off and deletes it.`],
+    steps: [`More → Your activity shows what you’ve done in Paran: days used, items added, searches, events and AI.`, `The bottom of that page says what happens to these counts and what you can switch off.`],
     go: `#/more/stats`, shots: [{ at: `#/more`, ui: `a[href="#/more/stats"]`, cap: `More → Your activity` }],
-    screens: [`more/stats`], related: [`ai-accuracy`] },
+    screens: [`more/stats`], related: [`ai-accuracy`, `sends`] },
+  { id: `sends`, lic: true, q: `What does Paran send, and can I turn it off?`, also: [`privacy`, `tracking`, `data collection`, `server`, `usage counts`, `ai feedback`, `opt out`, `turn off`],
+    steps: [`Your inventories stay in your Google Drive; Paran never sees item names, notes, places or photos.`, `Paran’s server gets who you are, a one-way code for each person you share with (not their email), when each last opened Paran, and the counts on Your activity. They run the plans and show how Paran is used, so they can’t be turned off; they’re kept 2 years.`, `Share AI feedback (how close AI suggestions were to what you saved) is optional and off unless you turn it on: More → Your activity.`],
+    go: `#/more/stats`, ui: `[data-m="sends"]`, shots: [{ at: `#/more/stats`, ui: `[data-m="sends"]`, mode: `lic`, cap: `More → Your activity → What Paran sends` }],
+    screens: [`more/stats`, `more/data`], covers: [`m:sends`], related: [`activity`, `data`] },
+  { id: `plan-people`, lic: true, q: `How many people can I share with?`, also: [`plan`, `free plan`, `limit`, `seats`, `how many people`, `over the limit`, `upgrade`, `paid`, `full`, `added in google drive`],
+    steps: [`Your plan counts people, not inventories: everyone who can open any of your groups or inventories counts once, and so do you.`, `More → People & access → Everyone you share with lists them all, when each last opened Paran, and anyone added straight in Google Drive.`, `To make room, tap Remove next to someone you no longer share with: they come off every group and inventory you own. Someone who already has one of yours can be added to another without taking a new place.`],
+    go: `#/more/people`, ui: `[data-everyone]`, shots: [{ at: `#/more/people`, ui: `[data-everyone]`, mode: `lic`, cap: `More → People & access → Everyone you share with` }],
+    screens: [`more/people`, `group`], google: true, who: `For owners.`, related: [`keep-access`, `people-change`] },
+  { id: `keep-access`, lic: true, q: `What happens when I share with more people than my plan includes?`, also: [`grace`, `choose who keeps access`, `keep access`, `over limit`, `14 days`, `sharing is off`, `restricted`],
+    steps: [`You can keep using everything yourself. For 14 days everyone else can too, and a message at the top says so.`, `Before then, remove people you no longer share with (Everyone you share with → Remove), or tap Choose who keeps access and tick who stays.`, `After the 14 days, only the people you chose can open your inventories in Paran, and you can’t invite anyone new until you’re back within your plan.`],
+    go: `#/more/people`, ui: `[data-everyone]`, shots: [{ at: `#/more/people`, tap: [`[data-everyone]`, `wait:2500`], ui: `.sheet .list.people`, mode: `lic`, cap: `Everyone you share with: Remove, or Choose who keeps access when over` }],
+    screens: [`more/people`, `group`], google: true, who: `For owners.`, related: [`plan-people`] },
+  { id: `cant-open`, lic: true, q: `Why can’t I open an inventory someone shared with me?`, also: [`blocked`, `over its free limit`, `paused`, `lost access`, `ask the owner`, `check again`],
+    steps: [`Its owner shares with more people than their plan includes, and didn’t choose you to keep access in Paran.`, `Ask the owner to keep you, or to make room. As soon as they do, tap Check again.`, `Your own inventories, and others shared with you, still open: tap Switch inventory.`],
+    screens: [], google: true, related: [`no-edit`] },
+  { id: `check-plan`, lic: true, q: `Why is sharing paused until Paran can check my plan?`, also: [`check now`, `sharing is paused`, `can't check`, `plan check`],
+    steps: [`Paran checks your plan with its server now and then. If it hasn’t been able to for a while, inviting people pauses until it can; everything else works as usual.`, `Tap Check now in the message at the top. You may see a quick Google window that closes by itself.`, `If it keeps failing, check your internet connection and try again later.`],
+    screens: [], google: true, related: [`plan-people`] },
   { id: `ai-accuracy`, q: `How accurate is AI?`, also: [`accuracy`, `wrong`, `mistake`, `ai wrong`, `how good`],
     steps: [`More → AI suggestions shows how often its suggestions were kept, as % right, for photos, receipts and event lists.`, `You always check before anything is saved.`],
     go: `#/more/ai`, shots: [{ at: `#/more`, ui: `a[href="#/more/ai"]`, cap: `More → AI suggestions` }],
@@ -265,7 +284,13 @@ export const HELP = [
 ];
 
 /** Actions in the code that don't need their own topic (navigation, closing, generic menus). */
-export const HELP_IGNORE = [`a:back`, `a:cancel`, `a:menu`, `ev:menu`];
+export const HELP_IGNORE = [`a:back`, `a:cancel`, `a:menu`, `ev:menu`,
+  `m:licnow`, `m:licsent`, `m:licreset`]; // licensing test switches: only in stub mode, for testing
+
+// Topics marked lic are about plans and what Paran sends: offered only when licensing is on.
+let licOn = false;
+export function setHelpLicensing(on) { licOn = Boolean(on); index = null; }
+const offered = (t) => licOn || !t.lic;
 
 // ---------------------------------------------------------------- search (offline)
 const STOP = new Set(`a an the i me my we our you your to do does did can could how what where when which who is are was it its of in on at for with and or from this that there here be get got want need please should would will any some`.split(` `));
@@ -276,7 +301,7 @@ const words = (t) => String(t || ``).toLowerCase().replace(/[’']/g, ``).split(
 
 let index = null; let idf = null;
 function buildIndex() {
-  index = HELP.map((t) => ({ t, q: new Set(words(t.q)), also: new Set(t.also.flatMap(words)), body: new Set(t.steps.flatMap(words)) }));
+  index = HELP.filter(offered).map((t) => ({ t, q: new Set(words(t.q)), also: new Set(t.also.flatMap(words)), body: new Set(t.steps.flatMap(words)) }));
   // rare words tell topics apart ("wife", "label"); words in many topics ("item", "tap") count for little
   const df = new Map();
   for (const e of index) for (const w of new Set([...e.q, ...e.also, ...e.body])) df.set(w, (df.get(w) || 0) + 1);
@@ -305,5 +330,5 @@ export function searchHelp(query, screen = ``) {
 }
 
 /** Topics offered first on a screen. */
-export function topicsFor(screen) { return HELP.filter((t) => t.screens.includes(screen)); }
+export function topicsFor(screen) { return HELP.filter((t) => offered(t) && t.screens.includes(screen)); }
 export const topicById = (id) => HELP.find((t) => t.id === id);
