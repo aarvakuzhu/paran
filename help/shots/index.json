@@ -14,12 +14,12 @@
   "shots": [
    {
     "f": "add-item-1.webp",
-    "v": "736dbd65",
+    "v": "772ab9e8",
     "cap": "The + button"
    },
    {
     "f": "add-item-2.webp",
-    "v": "3f0a480f",
+    "v": "538d2896",
     "cap": "Name it, then choose where it is"
    }
   ]
@@ -404,7 +404,7 @@
    },
    {
     "f": "places-setup-2.webp",
-    "v": "ec3cbb60",
+    "v": "754ff2b0",
     "cap": "Inside a place: Add a place inside"
    }
   ]
@@ -429,7 +429,7 @@
   "shots": [
    {
     "f": "qty-1.webp",
-    "v": "596b016d",
+    "v": "4bb3d9b5",
     "cap": "How many: \u2212 and +"
    }
   ]
@@ -439,12 +439,12 @@
   "shots": [
    {
     "f": "quick-capture-1.webp",
-    "v": "3c09cffe",
+    "v": "e5141d0b",
     "cap": "Open the place \u2192 Quick capture"
    },
    {
     "f": "quick-capture-2.webp",
-    "v": "80feae8c",
+    "v": "2383149a",
     "cap": "Where the photos go (tap to change); one photo per thing, then Done"
    }
   ]
@@ -499,12 +499,12 @@
   "shots": [
    {
     "f": "review-later-1.webp",
-    "v": "23cf01ce",
+    "v": "83cadbbb",
     "cap": "Find: photos to review"
    },
    {
     "f": "review-later-2.webp",
-    "v": "951e2c6a",
+    "v": "8c6720ba",
     "cap": "Check one by one, or select some"
    }
   ]
@@ -524,7 +524,7 @@
   "shots": [
    {
     "f": "scan-many-1.webp",
-    "v": "11d096a5",
+    "v": "47476379",
     "cap": "Open the shelf or bin \u2192 Scan many"
    }
   ]
