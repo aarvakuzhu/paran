@@ -14,7 +14,7 @@
   "shots": [
    {
     "f": "add-item-1.webp",
-    "v": "772ab9e8",
+    "v": "37d99aa3",
     "cap": "The + button"
    },
    {
@@ -269,7 +269,7 @@
   "shots": [
    {
     "f": "keep-access-1.webp",
-    "v": "75386b2a",
+    "v": "e8b3ed3c",
     "cap": "Everyone you share with: Remove, or Choose who keeps access when over"
    }
   ]
@@ -339,7 +339,7 @@
   "shots": [
    {
     "f": "no-edit-1.webp",
-    "v": "09de3712",
+    "v": "43624dcd",
     "cap": "More \u2192 People & access: who the owner is"
    }
   ]
@@ -369,7 +369,7 @@
   "shots": [
    {
     "f": "people-change-1.webp",
-    "v": "5ce69e09",
+    "v": "4ed963b9",
     "cap": "Tap the person to change their access"
    }
   ]
@@ -424,7 +424,7 @@
   "shots": [
    {
     "f": "plan-people-1.webp",
-    "v": "098986d6",
+    "v": "f41d63ff",
     "cap": "More \u2192 People & access \u2192 Everyone you share with"
    }
   ]
@@ -524,7 +524,7 @@
    },
    {
     "f": "review-later-2.webp",
-    "v": "8c6720ba",
+    "v": "54474051",
     "cap": "Check one by one, or select some"
    }
   ]
@@ -534,7 +534,7 @@
   "shots": [
    {
     "f": "roles-1.webp",
-    "v": "7273fb9d",
+    "v": "fc8bdb07",
     "cap": "Choose Can edit or Can view when inviting"
    }
   ]
@@ -554,7 +554,7 @@
   "shots": [
    {
     "f": "sends-1.webp",
-    "v": "9c007ea2",
+    "v": "29473a58",
     "cap": "More \u2192 Your activity \u2192 What Paran sends"
    }
   ]
@@ -574,7 +574,7 @@
   "shots": [
    {
     "f": "share-inv-1.webp",
-    "v": "7273fb9d",
+    "v": "fc8bdb07",
     "cap": "More \u2192 People & access: their Google email, then Invite"
    }
   ]
