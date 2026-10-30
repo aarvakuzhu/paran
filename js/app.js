@@ -9,7 +9,8 @@ import { search, findDuplicates } from './search.js';
 import { processPhoto, processExtraPhoto, shrinkForAi, cropItem } from './image.js';
 import { aiReady, aiSettings, saveAiSettings, disableAi, analyzePhoto, describeItem, scanPhotos, verifyKey, aiUsageToday, AiError, SIZES, aiTally, aiScore, askHelp } from './ai.js';
 import { esc, $, $$, toast, sheet, confirmSheet, promptSheet, icon, timeAgo, setToastHelp, explained, noteExplained } from './ui.js';
-import { captureScan } from './scan.js';
+import { captureScan, captureQuick } from './scan.js';
+import { listDrafts, draftCount, getDraft, addDraft, updateDraft, removeDraft, draftPhoto, draftThumb, autoFill, setAutoFill, nextForAi } from './drafts.js';
 import { initReceipts, scanReceipt, moneyText } from './receipt.js';
 import { count as statCount, snapshot as statSnapshot, statsOn, setStatsOn, statsData, addFeedback, feedbackList, clearFeedback } from './stats.js';
 import { searchHelp, topicsFor, topicById } from './help.js';
@@ -80,9 +81,14 @@ async function boot() {
     done: () => { if ([`add`].includes(route().name)) location.hash = `#/`; else render(); } });
   window.addEventListener(`hashchange`, () => { if (takeHelpLink()) return openHelpLink(); if (sel.on) selStop(); render(); });
   installSelectionGestures();
-  window.addEventListener(`online`, () => repo?.refresh());
+  window.addEventListener(`online`, () => { repo?.refresh(); drainDrafts(); });
+  window.addEventListener(`paran:drafts`, () => { // photos to review changed (AI filled one in, one was saved…)
+    if (!repo || document.querySelector(`.sheet-wrap.open`)) return;
+    const n = route().name;
+    if (n === `review` || (n === `find` && !findState.q.trim() && !findState.filter)) render();
+  });
   window.addEventListener(`offline`, () => { if (!repo) return; if (repo.backend.kind === `google`) repo.setStatus(`offline`); if (route().name === `find`) renderResults(); }); // search shows the offline note at once
-  document.addEventListener(`visibilitychange`, () => { if (!document.hidden) repo?.refresh(); });
+  document.addEventListener(`visibilitychange`, () => { if (!document.hidden) { repo?.refresh(); drainDrafts(); } });
 
   const mode = localStorage.getItem(MODE_KEY);
   if (mode === `demo`) return start(`demo`);
@@ -107,7 +113,7 @@ async function start(kind, { interactive = false, choice } = {}) {
   repo.addEventListener(`readonly`, onReadOnly);
     repo.addEventListener(`groupdenied`, onGroupDenied);
     renderShell();
-    setTimeout(openHelpLink, 400);
+    setTimeout(openHelpLink, 400); setTimeout(() => drainDrafts(), 2500);
     if (choice?.template) { location.hash = `#/places`; render(); await applyTemplate(choice.template); }
     else if (choice === `create` || choice?.create) location.hash = `#/setup`; // brand-new inventory: start by naming your places
     render();
@@ -128,7 +134,7 @@ function resumeGoogle() {
   repo.addEventListener(`readonly`, onReadOnly);
   repo.addEventListener(`groupdenied`, onGroupDenied);
   renderShell(); render();
-  setTimeout(openHelpLink, 400);
+  setTimeout(openHelpLink, 400); setTimeout(() => drainDrafts(), 2500);
   if (hasValidToken()) repo.refresh();
   else repo.setStatus(navigator.onLine ? `auth` : `offline`);
   installQuietRenew();
@@ -338,7 +344,7 @@ function render() {
     if (navStack[navStack.length - 1] !== location.hash) navStack.push(location.hash);
     if (navStack.length > 30) navStack.shift();
   }
-  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places`, group: `places`, events: `more`, event: `more` }[r.name] || `find`;
+  const tab = { find: `find`, item: `find`, edit: `add`, add: `add`, places: `places`, place: `places`, out: `out`, more: `more`, setup: `places`, group: `places`, events: `more`, event: `more`, review: `find` }[r.name] || `find`;
   const nm = $(`#invname`); if (nm) nm.textContent = invName();
   $$(`.tabbar a`).forEach((a) => a.classList.toggle(`active`, a.dataset.tab === tab));
   document.body.classList.toggle(`readonly`, Boolean(repo.readOnly)); // "Can view": edit actions are hidden
@@ -349,7 +355,7 @@ function render() {
   const view = $(`#view`);
   const y = window.scrollY;
   view.onclick = null; view.onsubmit = null;
-  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup, group: viewGroup, events: viewEvents, event: viewEvent };
+  const screens = { find: viewFind, item: viewItem, add: viewEdit, edit: viewEdit, places: viewPlace, place: viewPlace, out: viewOut, more: viewMore, setup: viewSetup, group: viewGroup, events: viewEvents, event: viewEvent, review: viewReview };
   (screens[r.name] || viewFind)(view, r);
   window.scrollTo(0, routeChanged ? 0 : y); // a background sync must not jump the page to the top
 }
@@ -535,6 +541,177 @@ function pickLocation(startId = ``, title = `Where does it live?`, { exclude = n
       draw();
     }, { onClose: () => { if (!done) resolve(null); } });
   });
+}
+
+// ============================================================ Photos to review (Fill in later, Quick capture)
+// Taken where there's no signal (or no time): kept on this phone only, filled in by AI when there's a connection
+// (automatically unless turned off), and saved to the inventory, for everyone, only once someone checks them.
+const SUG_FIELDS = [`name`, `qty`, `purpose`, `category`, `tags`, `size`, `notes`];
+let draining = false; let drainOnly = null; let drainPause = null; // { reason, until }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** AI works through the photos waiting for details, one at a time, paced under the free key's limit. */
+async function drainDrafts({ only = null } = {}) {
+  if (only) { drainOnly = new Set([...(drainOnly || []), ...only]); drainPause = null; }
+  if (draining || !repo || repo.readOnly) return;
+  const inv = repo.hereId;
+  for (const d of listDrafts(inv)) if (d.state === `reading`) updateDraft(inv, d.id, { state: `waiting` }); // left half-way last time
+  draining = true;
+  try {
+    for (;;) {
+      if (!repo || repo.hereId !== inv || !aiReady() || !navigator.onLine) break;
+      const forced = drainOnly?.size ? drainOnly : null;
+      if (!forced && !autoFill()) break;
+      if (drainPause && Date.now() < drainPause.until) break;
+      const d = nextForAi(inv, forced);
+      if (!d) { drainOnly = null; break; }
+      forced?.delete(d.id);
+      updateDraft(inv, d.id, { state: `reading` });
+      try {
+        const blob = await draftPhoto(d.id);
+        if (!blob) { await removeDraft(inv, d.id); continue; }
+        const items = await analyzePhoto(await shrinkForAi(blob), { categories: repo.categories(), location: d.locationId ? repo.pathText(d.locationId) : `` });
+        updateDraft(inv, d.id, { state: items.length ? `ready` : `none`, items, err: `` });
+      } catch (err) {
+        const kind = err instanceof AiError ? err.kind : `other`;
+        if (kind === `network`) { updateDraft(inv, d.id, { state: `waiting` }); break; }
+        if (kind === `daily` || kind === `key`) { updateDraft(inv, d.id, { state: `waiting` }); drainPause = { reason: err.message, until: Date.now() + (kind === `daily` ? 6 : 1) * 3600_000 }; break; }
+        if (kind === `busy`) { updateDraft(inv, d.id, { state: `waiting` }); await wait(30_000); continue; }
+        updateDraft(inv, d.id, { state: `error`, err: err.message || String(err), tries: (d.tries || 0) + 1 });
+      }
+      await wait(4500); // about 13 a minute: under the free key's 15
+    }
+  } finally { draining = false; window.dispatchEvent(new CustomEvent(`paran:drafts`)); }
+}
+
+/** One line on what AI is doing with the photos. */
+function draftAiLine(list) {
+  const waiting = list.filter((d) => [`waiting`, `reading`].includes(d.state) || (d.state === `error` && (d.tries || 0) < 3)).length;
+  if (!waiting) return ``;
+  if (!aiReady()) return `AI is off: fill them in yourself, or turn AI on in More → AI suggestions.`;
+  if (drainPause && Date.now() < drainPause.until) return drainPause.reason;
+  if (!navigator.onLine) return `${waiting} waiting for a connection. AI fills them in when you’re back online, with Paran open.`;
+  if (draining) return `AI is reading the photos: ${waiting} to go.`;
+  if (!autoFill()) return `${waiting} not filled in yet. Select some and tap Fill in with AI, or turn on automatic.`;
+  return `${waiting} waiting for AI.`;
+}
+const draftLabel = (d) => d.state === `ready` ? (d.items.length > 1 ? `${d.items.length} things: ${d.items.slice(0, 2).map((x) => x.name).join(`, `)}${d.items.length > 2 ? `…` : ``}` : d.items[0]?.name || `Unnamed`)
+  : d.state === `reading` ? `AI is reading…` : d.state === `none` ? `AI found nothing: fill in yourself`
+    : d.state === `error` ? `AI couldn’t read it${(d.tries || 0) < 3 ? `, will retry` : `: fill in yourself`}` : `Waiting for AI`;
+
+function reviewCardHtml() {
+  const list = listDrafts(repo.hereId); if (!list.length) return ``;
+  const ready = list.filter((d) => d.state === `ready`).length;
+  return `<a class="alert-card review-card" href="#/review">${icon(`camera`)}
+    <div><b>${list.length} photo${list.length > 1 ? `s` : ``} to review</b><small>${ready ? `${ready} filled in by AI, ready to check` : esc(draftAiLine(list) || `Only on this phone until you save them`)}</small></div>${icon(`chevron`)}</a>`;
+}
+
+/** Keep the photo now, fill in the details later. Resolves the draft. */
+async function keepForLater({ photo, thumb, locationId }) {
+  const d = await addDraft(repo.hereId, { photo, thumb, locationId: locationId || ``, by: repo.user?.email || `` });
+  statCount(`draft`);
+  setTimeout(() => drainDrafts(), 500);
+  return d;
+}
+
+/** Quick capture: one photo per tap, details later. */
+async function quickCapture(locId = ``) {
+  if (repo.readOnly) return onReadOnly();
+  let loc = locId;
+  const n = await captureQuick({
+    place: loc ? repo.pathText(loc) : ``,
+    onShot: async (canvas) => { const p = await processPhoto(await new Promise((r) => canvas.toBlob(r, `image/jpeg`, 0.9))); await keepForLater({ photo: p.photo, thumb: p.thumb, locationId: loc }); statCount(`quick`); },
+    onPlace: async () => { const id = await pickLocation(loc, `Where are the next photos?`); if (!id) return null; loc = id; return repo.pathText(id); },
+  });
+  if (n) { toast(`${n} photo${n > 1 ? `s` : ``} kept to review. Only on this phone until you save them.`, { ms: 5000, help: `review-later` }); location.hash = `#/review`; }
+}
+
+const rsel = new Set(); let rselOn = false;
+function viewReview(view) {
+  const inv = repo.hereId;
+  const list = listDrafts(inv);
+  for (const id of [...rsel]) if (!list.some((d) => d.id === id)) rsel.delete(id);
+  if (!list.length) rselOn = false;
+  const ready = list.filter((d) => d.state === `ready`);
+  const keepable = keepAllCandidates(list);
+  const line = draftAiLine(list);
+  view.innerHTML = `<div class="review">
+    <div class="more-head"><a class="back" href="#/">${icon(`back`)} Find</a></div>
+    <div class="page-head"><h1>Photos to review</h1></div>
+    <p class="muted small">Only on this phone until you save them. Saved ones go to <b>${esc(invName())}</b> for everyone.</p>
+    ${list.length ? `<div class="review-ai">
+        <label class="switch"><input type="checkbox" data-autofill ${autoFill() ? `checked` : ``}><i></i><span>${icon(`spark`)} Fill in with AI automatically when online</span></label>
+        ${line ? `<p class="fine">${esc(line)}${!aiReady() ? ` <a class="link small" href="#/more/ai">Set it up</a>` : ``}</p>` : ``}</div>
+      <div class="row-actions review-acts">
+        <button type="button" class="btn primary" data-a="reviewnext">${icon(`check`)} Check one by one${ready.length ? ` (${ready.length} ready)` : ``}</button>
+        ${keepable.length ? `<button type="button" class="btn ghost" data-a="keepall">Save ${keepable.length} as AI named them</button>` : ``}
+      </div>
+      <div class="list-head"><div class="label-sm">${list.length} photo${list.length > 1 ? `s` : ``}</div>
+        <button type="button" class="link small" data-rsel>${rselOn ? `Done` : `Select`}</button></div>
+      <div class="draft-grid">${list.map((d) => `<button type="button" class="draft-card${rsel.has(d.id) ? ` on` : ``}${rselOn ? ` picking` : ``} st-${esc(d.state)}" data-draft="${esc(d.id)}">
+          <span class="draft-img"><img data-dthumb="${esc(d.id)}" alt=""></span>
+          <b>${esc(draftLabel(d))}</b><small>${icon(`place`)}${esc(repo.pathText(d.locationId) || `No place yet`)}</small></button>`).join(``)}</div>
+      ${rselOn ? `<div class="review-selbar"><span>${rsel.size} selected</span>
+        <button type="button" class="btn ghost small" data-a="draftai" ${rsel.size && aiReady() ? `` : `disabled`}>${icon(`spark`)} Fill in with AI</button>
+        <button type="button" class="btn ghost small danger" data-a="draftdel" ${rsel.size ? `` : `disabled`}>${icon(`trash`)} Delete</button></div>` : ``}`
+    : `<div class="empty">${icon(`camera`, `big`)}<h3>Nothing to review</h3><p>In a storage unit or anywhere without signal, take photos with Quick capture and check them here later.</p></div>`}
+    <div class="row-actions"><button type="button" class="btn ghost" data-a="quick">${icon(`camera`)} Quick capture</button></div>
+  </div>`;
+  $$(`[data-dthumb]`, view).forEach((img) => draftThumb(img.dataset.dthumb).then((t) => { if (t) img.src = t; }).catch(() => {}));
+  const auto = $(`[data-autofill]`, view);
+  if (auto) auto.onchange = () => { setAutoFill(auto.checked); if (auto.checked) drainDrafts(); render(); };
+  view.onclick = async (e) => {
+    const b = e.target.closest(`button`); if (!b) return;
+    if (b.dataset.rsel !== undefined) { rselOn = !rselOn; rsel.clear(); return render(); }
+    if (b.dataset.draft) {
+      if (rselOn) { if (rsel.has(b.dataset.draft)) rsel.delete(b.dataset.draft); else rsel.add(b.dataset.draft); return render(); }
+      location.hash = `#/add?draft=${encodeURIComponent(b.dataset.draft)}`; return;
+    }
+    const a = b.dataset.a;
+    if (a === `quick`) return quickCapture(recentLocs()[0] || ``);
+    if (a === `reviewnext`) { const d = nextDraftToCheck(); if (d) location.hash = `#/add?draft=${encodeURIComponent(d.id)}`; return; }
+    if (a === `keepall`) return keepAllAsNamed();
+    if (a === `draftai`) {
+      for (const id of rsel) { const d = getDraft(inv, id); if (d && d.state !== `reading`) updateDraft(inv, id, { state: `waiting`, tries: 0 }); }
+      drainDrafts({ only: [...rsel] }); rselOn = false; rsel.clear();
+      toast(navigator.onLine ? `AI is filling them in` : `They’ll be filled in when you’re back online`); return render();
+    }
+    if (a === `draftdel`) {
+      if (!(await confirmSheet(`Delete ${rsel.size} photo${rsel.size > 1 ? `s` : ``}?`, `They’re only on this phone and haven’t been saved to the inventory.`, `Delete`, true))) return;
+      for (const id of rsel) await removeDraft(inv, id);
+      rselOn = false; rsel.clear(); return render();
+    }
+  };
+}
+/** Ready ones first (AI has filled them in), then the rest, oldest first. */
+function nextDraftToCheck(after = ``) {
+  const list = listDrafts(repo.hereId).filter((d) => d.id !== after && d.state !== `reading`);
+  return list.find((d) => d.state === `ready`) || list.find((d) => d.state !== `waiting`) || list[0] || null;
+}
+/** One thing, named by AI, not like anything already in the inventory: safe to save without opening each. */
+function keepAllCandidates(list) {
+  return list.filter((d) => d.state === `ready` && d.items.length === 1 && d.items[0].name
+    && !findDuplicates(repo.activeItems(), d.items[0].name, { locationId: d.locationId }).length);
+}
+async function keepAllAsNamed() {
+  const inv = repo.hereId; const list = keepAllCandidates(listDrafts(inv));
+  if (!list.length) return;
+  const ok = await confirmSheet(`Save ${list.length} item${list.length > 1 ? `s` : ``} as AI named them?`,
+    `Each becomes an item in ${invName()} with its photo, for everyone. You can change any of them later. Photos showing several things, or something you may already have, stay here to check one by one.`, `Save ${list.length}`);
+  if (!ok) return;
+  let n = 0;
+  for (const d of list) {
+    const blob = await draftPhoto(d.id); const thumb = await draftThumb(d.id);
+    if (!blob) { await removeDraft(inv, d.id); continue; }
+    const s0 = d.items[0];
+    const fields = { name: s0.name, purpose: s0.purpose, category: s0.category, tags: s0.tags, qty: s0.qty || 1, size: s0.size || ``, notes: s0.notes || ``, locationId: d.locationId || `` };
+    const saved = await repo.saveItem(fields, { photo: blob, thumb, aiFields: SUG_FIELDS.filter((k) => fields[k] && !(k === `qty` && fields.qty === 1)) });
+    repo.logAi(`photo`, aiTally([{ taken: true, sug: s0, fin: fields }], SUG_FIELDS), saved.name);
+    await removeDraft(inv, d.id); n++;
+  }
+  statCount(`draftKeep`, n);
+  toast(`Saved ${n} item${n > 1 ? `s` : ``} to ${invName()}`);
+  render();
 }
 
 // ============================================================ Moving (single, bulk, undo)
@@ -1229,6 +1406,7 @@ function renderResults() {
         <div><b>${esc(i.name)}</b><small>${esc(r.text)}</small></div>
         ${a ? `<button type="button" class="btn small ghost" data-quick="${a[0]}" data-id="${esc(i.id)}">${a[1]}</button>` : ``}</a>`; }).join(``)}
       ${attention.length > 3 ? `<a class="link small" href="#/out">See all ${attention.length}</a>` : ``}</div>` : ``}
+    ${reviewCardHtml()}
     ${myJobsHtml()}
     ${soon.length ? `<section class="dash"><div class="dash-head"><h2>Coming up</h2><a class="link small" href="#/events">All events</a></div>
       <div class="cards">${soon.map(eventCard).join(``)}</div></section>` : ``}
@@ -1474,9 +1652,12 @@ function itemMenu(item) {
 // ============================================================ Add / Edit
 function viewEdit(view, r) {
   const editing = r.name === `edit` ? repo.items.find((i) => i.id === r.id) : null;
+  const draft = !editing && r.params.get(`draft`) ? getDraft(repo.hereId, r.params.get(`draft`)) : null; // a photo kept to fill in later
+  if (!editing && r.params.get(`draft`) && !draft) { location.replace(`#/review`); return; }
+  const othersToReview = draft ? listDrafts(repo.hereId).length - 1 : 0;
   const item = editing || {
     name: r.params.get(`name`) || ``, purpose: ``, category: ``, tags: ``, qty: Number(r.params.get(`qty`)) || 1, warranty: ``, expiry: ``, notes: ``,
-    locationId: r.params.get(`loc`) || recentLocs()[0] || ``,
+    locationId: draft ? draft.locationId || `` : r.params.get(`loc`) || recentLocs()[0] || ``,
   };
   let locationId = item.locationId;
   let photo = null, thumb = null;
@@ -1486,8 +1667,9 @@ function viewEdit(view, r) {
   view.innerHTML = `
     <form class="form" id="f" autocomplete="off">
       <div class="form-head"><button type="button" class="back" data-cancel>${icon(`x`)} Cancel</button></div>
-      <h1>${editing ? `Edit item` : `Add an item`}</h1>
-      ${editing ? `` : `<button type="button" class="receipt-entry" data-receipt>${icon(`sheet`)}<span><b>Bought a few things?</b><small>Scan the receipt: everything on it becomes an item, with price and date</small></span>${icon(`chevron`)}</button>`}
+      <h1>${editing ? `Edit item` : draft ? `Check and save` : `Add an item`}</h1>
+      ${draft ? `<p class="muted small draft-note">${icon(`camera`)} Taken ${esc(fmtWhen(draft.at))}. Only on this phone until you save it${othersToReview ? `; ${othersToReview} more to review` : ``}.</p>` : ``}
+      ${editing || draft ? `` : `<button type="button" class="receipt-entry" data-receipt>${icon(`sheet`)}<span><b>Bought a few things?</b><small>Scan the receipt: everything on it becomes an item, with price and date</small></span>${icon(`chevron`)}</button>`}
       <label class="photo-pick" id="pp">
         <input type="file" accept="image/*" capture="environment" id="photo" hidden>
         <div class="pp-view">${editing && repo.thumbs[editing.id] ? `<img src="${repo.thumbs[editing.id]}" alt="">` : `<div class="pp-empty">${icon(`camera`)}<span>Take a photo</span></div>`}</div>
@@ -1495,6 +1677,9 @@ function viewEdit(view, r) {
       </label>
       <div id="xstrip"></div>
       <div id="aiRow"></div>
+      ${editing || draft ? `` : `<div class="later-row" id="laterRow" hidden><button type="button" class="btn ghost small" data-a="later">${icon(`clock`)} Fill in later</button>
+        <small>No signal? Keep the photo and its place now; AI fills in the rest when you’re online, and you check it.</small></div>
+        <button type="button" class="link small quick-link" data-a="quick">${icon(`camera`)} Many things? Quick capture: photos now, details later</button>`}
       <label class="field"><span>What is it?</span><input name="name" required value="${esc(item.name)}" placeholder="e.g. Stud finder"></label>
       <div class="field qty-field"><span>How many?</span>
         <div class="stepper"><button type="button" class="icon-btn" data-step="-1" aria-label="One fewer">−</button>
@@ -1523,12 +1708,23 @@ function viewEdit(view, r) {
         <label class="field"><span>Notes</span><textarea name="notes" rows="3" placeholder="Model number, where you bought it, manual link…">${esc(item.notes)}</textarea></label>
       </details>
       <div class="form-actions">
-        ${editing ? `` : `<button type="submit" class="btn ghost" data-again>Save &amp; add another</button>`}
-        <button type="submit" class="btn primary">Save</button>
+        ${draft ? `<button type="button" class="btn ghost danger" data-a="deldraft">${icon(`trash`)} Delete photo</button>${othersToReview ? `<button type="button" class="btn ghost" data-a="skipdraft">Skip</button>` : ``}`
+          : editing ? `` : `<button type="submit" class="btn ghost" data-again>Save &amp; add another</button>`}
+        <button type="submit" class="btn primary">${draft && othersToReview ? `Save &amp; next` : `Save`}</button>
       </div>
     </form>`;
 
-  $(`[data-cancel]`, view).onclick = () => goBack(editing ? `#/item/${editing.id}` : `#/`);
+  $(`[data-cancel]`, view).onclick = () => (draft ? (location.hash = `#/review`) : goBack(editing ? `#/item/${editing.id}` : `#/`));
+  $(`#f`, view).addEventListener(`click`, async (e) => {
+    const b = e.target.closest(`[data-a]`); if (!b) return;
+    if (b.dataset.a === `quick`) { e.preventDefault(); quickCapture(locationId); }
+    if (b.dataset.a === `later`) { e.preventDefault(); laterNow(); }
+    if (b.dataset.a === `skipdraft`) { const n = nextDraftToCheck(draft.id); location.hash = n ? `#/add?draft=${encodeURIComponent(n.id)}` : `#/review`; }
+    if (b.dataset.a === `deldraft`) {
+      if (!(await confirmSheet(`Delete this photo?`, `It’s only on this phone and hasn’t been saved to the inventory.`, `Delete`, true))) return;
+      await removeDraft(repo.hereId, draft.id); draftDone();
+    }
+  });
   const rcpt = $(`[data-receipt]`, view); if (rcpt) rcpt.onclick = () => scanReceipt();
   $(`.stepper`, view).addEventListener(`click`, (e) => { // − / + without opening the keyboard
     const b = e.target.closest(`[data-step]`); if (!b) return;
@@ -1613,13 +1809,31 @@ function viewEdit(view, r) {
     const run = $(`#aiRun`); if (run) run.onclick = () => runAi();
   };
 
-  const busy = (on) => { $(`#pp`).classList.toggle(`busy`, on); $(`#pp .pp-busy`).hidden = !on; };
+  const busy = (on) => { $(`#pp`)?.classList.toggle(`busy`, on); const x = $(`#pp .pp-busy`); if (x) x.hidden = !on; };
+  /** Fill in later: the photo and place are kept on this phone; the form starts again for the next thing. */
+  async function laterNow() {
+    if (!photo) return;
+    await keepForLater({ photo, thumb, locationId });
+    rememberLoc(locationId);
+    toast(`Kept to fill in later. It’s only on this phone until you check it.`, { ms: 5000, help: `review-later` });
+    navStack.pop(); location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`;
+  }
+  /** This draft is finished (saved or deleted): the next one, or back to the list. */
+  function draftDone() {
+    const n = nextDraftToCheck(draft.id);
+    location.hash = n ? `#/add?draft=${encodeURIComponent(n.id)}` : `#/review`;
+  }
+  const form = $(`#f`);
 
   async function runAi() {
     if (!shot) return;
     busy(true);
+    const offerLater = (msg) => toast(msg, draft ? { ms: 6000, help: `ai-trouble` } : { action: `Fill in later`, onAction: laterNow, ms: 9000, help: `review-later` });
     try {
-      const items = await analyzePhoto(await shot.aiImage(), { categories: cats, location: locationId ? repo.pathText(locationId) : `` });
+      let slow = null;
+      const call = analyzePhoto(await shot.aiImage(), { categories: cats, location: locationId ? repo.pathText(locationId) : `` });
+      const items = await Promise.race([call, new Promise((_, no) => { slow = setTimeout(() => no(new AiError(`slow`, `No answer from AI yet (weak signal?).`)), 20_000); })]).finally(() => clearTimeout(slow));
+      if (!form.isConnected) return; // they moved on
       if (!items.length) { toast(`AI couldn’t recognize anything. Fill in the details yourself.`, { help: `ai-trouble` }); return; }
       if (items.length === 1) { applySuggestion(items[0]); return; }
       const choice = await reviewItems(items, shot.canvas, locationId);
@@ -1631,7 +1845,9 @@ function viewEdit(view, r) {
         location.hash = `#/place/${choice.locationId}`;
       }
     } catch (err) {
-      toast(err instanceof AiError ? err.message : `AI suggestion failed. Fill in the details yourself.`, { ms: 5000, help: `ai-trouble` });
+      if (!form.isConnected) return;
+      if (err instanceof AiError && [`network`, `slow`].includes(err.kind)) offerLater(draft ? `AI can’t be reached right now. Try again later, or fill it in yourself.` : `AI can’t be reached right now (no signal?). Keep the photo and fill in later?`);
+      else toast(err instanceof AiError ? err.message : `AI suggestion failed. Fill in the details yourself.`, { ms: 5000, help: `ai-trouble` });
     } finally { busy(false); }
   }
 
@@ -1667,12 +1883,36 @@ function viewEdit(view, r) {
       ({ photo, thumb } = p); shot = p;
       $(`#pp .pp-view`).innerHTML = `<img src="${thumb}" alt="">`;
       drawAiRow(); drawStrip();
+      const lr = $(`#laterRow`); if (lr) lr.hidden = false;
     } catch { toast(`Couldn’t read that photo`); return; }
     finally { $(`#pp`).classList.remove(`busy`); }
     if (aiReady() && aiSettings().auto) (pendingExtras.length || editing ? describeFromAllPhotos() : runAi()); // one photo may show many items; several photos show one
     else if (!$(`input[name=name]`).value) $(`input[name=name]`).focus();
   });
   drawAiRow(); drawStrip();
+
+  if (draft) (async () => { // the kept photo, and what AI made of it (if it has read it yet)
+    const blob = await draftPhoto(draft.id);
+    if (!blob) { await removeDraft(repo.hereId, draft.id); return draftDone(); }
+    const p = await processPhoto(blob);
+    if (!form.isConnected) return;
+    ({ photo, thumb } = p); shot = p;
+    $(`#pp .pp-view`).innerHTML = `<img src="${thumb}" alt="">`;
+    setLocText(); drawAiRow();
+    const items = draft.state === `ready` ? draft.items : [];
+    if (items.length === 1) { applySuggestion(items[0], { quietIfNone: true }); return; }
+    if (items.length > 1) {
+      const choice = await reviewItems(items, shot.canvas, locationId);
+      if (choice?.single) {
+        const c = await cropItem(shot.canvas, choice.single.box);
+        photo = c.photo; thumb = c.thumb; $(`#pp .pp-view`).innerHTML = `<img src="${thumb}" alt="">`;
+        applySuggestion(choice.single);
+      } else if (choice?.added) { await removeDraft(repo.hereId, draft.id); statCount(`draftKeep`); draftDone(); }
+      return;
+    }
+    if (aiReady() && navigator.onLine && draft.state !== `none`) runAi();
+    else $(`input[name=name]`).focus();
+  })();
 
   // "Restore" from History: put the earlier value(s) back into the form. Nothing changes until Save.
   if (editing && r.params.get(`restore`)) {
@@ -1701,6 +1941,7 @@ function viewEdit(view, r) {
   const lock = (on) => { saving = on; $$(`button[type=submit]`, view).forEach((b) => { b.disabled = on; }); };
   const eline = r.params.get(`eline`); // came from an event's "Add to the inventory": link that line to what gets saved
   const next = (id) => {
+    if (draft) { removeDraft(repo.hereId, draft.id).then(draftDone); statCount(`draftKeep`); return; }
     if (eline && !editing) { linkLineToItem(eline, id); return goBack(`#/events`); }
     if (again) { navStack.pop(); location.hash = `#/add?loc=${encodeURIComponent(locationId)}&t=${Date.now()}`; return; } // replace this form
     if (editing) return goBack(`#/item/${editing.id}`);
@@ -1917,7 +2158,8 @@ function viewPlace(view, r) {
             <button class="icon-btn" data-a="menu" aria-label="Place options">${icon(`more`)}</button></div>` : ``}
       </div>
       ${loc ? `<div class="place-add"><a class="btn primary" href="#/add?loc=${esc(loc.id)}">${icon(`plus`)} Add item here</a>
-        <button type="button" class="btn ghost" data-a="scan">${icon(`spark`)} Scan many</button></div>` : ``}
+        <button type="button" class="btn ghost" data-a="scan">${icon(`spark`)} Scan many</button>
+        <button type="button" class="btn ghost" data-a="quick">${icon(`camera`)} Quick capture</button></div>` : ``}
       ${!loc ? (kids.length ? `<div class="label-sm">Your places</div>
         <div class="list">${kids.map((k) => `<a class="list-row link-row" href="#/place/${esc(k.id)}">${icon(KIND_ICON[k.kind] || `box`)}<span>${esc(k.name)}</span><small>${count(k.id) || ``}</small>${icon(`chevron`)}</a>`).join(``)}${addInsideRow}</div>
         <a class="link small setup-link" href="#/setup">${icon(`plus`)} Quick-add rooms and places</a>`
@@ -1972,6 +2214,7 @@ function viewPlace(view, r) {
     if (b.dataset.a === `menu`) placeMenu(loc);
     if (b.dataset.a === `qr`) printLabel(loc);
     if (b.dataset.a === `scan`) scanPlace(loc.id);
+    if (b.dataset.a === `quick`) quickCapture(loc.id);
     if (b.dataset.a === `share`) sharePlace(loc);
     if (b.dataset.a === `scanlabel`) scanLabelFlow();
   };
@@ -3353,8 +3596,9 @@ function viewMore(view, r) {
     if (m === `sync`) { await repo.refresh(); toast(repo.status === `synced` ? `Up to date` : `Sync: ${repo.status}`); }
     if (m === `fresh`) {
       const waiting = repo.outbox.length;
+      const photos = Object.keys(localStorage).filter((k) => k.startsWith(`paran.drafts.`) && k !== `paran.drafts.auto`).reduce((n, k) => n + listDrafts(k.slice(13)).length, 0);
       if (!(await confirmSheet(`Start fresh on this phone?`,
-        `${waiting ? `${waiting} change(s) haven’t reached Google yet and will be lost. ` : ``}This phone forgets its copy of your inventories, groups and photos and signs out. Nothing in Google Drive is changed: to delete your data too, delete the Paran folder in Drive. Your AI key, Your activity and help feedback stay.`, `Start fresh`, true))) return;
+        `${waiting ? `${waiting} change(s) haven’t reached Google yet and will be lost. ` : ``}${photos ? `${photos} photo(s) waiting to be reviewed will be deleted. ` : ``}This phone forgets its copy of your inventories, groups and photos and signs out. Nothing in Google Drive is changed: to delete your data too, delete the Paran folder in Drive. Your AI key, Your activity and help feedback stay.`, `Start fresh`, true))) return;
       await startFresh(); return;
     }
     if (m === `signout`) {

@@ -53,3 +53,9 @@ it there; and a move into an inventory you can only view is refused with nothing
 itself) that opens Help on the message and its topic; a message with ? explains itself when tapped, and Help's ?
 still explains it after the message has gone; Share these steps sends the steps with a link; the link opens those
 steps in Paran (and is tidied away), and before sign-in shows them on the welcome screen and again once Paran is open.
+
+`review_later.py` (demo, fake camera, stand-in Gemini): Quick capture offline (place changed between photos), the
+photos kept only on the phone and nothing added to the inventory; back online, AI fills them in by itself (one thing,
+two things, nothing); Save … as AI named them saves only the clear one, with its photo and AI accuracy; Check one by
+one (the two-things review, then an empty form for the photo AI found nothing in); Fill in later on Add and the offer
+when AI can't be reached; automatic off, then Select → Fill in with AI, and Delete.

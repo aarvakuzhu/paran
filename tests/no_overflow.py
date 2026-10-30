@@ -18,7 +18,7 @@ async def main():
             # a long inventory of activity, so the chart has 120 days
             await pg.evaluate("""() => { const s = JSON.parse(localStorage.getItem('paran.stats') || '{"id":"x","days":{}}'); for (let i = 1; i < 120; i++) { const d = new Date(); d.setDate(d.getDate() - i); s.days[d.toISOString().slice(0,10)] = { c: { open: 1, add: i % 3 }, ai: {}, groups: {} }; } localStorage.setItem('paran.stats', JSON.stringify(s)); }""")
             routes = ['#/', '#/places', f'#/place/{loc}', '#/out', f'#/item/{it}', '#/add', f'#/edit/{it}', '#/more', '#/more/ai', '#/more/stats', '#/more/data',
-                      '#/more/people', '#/more/inventory', '#/events', f'#/event/{ev}', '#/setup']
+                      '#/more/people', '#/more/inventory', '#/events', f'#/event/{ev}', '#/setup', '#/review']
             for r in routes:
                 await pg.goto('http://localhost:8080/' + r); await pg.wait_for_timeout(450)
                 if r == '#/more/stats': await pg.click('[data-period="0"]'); await pg.wait_for_timeout(300)

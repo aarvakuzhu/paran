@@ -12,7 +12,7 @@
 #
 # Shot spec (in a topic): shots: [{ at, tap, ui, cap, mode }]
 #   at:  route, with {item} {lent} {reserved} {place} {spot} {event} filled from the sample data (default: the topic's go)
-#   tap: selectors to click first, in order ("fill:<selector>=<text>" types instead; "wait:<ms>" waits)
+#   tap: selectors to click first, in order ("fill:<selector>=<text>" types instead; "wait:<ms>" waits; "go:<route>" opens a screen)
 #   ui:  what to ring (default: the topic's ui; any Playwright selector); none = the top of the screen
 #   mode: 'google' to use the fake-Google group (default: the topic's google flag, else demo)
 #   cap: caption under the picture
@@ -72,6 +72,7 @@ async def shoot(pg, t, n, s):
     await pg.goto(URL + at); await pg.reload(); await pg.wait_for_timeout(1200)  # a clean screen: no sheet left open
     for step in s.get('tap', []):
         if step.startswith('wait:'): await pg.wait_for_timeout(int(step[5:])); continue
+        if step.startswith('go:'): await pg.goto(URL + step[3:]); await pg.wait_for_timeout(800); continue
         if step.startswith('fill:'):
             sel, text = step[5:].split('=', 1); await pg.fill(sel, text); await pg.wait_for_timeout(400); continue
         await pg.locator(step).first.click(timeout=5000); await pg.wait_for_timeout(600)
@@ -99,7 +100,7 @@ async def shoot(pg, t, n, s):
     return buf.getvalue()
 
 async def demo_page(b):
-    ctx = await b.new_context(viewport={'width': W, 'height': H}, device_scale_factor=SCALE, service_workers='block')
+    ctx = await b.new_context(viewport={'width': W, 'height': H}, device_scale_factor=SCALE, service_workers='block', permissions=['camera'])
     pg = await ctx.new_page()
     await pg.clock.set_fixed_time(FIXED_NOW)
     await pg.add_init_script(f"addEventListener('DOMContentLoaded', () => {{ const s = document.createElement('style'); s.textContent = `{NO_MOTION}`; document.head.appendChild(s); }})")
@@ -136,7 +137,7 @@ async def main(only):
     todo = [t for t in HELP if specs(t) and (not only or t['id'] in only)]
     made, failed = 0, []
     async with async_playwright() as p:
-        b = await p.chromium.launch()
+        b = await p.chromium.launch(args=['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'])  # Quick capture's camera
         pages = {}
         for t in todo:
             files = []
@@ -152,6 +153,8 @@ async def main(only):
                     if old != data: open(path, 'wb').write(data); made += 1
                     files.append({'f': name, 'v': hashlib.sha1(data).hexdigest()[:8], 'cap': s.get('cap', '')})
                 index[t['id']] = {'sig': sig(t), 'shots': files}
+                for _, pgx in pages.values():  # photos a topic kept to review mustn't show up in the next topic's pictures
+                    await pgx.evaluate("Object.keys(localStorage).filter((k) => k.startsWith('paran.drafts.') && k !== 'paran.drafts.auto').forEach((k) => localStorage.removeItem(k))")
                 print(f"  {t['id']}: {len(files)}", flush=True)
             except Exception as e:
                 failed.append(f"{t['id']}: {e}"); print(f"  FAIL {t['id']}: {e}")

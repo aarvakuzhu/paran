@@ -8,7 +8,7 @@
 //   go       where "Take me there" opens (a #/ route), optional
 //   ui       the button it points at on that screen (a CSS selector), optional; it's highlighted
 //   screens  route names where it's offered first under "On this screen" (find, item, add, edit, places, place,
-//            out, more, more/people, more/ai, more/data, more/stats, more/inventory, setup, group, events, event)
+//            review, out, more, more/people, more/ai, more/data, more/stats, more/inventory, setup, group, events, event)
 //   covers   the app's actions this topic explains, as kind:value (a: data-a, ev: data-ev, m: data-m, act: data-act).
 //            tools/help-check.mjs fails if any action in the code isn't covered here or listed in HELP_IGNORE,
 //            or if a topic's ui/covers no longer exist in the code. That's what keeps this file up to date.
@@ -61,6 +61,14 @@ export const HELP = [
     steps: [`On Add, tap Bought a few things? (or on an event, Bought some? Scan the receipt).`, `Take a photo of the receipt, or choose a screenshot of an online order.`, `Check the list: Paran matches things you already have and what events still need, and checks the prices add up. Then Add.`, `The receipt stays with the items: open an item and tap Receipt.`],
     go: `#/add`, ui: `[data-receipt]`, shots: [{ at: `#/add`, ui: `[data-receipt]`, cap: `On Add: Bought a few things?` }, { at: `#/event/{event}`, ui: `[data-ev="receipt"]`, cap: `On an event: Bought some? Scan the receipt` }],
     screens: [`add`, `item`, `event`], covers: [`a:receipt`, `ev:receipt`], who: `Needs AI suggestions turned on.`, related: [`photo-ai`, `event-readiness`] },
+  { id: `quick-capture`, q: `How do I photograph a whole storage room quickly, with no signal?`, also: [`quick capture`, `no signal`, `no network`, `offline photos`, `storage unit`, `many photos`, `basement`, `fast`, `walk through`, `later`],
+    steps: [`Open the place (or on Add) and tap Quick capture.`, `Take one photo per thing; the camera stays open. Tap the place at the top to change where the next photos go.`, `Tap Done. The photos wait on this phone under Photos to review; AI fills in the details when you’re online, and you check them.`],
+    shots: [{ at: `#/place/{spot}`, ui: `[data-a="quick"]`, cap: `Open the place → Quick capture` }, { at: `#/place/{spot}`, tap: [`[data-a="quick"]`, `wait:1200`, `.quick [data-shoot]`, `.quick [data-shoot]`], ui: `.quick [data-place]`, cap: `Where the photos go (tap to change); one photo per thing, then Done` }],
+    screens: [`place`, `add`, `review`], covers: [`a:quick`], related: [`review-later`, `scan-many`] },
+  { id: `review-later`, q: `How do I fill in details later for photos I took offline?`, also: [`fill in later`, `photos to review`, `review`, `unnamed`, `waiting for ai`, `weak signal`, `offline ai`, `check later`, `queue`],
+    steps: [`On Add, after taking the photo, tap Fill in later (Paran offers it when AI gets no answer). Quick capture keeps photos the same way.`, `They wait on Find under Photos to review, only on this phone. With AI on, they’re filled in automatically once you’re online with Paran open (switch it off on that screen).`, `Tap Check one by one: each opens filled in; fix anything, then Save & next. Or Select some for Fill in with AI or Delete; Save … as AI named them saves the clear ones at once.`, `Saved items go to the inventory for everyone.`],
+    shots: [{ at: `#/place/{spot}`, tap: [`[data-a="quick"]`, `wait:1200`, `.quick [data-shoot]`, `.quick [data-shoot]`, `.quick [data-shoot]`, `.quick [data-done]`, `wait:1200`, `go:#/`], ui: `.review-card`, cap: `Find: photos to review` }, { at: `#/review`, ui: `[data-a="reviewnext"]`, cap: `Check one by one, or select some` }],
+    go: `#/review`, screens: [`review`, `add`, `find`], covers: [`a:later`, `a:reviewnext`, `a:keepall`, `a:draftai`, `a:draftdel`, `a:skipdraft`, `a:deldraft`], related: [`quick-capture`, `photo-ai`, `ai-trouble`] },
   { id: `edit-item`, q: `How do I change an item’s details?`, also: [`edit`, `rename item`, `fix name`, `change`, `update`, `correct`],
     steps: [`Open the item.`, `Tap the pencil (or ⋯ → Edit details).`, `Change what you need and Save.`],
     shots: [{ at: `#/item/{item}`, ui: `a[href^="#/edit/"]`, cap: `On the item: the pencil` }],

@@ -142,3 +142,79 @@ export function captureScan({ max = 8, title = `` } = {}) {
     })();
   });
 }
+
+/**
+ * Quick capture: one photo per tap, as many as you like, each kept on the phone at once (onShot) so nothing is lost
+ * if the phone sleeps. The camera stays open; details come later. place: label shown on top; onPlace() lets the
+ * person change where the next photos go (resolves the new label, or null). Resolves the number of photos kept.
+ */
+export function captureQuick({ place = ``, onShot, onPlace }) {
+  return new Promise((resolve) => {
+    let stream = null, finished = false, n = 0, saving = Promise.resolve();
+    const el = document.createElement(`div`);
+    el.className = `scan quick`;
+    el.innerHTML = `
+      <video playsinline muted autoplay></video>
+      <div class="scan-flash"></div>
+      <header class="scan-top">
+        <button type="button" class="scan-pill" data-done>${icon(`check`)} Done</button>
+        <span class="scan-count" aria-live="polite"></span>
+      </header>
+      <button type="button" class="quick-place" data-place>${icon(`place`)}<span></span>${icon(`chevron`)}</button>
+      <p class="scan-hint">One thing per photo. Details are filled in later, by AI when there’s a signal, and you check them.</p>
+      <div class="scan-strip"></div>
+      <footer class="scan-bottom">
+        <span class="quick-spacer"></span>
+        <button type="button" class="scan-shutter" data-shoot aria-label="Take photo"><i></i></button>
+        <span class="quick-spacer"></span>
+      </footer>
+      <input type="file" accept="image/*" capture="environment" hidden data-files>`;
+    document.body.appendChild(el);
+    document.body.classList.add(`scanning`);
+    const video = el.querySelector(`video`);
+    const $ = (s) => el.querySelector(s);
+    const thumbs = [];
+    const update = () => {
+      $(`.scan-count`).textContent = n ? `${n} photo${n > 1 ? `s` : ``} kept` : `Nothing yet`;
+      $(`[data-place] span`).textContent = place || `No place yet: tap to choose`;
+      $(`.scan-strip`).innerHTML = thumbs.slice(-6).map((t) => `<span><img src="${t}" alt=""></span>`).join(``);
+    };
+    const keep = (canvas) => {
+      n++; thumbs.push(draw(canvas, canvas.width, canvas.height, 96).toDataURL(`image/jpeg`, 0.6));
+      const f = $(`.scan-flash`); f.classList.remove(`on`); void f.offsetWidth; f.classList.add(`on`);
+      navigator.vibrate?.(10); update();
+      saving = saving.then(() => onShot(canvas)).catch(() => toast(`Couldn’t keep that photo. Try again.`));
+    };
+    const finish = async () => {
+      if (finished) return; finished = true;
+      stream?.getTracks().forEach((t) => t.stop());
+      await saving;
+      document.body.classList.remove(`scanning`);
+      el.remove();
+      resolve(n);
+    };
+    el.addEventListener(`click`, async (e) => {
+      const b = e.target.closest(`button`); if (!b) return;
+      if (b.hasAttribute(`data-done`)) return finish();
+      if (b.hasAttribute(`data-place`)) { const p = await onPlace?.(); if (p) { place = p; update(); } return; }
+      if (b.hasAttribute(`data-shoot`)) {
+        if (!video.videoWidth) return $(`[data-files]`).click();
+        keep(draw(video, video.videoWidth, video.videoHeight, 1600));
+      }
+    });
+    $(`[data-files]`).addEventListener(`change`, async (e) => {
+      for (const file of [...e.target.files]) { try { keep((await processPhoto(file)).canvas); } catch { /* skip unreadable */ } }
+      e.target.value = ``;
+    });
+    update();
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: `environment` }, width: { ideal: 1920 }, height: { ideal: 1440 } } });
+        if (finished) { stream.getTracks().forEach((t) => t.stop()); return; }
+        video.srcObject = stream; await video.play().catch(() => {});
+      } catch {
+        $(`.scan-hint`).textContent = `Camera isn’t available here. Tap the round button to take each photo with your camera.`;
+      }
+    })();
+  });
+}

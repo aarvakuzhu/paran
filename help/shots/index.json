@@ -434,6 +434,21 @@
    }
   ]
  },
+ "quick-capture": {
+  "sig": "72c7fffb7e",
+  "shots": [
+   {
+    "f": "quick-capture-1.webp",
+    "v": "3c09cffe",
+    "cap": "Open the place \u2192 Quick capture"
+   },
+   {
+    "f": "quick-capture-2.webp",
+    "v": "80feae8c",
+    "cap": "Where the photos go (tap to change); one photo per thing, then Done"
+   }
+  ]
+ },
  "receipt": {
   "sig": "5250820876",
   "shots": [
@@ -476,6 +491,21 @@
     "f": "reserve-1.webp",
     "v": "db34a2de",
     "cap": "Lend or reserve \u2192 Reserve, then a pick-up date"
+   }
+  ]
+ },
+ "review-later": {
+  "sig": "21b0bbe0d2",
+  "shots": [
+   {
+    "f": "review-later-1.webp",
+    "v": "23cf01ce",
+    "cap": "Find: photos to review"
+   },
+   {
+    "f": "review-later-2.webp",
+    "v": "951e2c6a",
+    "cap": "Check one by one, or select some"
    }
   ]
  },
