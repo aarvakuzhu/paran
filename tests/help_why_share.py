@@ -4,6 +4,8 @@
 # them in Paran, before sign-in (once) and again once the app is open.
 import asyncio, sys, json, re
 from playwright.async_api import async_playwright
+import os as _os; sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from lic_off import licensing_off
 T = lambda s: re.sub(r'\s+', ' ', s).strip()
 URL = 'http://localhost:8080/'
 FAILS = []
@@ -13,6 +15,7 @@ def check(c, w):
 
 async def page(b, mode='demo'):
     ctx = await b.new_context(viewport={'width': 390, 'height': 844}, service_workers='block')
+    await licensing_off(ctx)
     await ctx.add_init_script("navigator.share = async (d) => { window.__shared = d; }; navigator.canShare = () => true;")
     pg = await ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     await pg.goto(URL); await pg.evaluate(f"localStorage.clear(); {'localStorage.setItem(`paran.mode`, `demo`)' if mode == 'demo' else ''}")

@@ -68,3 +68,16 @@ a member matched to the owner's licence; usage counts sent once each, AI feedbac
 banner, invites stopped at the limit except for people already shared with, Remove from everything; restricted:
 keepers, a member not kept blocked, the owner never; the stand-in (`stub`), the check date on the Paran folder, sharing
 paused after 9 days unchecked and back on with Check now; nothing wider than a 320px phone.
+
+`google_tokens.mjs` (Node, no browser): Paran's Drive token and the licensing identity-only token never mix. Google's
+sign-in popups share one window, so the stand-in for Google's library delivers every reply to the first token client;
+an identity-only reply must not replace the Drive token, the two popups never overlap, and a token Google answers with
+"insufficient authentication scopes" is dropped so the next tap signs in again. GitHub runs it on every push.
+
+    node tests/google_tokens.mjs
+
+**Licensing in tests.** The shipped config has licensing on. Every browser test serves `js/config.js` with licensing
+off (`tests/lic_off.py`), so nothing reaches the live server and no privacy notice covers the screen; `licensing_e2e.py`
+points it at a local Urimam instead. Help pictures (`tools/help-shots.py`) follow the shipped config, using the
+in-browser stand-in with the notice already seen.
+

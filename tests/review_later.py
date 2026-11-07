@@ -4,6 +4,8 @@
 # Fill in later on Add, and the offer when AI can't be reached; Select → Fill in with AI with automatic off.
 import asyncio, sys, json, re, os
 from playwright.async_api import async_playwright
+import os as _os; sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from lic_off import licensing_off
 SP = os.path.dirname(os.path.abspath(__file__))
 T = lambda s: re.sub(r'\s+', ' ', s).strip()
 URL = 'http://localhost:8080/'
@@ -24,6 +26,7 @@ async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch(args=['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'])
         ctx = await b.new_context(viewport={'width': 390, 'height': 844}, service_workers='block', permissions=['camera'])
+        await licensing_off(ctx)
         pg = await ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
         async def g(route):
             if route.request.method == 'POST': await route.fulfill(status=200, content_type='application/json', body=json.dumps(gemini(route.request.post_data)))

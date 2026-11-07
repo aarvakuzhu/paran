@@ -2,6 +2,8 @@
 import asyncio, sys, json, re
 import os; SP = os.path.dirname(os.path.abspath(__file__))
 from playwright.async_api import async_playwright
+import os as _os; sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from lic_off import licensing_off
 T = lambda s: re.sub(r'\s+', ' ', s).strip()
 FAILS = []; PROMPTS = []; DROP = []
 def check(c, w):
@@ -54,6 +56,7 @@ async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch()
         ctx = await b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, service_workers='block')
+        await licensing_off(ctx)
         pg = await ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
         async def g(route):
             if route.request.method == 'POST': await route.fulfill(status=200, content_type='application/json', body=json.dumps(gemini(route.request.post_data)))

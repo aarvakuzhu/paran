@@ -19,6 +19,8 @@
 #   cap: caption under the picture
 import asyncio, hashlib, io, json, os, re, subprocess, sys
 from playwright.async_api import async_playwright
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tests'))
+from lic_off import licensing_off, config_with
 from PIL import Image
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -102,6 +104,7 @@ async def shoot(pg, t, n, s):
 
 async def demo_page(b):
     ctx = await b.new_context(viewport={'width': W, 'height': H}, device_scale_factor=SCALE, service_workers='block', permissions=['camera'])
+    await licensing_as_shipped(ctx)
     pg = await ctx.new_page()
     await pg.clock.set_fixed_time(FIXED_NOW)
     await pg.add_init_script(f"addEventListener('DOMContentLoaded', () => {{ const s = document.createElement('style'); s.textContent = `{NO_MOTION}`; document.head.appendChild(s); }})")
@@ -109,10 +112,24 @@ async def demo_page(b):
     await pg.reload(); await pg.wait_for_timeout(1500)
     return ctx, pg
 
+SHIPPED_LIC = bool(re.search(r'LICENSE_URL: `[^`]+`', open(os.path.join(ROOT, 'js', 'config.js')).read()))
+
+async def licensing_as_shipped(ctx):
+    """Pictures show what people see: licensing on or off as shipped. On runs the in-browser stand-in (never the live
+    server), with the one-time privacy notice already seen and the stand-in's test switches hidden."""
+    if not SHIPPED_LIC: return await licensing_off(ctx)
+    async def cfg(route):
+        r = await route.fetch()
+        await route.fulfill(status=200, content_type='text/javascript', body=config_with(await r.text(), 'stub'))
+    await ctx.route('**/js/config.js*', cfg)
+    await ctx.route('https://license.goligundu.com/**', lambda route: route.abort())
+    await ctx.add_init_script("""if (!localStorage.getItem('paran.lic.consent')) localStorage.setItem('paran.lic.consent', JSON.stringify({ at: '2026-10-20T10:00:00Z', feedback: false }));
+      localStorage.setItem('paran.lic.hideTest', '1');""")
+
 async def licensing_on(ctx, pg):
     """Serve js/config.js with licensing on (the in-browser stand-in), and the privacy notice already seen."""
     async def cfg(route):
-        r = await route.fetch(); body = (await r.text()).replace('LICENSE_URL: ``', 'LICENSE_URL: `stub`')
+        r = await route.fetch(); body = config_with(await r.text(), 'stub')
         await route.fulfill(status=200, content_type='text/javascript', body=body)
     await ctx.route('**/js/config.js*', cfg)
     await pg.evaluate("localStorage.setItem('paran.lic.consent', JSON.stringify({ at: '2026-10-20T10:00:00Z', feedback: false })); localStorage.setItem('paran.lic.hideTest', '1')")

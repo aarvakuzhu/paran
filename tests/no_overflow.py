@@ -1,6 +1,8 @@
 # No screen may be wider than the phone (a wide page scrolls sideways and drags the fixed tab bar with it), and the
 # tab bar must stay pinned to the bottom while scrolling. Demo mode, at 320 and 390 px wide.
 import asyncio, sys
+import os as _os; sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from lic_off import licensing_off
 from playwright.async_api import async_playwright
 FAILS = []
 def check(c, w):
@@ -12,6 +14,7 @@ async def main():
         b = await p.chromium.launch()
         for w in (320, 390):
             pg = await b.new_page(viewport={'width': w, 'height': 700}, is_mobile=True, has_touch=True)
+            await licensing_off(pg)
             await pg.goto('http://localhost:8080/'); await pg.evaluate("localStorage.clear(); localStorage.setItem('paran.mode','demo')"); await pg.reload(); await pg.wait_for_timeout(1500)
             c = await pg.evaluate("JSON.parse(localStorage.getItem('paran.cache.demo'))")
             ev, it, loc = c['events'][0]['id'], c['items'][0]['id'], c['locations'][0]['id']

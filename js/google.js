@@ -7,6 +7,11 @@ let tokenClient = null;
 let token = null; // { access_token, expires_at }
 let pendingResolve = null;
 let pendingReject = null;
+let idPending = null; // the identity-only request in flight (licensing), if any
+
+const DRIVE_SCOPE = `https://www.googleapis.com/auth/drive.file`;
+/** Does a Google token response carry Drive access? (No scope listed: can't tell, so trust it, as before.) */
+const hasDrive = (resp) => !resp?.scope || String(resp.scope).split(/\s+/).includes(DRIVE_SCOPE);
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -38,6 +43,10 @@ async function ensureClient() {
     scope: SCOPES,
     callback: (resp) => {
       if (resp.error) { pendingReject?.(new Error(resp.error_description || resp.error)); return; }
+      // Google's sign-in popups all share one window, so a response meant for the identity-only request (licensing)
+      // could arrive here. Never keep a token without Drive access as Paran's token: every Drive call would fail
+      // with "insufficient authentication scopes" until it expired.
+      if (!hasDrive(resp)) { pendingReject?.(new Error(`Google didn’t give Drive access. Tap to try again.`)); return; }
       token = { access_token: resp.access_token, expires_at: Date.now() + (resp.expires_in - 60) * 1000 };
       try { localStorage.setItem(TOKEN_KEY, JSON.stringify(token)); } catch { /* ignore */ }
       pendingResolve?.(token);
@@ -52,9 +61,13 @@ async function ensureClient() {
  * so the popup usually opens and closes by itself.
  */
 export async function signIn({ silent = false, hint = `` } = {}) {
+  // One Google popup at a time: they share a window, and a reply can reach the wrong request. Waiting here would lose
+  // the tap (and the browser would block the popup), so say so and let the next tap do it.
+  if (idPending) throw new Error(`Google is still confirming it’s you. Tap again in a moment.`);
   await ensureClient();
   return new Promise((resolve, reject) => {
-    pendingResolve = resolve; pendingReject = reject;
+    const clear = () => { pendingResolve = null; pendingReject = null; };
+    pendingResolve = (t) => { clear(); resolve(t); }; pendingReject = (e) => { clear(); reject(e); };
     tokenClient.requestAccessToken({ prompt: silent ? `` : `select_account`, ...(hint ? { hint, login_hint: hint } : {}) });
   });
 }
@@ -73,10 +86,10 @@ export function hasValidToken() {
  * inventory. Needs a user gesture (it may open a popup that closes by itself: the scopes are already granted).
  * Resolves to the token string, or null if it couldn't be had or carries more than identity.
  */
-let idPending = null;
 export async function getIdentityToken({ hint = `` } = {}) {
   if (!CONFIG.CLIENT_ID) return null;
   if (idPending) return idPending;
+  if (pendingResolve) return null; // Paran's own sign-in is in its popup: never start a second one beside it
   idPending = (async () => {
     await loadScript(`https://accounts.google.com/gsi/client`);
     return new Promise((resolve) => {
@@ -86,11 +99,13 @@ export async function getIdentityToken({ hint = `` } = {}) {
         scope: `openid email`,
         include_granted_scopes: false,
         callback: (resp) => {
+          clearTimeout(timer);
           const extra = String(resp?.scope || ``).split(/\s+/).filter((x) => x && !/^(openid|email|profile)$|userinfo\.(email|profile)$/.test(x));
           done(resp?.access_token && !resp.error && !extra.length ? resp.access_token : null);
         },
-        error_callback: () => done(null),
+        error_callback: () => { clearTimeout(timer); done(null); },
       });
+      const timer = setTimeout(() => done(null), 60_000); // a reply that never comes must not block sign-in for good
       client.requestAccessToken({ prompt: ``, ...(hint ? { hint, login_hint: hint } : {}) });
     });
   })();
@@ -112,6 +127,14 @@ async function api(url, opts = {}) {
     headers: { Authorization: `Bearer ${token.access_token}`, ...(opts.headers || {}) },
   });
   if (res.status === 401) { token = null; localStorage.removeItem(TOKEN_KEY); throw new AuthError(`Session expired`); }
+  if (res.status === 403) {
+    // A token without Drive access (see the sign-in callback): drop it, so the next tap signs in again properly.
+    let j = null; try { j = await res.clone().json(); } catch { /* ignore */ }
+    const why = `${j?.error?.status || ``} ${j?.error?.message || ``} ${(j?.error?.errors || []).map((e) => e.reason).join(` `)}`;
+    if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT|insufficientPermissions/i.test(why)) {
+      token = null; localStorage.removeItem(TOKEN_KEY); throw new AuthError(`Session expired`);
+    }
+  }
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try { const j = await res.json(); msg = j.error?.message || msg; } catch { /* ignore */ }

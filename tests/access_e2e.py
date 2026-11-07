@@ -4,6 +4,7 @@ import asyncio, sys, json, re
 import os; SP = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, SP)
 import fake_google as G
 from playwright.async_api import async_playwright
+from lic_off import licensing_off  # tests/ is on sys.path (line above, or the file that execs this one)
 T = lambda s: re.sub(r'\s+', ' ', s).strip()
 OWNER, HELPER, RAVI, PRIYA = 'ashok@example.com', 'helper@example.com', 'ravi@example.com', 'priya@example.com'
 FAILS = []
@@ -25,6 +26,7 @@ google.picker = { ViewId: { SPREADSHEETS: 1 }, DocsViewMode: { LIST: 1 }, Action
 
 async def phone(b, email):
     ctx = await b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, service_workers='block')
+    await licensing_off(ctx)
     pg = await ctx.new_page(); errs = []
     pg.on('pageerror', lambda e: errs.append(str(e)))
     async def gapi(route):

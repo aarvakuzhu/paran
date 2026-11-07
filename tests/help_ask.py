@@ -2,6 +2,8 @@
 import asyncio, sys, json, re, os
 SP = os.path.dirname(os.path.abspath(__file__))
 from playwright.async_api import async_playwright
+import os as _os; sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+from lic_off import licensing_off
 T = lambda s: re.sub(r'\s+', ' ', s).strip()
 FAILS = []; SENT = []; MODE = {'v': 'ok'}
 def check(c, w):
@@ -18,6 +20,7 @@ async def main():
     async with async_playwright() as p:
         b = await p.chromium.launch()
         ctx = await b.new_context(viewport={'width': 390, 'height': 844}, device_scale_factor=2, service_workers='block')
+        await licensing_off(ctx)
         pg = await ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
         async def g(route):
             if MODE['v'] == 'down': await route.fulfill(status=503, content_type='application/json', body='{"error":{"message":"overloaded"}}'); return

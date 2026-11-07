@@ -11,3 +11,5 @@ jobs:
         run: node tools/help-check.mjs
       - name: Every module parses
         run: for f in js/*.js; do node --input-type=module -e "import('./$f').catch(e => { if (!/is not defined|Cannot read/.test(e.message)) { console.error('$f', e.message); process.exit(1); } })" || exit 1; done
+      - name: Drive and identity tokens never mix
+        run: node tests/google_tokens.mjs
