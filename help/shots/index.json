@@ -4,7 +4,7 @@
   "shots": [
    {
     "f": "activity-1.webp",
-    "v": "9b2d853e",
+    "v": "8afe24b0",
     "cap": "More \u2192 Your activity"
    }
   ]
@@ -14,7 +14,7 @@
   "shots": [
    {
     "f": "add-item-1.webp",
-    "v": "37d99aa3",
+    "v": "df4494e0",
     "cap": "The + button"
    },
    {
@@ -29,7 +29,7 @@
   "shots": [
    {
     "f": "ai-accuracy-1.webp",
-    "v": "51410bd5",
+    "v": "18f26aca",
     "cap": "More \u2192 AI suggestions"
    }
   ]
@@ -39,7 +39,7 @@
   "shots": [
    {
     "f": "data-1.webp",
-    "v": "1070c3fe",
+    "v": "2bd0c2dc",
     "cap": "More \u2192 Your data"
    }
   ]
@@ -49,7 +49,7 @@
   "shots": [
    {
     "f": "demo-1.webp",
-    "v": "0a282004",
+    "v": "84933007",
     "cap": "More \u2192 Clear demo data"
    }
   ]
@@ -204,7 +204,7 @@
   "shots": [
    {
     "f": "fresh-1.webp",
-    "v": "cf22ef91",
+    "v": "8d9bb343",
     "cap": "More \u2192 Your data \u2192 Start fresh on this phone"
    }
   ]
@@ -219,7 +219,7 @@
    },
    {
     "f": "group-2.webp",
-    "v": "84cd92dc",
+    "v": "6b97a093",
     "cap": "The group page"
    }
   ]
@@ -339,7 +339,7 @@
   "shots": [
    {
     "f": "no-edit-1.webp",
-    "v": "43624dcd",
+    "v": "42ad8a36",
     "cap": "More \u2192 People & access: who the owner is"
    }
   ]
@@ -349,7 +349,7 @@
   "shots": [
    {
     "f": "offline-1.webp",
-    "v": "0818ddeb",
+    "v": "85cdae64",
     "cap": "Refresh now"
    }
   ]
@@ -369,7 +369,7 @@
   "shots": [
    {
     "f": "people-change-1.webp",
-    "v": "4ed963b9",
+    "v": "640f7b0c",
     "cap": "Tap the person to change their access"
    }
   ]
@@ -424,7 +424,7 @@
   "shots": [
    {
     "f": "plan-people-1.webp",
-    "v": "f41d63ff",
+    "v": "f2b723e9",
     "cap": "More \u2192 People & access \u2192 Everyone you share with"
    }
   ]
@@ -524,7 +524,7 @@
    },
    {
     "f": "review-later-2.webp",
-    "v": "54474051",
+    "v": "8c6720ba",
     "cap": "Check one by one, or select some"
    }
   ]
@@ -534,7 +534,7 @@
   "shots": [
    {
     "f": "roles-1.webp",
-    "v": "fc8bdb07",
+    "v": "e93f58be",
     "cap": "Choose Can edit or Can view when inviting"
    }
   ]
@@ -564,7 +564,7 @@
   "shots": [
    {
     "f": "share-group-1.webp",
-    "v": "26cdf795",
+    "v": "e1d1e452",
     "cap": "On the group page: invite to the whole group"
    }
   ]
@@ -574,7 +574,7 @@
   "shots": [
    {
     "f": "share-inv-1.webp",
-    "v": "fc8bdb07",
+    "v": "e93f58be",
     "cap": "More \u2192 People & access: their Google email, then Invite"
    }
   ]
@@ -594,7 +594,7 @@
   "shots": [
    {
     "f": "signout-1.webp",
-    "v": "c00a9fe1",
+    "v": "fe23d3b7",
     "cap": "More \u2192 Sign out"
    }
   ]
