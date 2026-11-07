@@ -14,9 +14,10 @@ export const CONFIG = {
 
   // Licensing (Urimam): usage counts, the people an owner shares with, and the owner's plan.
   // Empty = off: nothing is sent and the app behaves as before. `stub` = an in-browser stand-in for testing.
-  LICENSE_URL: ``,
+  LICENSE_URL: `https://license.goligundu.com/v1`,
   LICENSE_APP_ID: `paran`,
-  LICENSE_KEYS: [],              // the server's public signing key(s) (JWKS entries), so checks verify on first open offline
+  // the server's public signing key(s) (JWKS entries), so checks verify on first open offline
+  LICENSE_KEYS: [{ kty: `EC`, crv: `P-256`, x: `_kF04K_4to26lyYi85bFXBis5BBu0-TO10in21Sd-cM`, y: `Uc2bGxkr8rEyuy-UnR740-qXEjfqi2j4I2CxIAXt7ZI`, kid: `lic-2026-11-07`, alg: `ES256`, use: `sig` }],
   LICENSE_FAIL_OPEN_DAYS: null,  // pilot: no limit. Once enforced, an owner unchecked for 7 days has sharing paused.
 };
 

@@ -172,10 +172,11 @@ Rules for editing the sheet by hand: it's fine to edit cell values and to sort o
 - AI suggestions use each user's own Gemini quota; the "photos analyzed today" count is per device, while Google's limit is per key's project.
 - Google accounts only.
 
-## Licensing (off by default)
+## Licensing (on, observe mode)
 
-Paran can report to **Urimam**, the licensing server shared by AarvaKuzhu's apps (github.com/aarvakuzhu/urimam). It is
-off until `LICENSE_URL` is set in `js/config.js`; with it empty nothing is sent and nothing on screen changes.
+Paran reports to **Urimam**, the licensing server shared by Goligundu's apps (github.com/goligundu/urimam), at
+`https://license.goligundu.com/v1` (`LICENSE_URL` in `js/config.js`, with its public key in `LICENSE_KEYS`). Set
+`LICENSE_URL` empty to turn licensing off: then nothing is sent and nothing on screen changes.
 
 - **The licence is the owner's and counts people, not inventories.** Seats are the owner plus everyone who can open
   anything they own in Paran (a group, a single inventory), once each, read from Google Drive's sharing. Groups and

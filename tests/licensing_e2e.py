@@ -7,7 +7,7 @@
 #   python3 -m http.server 8080        # from the repo root
 #   python3 tests/licensing_e2e.py
 #
-# Also checks that with licensing off (the shipped config) nothing changes: no banner, no requests, the old switch.
+# Also checks that with licensing off (LICENSE_URL empty) nothing changes: no banner, no requests, the old switch.
 import asyncio, sys, json, re, os, urllib.request
 SP = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, SP)
 import fake_google as G
@@ -58,7 +58,9 @@ async def phone(b, email, lic=True, url=None):
     await ctx.route('https://accounts.google.com/**', lambda r: r.fulfill(status=200, content_type='text/javascript', body=GIS_STUB))
     async def cfg(route):
         r = await route.fetch(); body = await r.text()
-        if lic: body = body.replace('LICENSE_URL: ``', f'LICENSE_URL: `{url or LIC + "/v1"}`')
+        # whatever the shipped config says, point at the local server (or turn licensing off with lic=False)
+        body = re.sub(r'LICENSE_URL: `[^`]*`', f'LICENSE_URL: `{url or LIC + "/v1"}`' if lic else 'LICENSE_URL: ``', body)
+        body = re.sub(r'LICENSE_KEYS: \[.*?\],', 'LICENSE_KEYS: [],', body, flags=re.S)  # the bundled keys are production's
         await route.fulfill(status=200, content_type='text/javascript', body=body)
     await ctx.route('**/js/config.js*', cfg)
     pg.on('request', lambda r: sent.append((r.method, r.url, r.headers.get('authorization') or '', r.post_data or '')) if r.url.startswith(LIC) else None)
@@ -97,7 +99,7 @@ async def main():
         b = await p.chromium.launch()
 
         # ================= 0. Off by default: nothing changes
-        print('0. Licensing off (the shipped config)')
+        print('0. Licensing off (LICENSE_URL empty)')
         o, O, oerr, osent = await phone(b, 'off@example.com', lic=False)
         await O.click('#create'); await O.wait_for_timeout(300); await O.click('[data-empty]'); await O.wait_for_timeout(300)
         await O.fill('.sheet input', 'Garage'); await O.click('.sheet button.primary'); await O.wait_for_timeout(3000)
