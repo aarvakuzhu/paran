@@ -3823,8 +3823,10 @@ function privacySheet({ first = false } = {}) {
       <div class="consent-points">
         <p>${icon(`cloud`)}<span>Your inventories stay in <b>your own Google Drive</b>. ${esc(CONFIG.APP_NAME)} never sees item names, notes, places or photos.</span></p>
         <p>${icon(`users`)}<span>To run free and paid plans and see how ${esc(CONFIG.APP_NAME)} is used, its server receives: who you are (your Google account), a random code for this phone, a one-way code for each person you share a group or inventory with in Google Drive (not their email; this includes people who don’t use ${esc(CONFIG.APP_NAME)}), when each person last opened it, and the usage counts on Your activity (how often you add, move, lend, search, plan events, use AI).</span></p>
-        <p>${icon(`clock`)}<span>Kept for 2 years.</span></p>
+        <p>${icon(`clock`)}<span>Kept for 2 years. To see or delete what’s kept about you, email <a href="mailto:${esc(CONFIG.CONTACT_EMAIL)}">${esc(CONFIG.CONTACT_EMAIL)}</a>.</span></p>
+        <p>${icon(`info`)}<span>If you turn on AI suggestions, photos go from this phone straight to Google’s Gemini with your own key; ${esc(CONFIG.APP_NAME)}’s server never gets them.</span></p>
       </div>
+      <p class="fine">${esc(CONFIG.APP_NAME)} is made by ${esc(CONFIG.PUBLISHER)}. <a href="${esc(CONFIG.PRIVACY_URL)}" target="_blank" rel="noopener">Full privacy policy</a></p>
       <label class="menu-switch"><span><b>Share AI feedback</b><small>Optional. How close AI suggestions were to what you saved, field by field, so they can get better. Off unless you turn it on.</small></span>
         <span class="switch"><input type="checkbox" data-fb ${lic.feedbackAllowed() ? `checked` : ``}><i></i></span></label>
       ${first ? `<div class="row-actions"><button type="button" class="btn primary full" data-yes>OK</button></div>` : ``}
@@ -4022,7 +4024,8 @@ function aboutSheet() {
       <p>${esc(CONFIG.APP_NAME)} is that loft, except you can find things.</p>
       <h3>Your data stays yours</h3>
       <p>${repo.backend.kind === `google` ? `Everything lives in your own Google Drive.` : `In demo mode, everything stays in this browser.`} ${lic.on() ? `${esc(CONFIG.APP_NAME)} never sees your inventory or photos.` : `${esc(CONFIG.APP_NAME)} has no server and never sees your inventory or photos.`}</p>
-      <p class="fine center about-by">Made by AarvaKuzhu</p>
+      <p class="fine center about-by">Made by ${esc(CONFIG.PUBLISHER)}</p>
+      <p class="fine center"><a href="${esc(CONFIG.PRIVACY_URL)}" target="_blank" rel="noopener">Privacy policy</a> · <a href="mailto:${esc(CONFIG.CONTACT_EMAIL)}">${esc(CONFIG.CONTACT_EMAIL)}</a></p>
       ${lic.on() ? `<p class="fine center">${esc(CONFIG.APP_NAME)} collects usage counts linked to your account (never your items, notes or photos) to run plans and improve the app. AI feedback is optional: <button type="button" class="link" data-sends>change it here</button>.</p>` : ``}
     </div>`;
     $(`[data-sends]`, el)?.addEventListener(`click`, () => privacySheet());

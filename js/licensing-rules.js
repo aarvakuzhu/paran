@@ -1,4 +1,4 @@
-// Vendored from Urimam (github.com/aarvakuzhu/urimam) src/rules.js @ efd3746: the same rules the server applies, used
+// Vendored from Urimam (github.com/goligundu/urimam) src/rules.js @ efd3746: the same rules the server applies, used
 // here only by the in-browser stand-in (licensing-stub.js). Keep in step with the server; do not edit here.
 // The phase rules (Licensing project, licensing-phases.md), as pure functions so every route and every test uses
 // exactly the same logic. No I/O here.

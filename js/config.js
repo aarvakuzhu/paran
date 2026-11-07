@@ -6,6 +6,9 @@ export const CONFIG = {
   APP_ID: `329365162340`,          // Google Cloud project NUMBER (digits only), used by the Picker
 
   APP_NAME: `Paran`,
+  PUBLISHER: `GoliGundu LLC`,                 // shown on About and in the privacy notice
+  CONTACT_EMAIL: `goligundu.llc@gmail.com`,   // privacy questions and deletion requests
+  PRIVACY_URL: `./privacy.html`,              // the full privacy policy (also the URL given to Google Play)
   // Names used when creating a NEW inventory. Existing ones are found by their Drive tag
   // (appProperties.stash), never by name, so inventories created as "Stash" keep working unchanged.
   ROOT_FOLDER_NAME: `Paran Inventory`,

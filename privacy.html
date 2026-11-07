@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paran – Privacy policy</title>
+<meta name="theme-color" content="#f6f3ee">
+<style>
+  :root { --bg: #f6f3ee; --surface: #fffdf9; --ink: #1d1b18; --ink-2: #5d5850; --line: #e2ddd4; --accent: #2f5d50;
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161513; --surface: #1f1e1b; --ink: #f1ede6; --ink-2: #bdb6ab; --line: #34312c; --accent: #7fb7a5; } }
+  body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.55; }
+  main { max-width: 680px; margin: 0 auto; padding: 24px 18px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.1rem; margin: 28px 0 8px; }
+  p, li { color: var(--ink-2); }
+  ul { padding-left: 20px; }
+  a { color: var(--accent); }
+  .meta { font-size: 0.9rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+  th { color: var(--ink); }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Paran privacy policy</h1>
+  <p class="meta">GoliGundu LLC · Effective 7 November 2026</p>
+
+  <p>Paran is a home inventory app made by GoliGundu LLC (“we”, “us”). This policy explains what Paran collects, why,
+    who it’s shared with, how long it’s kept, and how to have it deleted.</p>
+
+  <h2>The short version</h2>
+  <ul>
+    <li>Your inventories (items, places, notes, photos, events) are stored in <b>your own Google Drive</b>. We never receive them.</li>
+    <li>Our licensing server receives your Google account identity, usage counts and pseudonymous codes for the people you share with. We use these to run free and paid plans and to understand how Paran is used.</li>
+    <li>We don’t sell your data, we don’t show ads, and we don’t use third-party analytics or advertising SDKs.</li>
+  </ul>
+
+  <h2>What stays in your Google Drive</h2>
+  <p>When you sign in with Google, Paran creates a “Paran” folder and Google Sheets in your Drive. It uses Google’s
+    <code>drive.file</code> permission, so it can only open files it created or that you choose to open with it. The app
+    reads and writes these files directly from your device. They never pass through our servers. Sharing an inventory
+    with someone uses Google Drive’s own sharing.</p>
+
+  <h2>What stays on your device</h2>
+  <p>Paran keeps a working copy of your inventory, photos waiting to upload, your settings, your AI key (if you add
+    one) and the counts shown on <b>More → Your activity</b> in your device’s storage. <b>More → Your data → Start fresh on
+    this phone</b> removes the inventory copy and signs you out.</p>
+
+  <h2>What our licensing server receives</h2>
+  <div class="wrap"><table>
+    <tr><th>Data</th><th>Why</th></tr>
+    <tr><td>Your Google account identity (name, email address and account ID, from Google Sign-In)</td><td>To identify the owner of a plan and check it</td></tr>
+    <tr><td>A random code created for each install of the app, the date of first use, the app version, the language setting, and whether it runs as an installed app</td><td>To count devices and fix problems</td></tr>
+    <tr><td>For each person you share a group or inventory with: a one-way code calculated from their email address (we do not receive the email address itself), their access level, and when they last opened Paran. This includes people who don’t use Paran.</td><td>Plans are based on how many people you share with</td></tr>
+    <tr><td>Daily usage counts, for example how many items were added, moved, lent or searched for, how many events were planned, and how often AI was used. Per group, these include totals such as the number of members, inventories, items and events.</td><td>To run plans and see which features are used</td></tr>
+    <tr><td><i>Optional, off by default:</i> “Share AI feedback”, which records how closely AI suggestions matched what you saved, field by field</td><td>To improve AI suggestions</td></tr>
+  </table></div>
+  <p>The server <b>never</b> receives item names, notes, tags, place names, photos, what you searched for, or the email
+    addresses of people you share with. Nothing is sent until Paran has shown its privacy notice. The “Share AI feedback”
+    switch is under <b>More → Your activity</b>.</p>
+
+  <h2>AI suggestions (optional)</h2>
+  <p>If you turn on AI suggestions and add your own Google Gemini API key, the photos you choose to analyze are sent
+    from your device directly to Google’s Gemini API. Google’s terms and privacy policy apply to them. Your key stays on
+    your device, and we never receive the photos or the key.</p>
+
+  <h2>Service providers</h2>
+  <ul>
+    <li><b>Google</b> provides sign-in, Drive and Sheets storage, and Gemini if you use it (<a href="https://policies.google.com/privacy">Google Privacy Policy</a>).</li>
+    <li><b>Cloudflare</b> hosts our licensing server and its database.</li>
+  </ul>
+  <p>Paran’s use of information received from Google APIs follows the
+    <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+    including its Limited Use requirements.</p>
+
+  <h2>How long we keep it</h2>
+  <p>We keep licensing and usage data for 2 years from when it’s received, then delete it. Data in your Google Drive and
+    on your device stays until you delete it.</p>
+
+  <h2>Your choices and deleting your data</h2>
+  <ul>
+    <li><b>Your inventories:</b> delete the Paran folder in Google Drive. This removes them for everyone you shared them with.</li>
+    <li><b>This device:</b> More → Your data → Start fresh on this phone, or uninstall the app.</li>
+    <li><b>What our server holds about you:</b> email <a href="mailto:goligundu.llc@gmail.com">goligundu.llc@gmail.com</a> from the Google account you use with Paran and ask for a copy or for deletion. We reply within 30 days.</li>
+    <li><b>Google access:</b> you can remove Paran’s access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+  </ul>
+
+  <h2>Security</h2>
+  <p>All data is sent over HTTPS. Licence checks are signed by the server and verified on your device.</p>
+
+  <h2>Children</h2>
+  <p>Paran is not directed at children under 13, and we do not knowingly collect their data. If you believe a child has
+    used Paran, contact us and we’ll delete what we hold.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes, we’ll update the date above and post the new version here.</p>
+
+  <h2>Contact</h2>
+  <p>GoliGundu LLC, Georgia, USA · <a href="mailto:goligundu.llc@gmail.com">goligundu.llc@gmail.com</a></p>
+</main>
+</body>
+</html>

@@ -294,6 +294,7 @@ details .field { margin-top: 10px; }
 .consent-points { display: grid; gap: 10px; }
 .consent-points p { display: flex; gap: 10px; margin: 0; font-size: 0.9rem; color: var(--ink-2); }
 .consent-points .ic { color: var(--accent); margin-top: 2px; }
+.consent a, .about a { color: var(--accent); font-weight: 600; text-decoration: none; }
 .key-steps { margin: 4px 0; padding-left: 20px; font-size: 0.9rem; color: var(--ink-2); display: grid; gap: 4px; }
 .key-steps a { color: var(--accent); font-weight: 600; }
 .error-box[hidden] { display: none; }

@@ -1,19 +1,26 @@
 # Paran – Inventory (PWA)
 
 Know what you have, where it is, and who has it, for your home and the groups you run.
-Live at **https://aarvakuzhu.github.io/paran/**. This repo continues the Stash pilot (`aarvakuzhu/stash`, frozen; backup branch `backup/stash-final-2026-10-16`). Inventories live in each user's Google Drive, so the same inventories open here.
+Made by **GoliGundu LLC** (`goligundu/paran`). Headed for Google Play as an Android app; this repo isn't deployed as a website. Privacy policy: [`privacy.html`](privacy.html). Contact: goligundu.llc@gmail.com.
 
-**Sharing the site with the Stash pilot:** both apps are on `aarvakuzhu.github.io`, so they share the phone's storage. Paran keeps its own `paran.*` keys, its own `paran` IndexedDB and `paran-*` caches; on first run it copies the pilot's `stash.*` keys and pending photos once, and never changes them. "Get the latest version" only touches Paran's own worker and caches.
+**History:** Paran began as a web app at `aarvakuzhu.github.io/paran/` (`aarvakuzhu/paran`, kept as the backup), which continued the Stash pilot (`aarvakuzhu/stash`, frozen; backup branch `backup/stash-final-2026-10-16`). Inventories live in each user's Google Drive and are found by their Drive tag, so the same inventories open in every build that uses the same Google OAuth client. Keep `CLIENT_ID` unchanged: with the `drive.file` permission, a different Google Cloud project can't see inventories made with this one.
+
+**The Stash pilot on the same site:** when served from `aarvakuzhu.github.io`, Paran shared the phone's storage with the pilot at `/stash/`. It keeps its own `paran.*` keys, its own `paran` IndexedDB and `paran-*` caches, and on first run copies the pilot's `stash.*` keys and pending photos once. On any other origin (the Play Store app) there is nothing to copy, and that step does nothing.
 
 
-Know what you have, where it is, and what it's for. A static web app (no server, no database) that keeps everything in **the user's own Google Drive**:
+Know what you have, where it is, and what it's for. A static web app with no database of its own: everything people put in it is kept in **the user's own Google Drive**. The only server is Urimam, the licensing server, which gets usage counts and plan data and never the inventory (see Licensing below).
 
 ```
 My Drive/
-└── Stash – Home Inventory/
-    ├── Stash Inventory        ← Google Sheet: Items, Locations, Members, Log tabs
-    └── Photos/                ← full-size photos (≤1600px JPEG)
+└── Paran/                          ← one folder per person, never shared
+    ├── <Group name>/               ← a group; sharing this folder shares everything in it
+    │   ├── <Group> – directory     ← Google Sheet: the group's inventories and people
+    │   └── <Inventory name>/
+    │       ├── <Inventory name>    ← Google Sheet: Items, Locations, Members, Log tabs
+    │       └── Photos/             ← full-size photos (≤1600px JPEG)
+    └── <Inventory name>/           ← an inventory on its own (same layout)
 ```
+Older pilot inventories are still called “Stash Inventory” in Drive and keep working.
 
 The app only asks for the `drive.file` scope, so it can see **only the files it created** (or the one sheet someone picks to join). It cannot read anything else in the user's Drive.
 
@@ -95,7 +102,7 @@ My Drive / Paran /
 - **Export:** CSV (opens in Excel), or just open the Google Sheet.
 - **Scan a QR label in the app:** the QR button in the Find search bar (and **Scan label** on Places) opens the camera inside Paran, so iPhone doesn't hand the link to Safari. Scanning a box or shelf label offers **See what's inside**, **Put items away here** (pick existing items to move in), **Add a new item here** and **Scan many into it**. Any place picker (Move, bulk Move, Add form) also has a QR button: scan the label on the box and the item goes there. Labels from another inventory or non-Paran codes are rejected with a message. Decoding uses the browser's BarcodeDetector where available (Android Chrome), otherwise the bundled jsQR (Apache-2.0, `js/vendor`).
 - **Share with anyone (a copy, no app needed):** the share button on an item sends its photo, what it's for and (optionally) where it's kept through the phone's share sheet (WhatsApp, Messages, email). On a place, the share button (or ⋯ → *Share what's here*) sends everything inside, grouped by spot, as a **List** (text) or a **Picture** with photos (up to 80 items), optionally with what each is for. In **Select** mode, **Share** (next to Move) sends just the chosen items, as one list or grouped by where they're kept. Lists (Select mode and places) can go out as **List** (text), **Picture** (one image with thumbnails) or **Photos** (each item's full main photo as separate images, up to 10, with the list as the message). Recipients get a one-time copy; nothing in the inventory is shared. Without a share sheet (desktop), the text is copied and the picture downloaded.
-- **Scan many (bulk onboarding, AI):** on any place, tap **Scan many**, then pan the camera slowly across a shelf or room. Auto mode keeps the sharpest new view every 2 s (up to 8 photos); you can also tap the shutter, remove a photo from the strip, or choose photos if the camera isn't available. All photos go to Gemini in **one request**, which returns each physical item once with the photo that shows it best; Stash crops each item and opens the review list (untick, rename, *Put somewhere inside* per item, Tick all). A one-time note explains that wide shots show more of the home. History records these items as added by *AI scan*.
+- **Scan many (bulk onboarding, AI):** on any place, tap **Scan many**, then pan the camera slowly across a shelf or room. Auto mode keeps the sharpest new view every 2 s (up to 8 photos); you can also tap the shutter, remove a photo from the strip, or choose photos if the camera isn't available. All photos go to Gemini in **one request**, which returns each physical item once with the photo that shows it best; Paran crops each item and opens the review list (untick, rename, *Put somewhere inside* per item, Tick all). A one-time note explains that wide shots show more of the home. History records these items as added by *AI scan*.
 - **AI suggestions (optional, off by default):** each user turns it on in **More → AI suggestions** ("Name things from a photo"). The sheet is built to be done, not read: an example of the result, then three steps with one button each (**Open Google AI Studio** → *Create API key, Copy* → **Paste**), with the current step highlighted and coming back from AI Studio jumping to Paste. **Turn on** stays off until something that could be a key is pasted (20+ characters, no spaces; key formats vary, older ones start `AIza`), and the key is checked with Google before saving. The privacy notice is one line by the button (photos go straight to Google; free keys may be reviewed, so skip IDs and private papers) with **More** for the full notice; turning on is the agreement. The key is stored only on that device, never in the Sheet. A per-photo switch on the Add screen ("Suggest details from photos") controls whether a photo is analyzed.
   - **Event from words:** on New event, *What does it need?* takes a description or a pasted list (WhatsApp, email, notes); on an event, **From a list** does the same. Gemini gets only the text and the names (and counts) of what the event can draw on, never photos, and returns sections, lines and counts (estimates flagged "≈") plus which existing items fit. A review sheet lets you untick, rename, change counts and pick the item for each line (or *Not in inventory yet*); names the AI invents are ignored. Event name, date and notes are filled in only where you left them empty.
   - **Receipts:** **Scan a receipt** on Add (or **Bought some? Scan the receipt** on an event with things still to buy) takes a photo or a screenshot of an online order. Each product comes back with a plain name, qty, price, brand/model, category, purpose, search words and any printed warranty. Things you already have are offered as *Add N to your …* or *just add the receipt* (each place listed when the same thing is kept in two); things used up start unticked unless they're for an event; anything matching an event line still to buy is linked to it, so the line turns ready. New items go in the place you pick. Saved per item: `price` ("24.99 USD"), `store`, `boughtAt`, `warranty` (bought date + months), brand/model and return-by date in notes, and `receipt`: one photo of the receipt shared by all its items (uploaded to Drive like photos; **Receipt** on the item opens it). Card digits, names and addresses aren't asked for or kept. **Total check:** the products' prices are added up and compared with the printed subtotal (or the total minus tax and fees). Within 1% shows "✓ Adds up to the receipt's subtotal"; otherwise an amber note gives both amounts and the gap ("$24.99 short … a line may be missing or a price misread"), so a bad read is caught before saving. Price, store and date can also be typed under *More details*.
@@ -109,7 +116,7 @@ My Drive / Paran /
 ## Run it locally
 
 ```bash
-cd stash
+cd paran
 python3 -m http.server 8080
 # open http://localhost:8080  → "Try it without an account"
 ```
@@ -118,14 +125,14 @@ It has to be served over http(s), not opened as a file, because it uses ES modul
 
 ## Google Cloud setup (one time, about 10 minutes)
 
-1. Go to <https://console.cloud.google.com/>, create a project (e.g. `stash-inventory`).
+1. Go to <https://console.cloud.google.com/>, create a project (e.g. `paran-inventory`).
 2. **APIs & Services → Library:** enable **Google Drive API**, **Google Sheets API**, and **Google Picker API**.
 3. **APIs & Services → OAuth consent screen** (Google Auth Platform → Branding / Audience / Data access):
-   - User type **External**, app name "Stash", your email as support contact.
+   - User type **External**, app name "Paran", support email goligundu.llc@gmail.com, privacy policy URL = where `privacy.html` is published.
    - Data access → add scope `.../auth/drive.file` (plus `openid`, `email`, `profile`).
    - Audience → while in **Testing**, add each person's Gmail under **Test users** (up to 100). Users not on the list can't sign in until you publish the app.
 4. **Credentials → Create credentials → OAuth client ID** → type **Web application**.
-   - Authorized JavaScript origins: `http://localhost:8080` and your hosting origin, e.g. `https://aarvakuzhu.github.io`. Origins only, with no path and no trailing slash.
+   - Authorized JavaScript origins: `http://localhost:8080` and the origin the app is served from (for the Play Store app, the origin the Android wrapper loads). Origins only, with no path and no trailing slash.
    - No redirect URIs are needed (the app uses the popup token flow).
    - Copy the **Client ID** into `CLIENT_ID` in `js/config.js`.
 5. **Credentials → Create credentials → API key** → restrict it to **Google Picker API** and to your website origins (HTTP referrers). Put it in `API_KEY`.
@@ -133,14 +140,14 @@ It has to be served over http(s), not opened as a file, because it uses ES modul
 
 The Client ID and API key are not secrets in a browser app; they are protected by the origin restrictions above.
 
-## Host on GitHub Pages
+## Releasing
 
-1. Create a repo (e.g. `aarvakuzhu/paran`) and push the contents of this folder to `main`.
-2. Repo **Settings → Pages → Deploy from branch → main / (root)**.
-3. The app is at `https://aarvakuzhu.github.io/paran/`. Make sure `https://aarvakuzhu.github.io` is in the OAuth client's JavaScript origins.
-4. On the phone, open the URL, then **Share → Add to Home Screen** (iOS) or **Install app** (Android Chrome).
+Paran is going to Google Play as an Android app published by GoliGundu LLC, so this repo isn't hosted on GitHub Pages.
+The web build at `aarvakuzhu.github.io/paran/` (repo `aarvakuzhu/paran`) is the backup. The Play listing needs
+`privacy.html` at a public URL (also set `PRIVACY_URL` in `js/config.js` to that address if it moves) and
+goligundu.llc@gmail.com as the developer contact.
 
-After changing files, bump `VERSION` in `sw.js`. Stash opens from the copy on the phone (no network wait). A new version downloads in the background as one complete set (each file requested as `file?v=VERSION`, so GitHub's CDN can't hand back a stale copy mid-deploy) and is applied straight away if the app was just opened, or via the **Reload** prompt. If the app ever fails to start (e.g. a broken update), a startup check works out why within seconds (a new version still downloading, offline, a file that didn't load, an error, an older version on the phone than on the server, or just a slow connection) and says that, with versions shown, plus the matching button: **Get the latest version** re-downloads the app files and never touches the inventory.
+After changing files, bump `VERSION` in `sw.js`. Paran opens from the copy on the phone (no network wait). A new version downloads in the background as one complete set (each file requested as `file?v=VERSION`, so GitHub's CDN can't hand back a stale copy mid-deploy) and is applied straight away if the app was just opened, or via the **Reload** prompt. If the app ever fails to start (e.g. a broken update), a startup check works out why within seconds (a new version still downloading, offline, a file that didn't load, an error, an older version on the phone than on the server, or just a slow connection) and says that, with versions shown, plus the matching button: **Get the latest version** re-downloads the app files and never touches the inventory.
 
 ## How sharing works (and its limits)
 
@@ -167,7 +174,7 @@ Rules for editing the sheet by hand: it's fine to edit cell values and to sort o
 
 ## Known limits in v1
 
-- **Sign-in:** a browser-only app can't hold a long-lived Google session (that needs a server). Stash keeps Google's one-hour pass across app restarts, always opens straight into your inventory from the phone's copy, and renews the pass on your first tap after it runs out, using your saved account, so you normally see at most a brief Google popup and no account picker. Edits made meanwhile wait in the queue; the pill shows **Tap to sync**.
+- **Sign-in:** a browser-only app can't hold a long-lived Google session (that needs a server). Paran keeps Google's one-hour pass across app restarts, always opens straight into your inventory from the phone's copy, and renews the pass on your first tap after it runs out, using your saved account, so you normally see at most a brief Google popup and no account picker. Edits made meanwhile wait in the queue; the pill shows **Tap to sync**.
 - If two people edit the *same* item at the same moment, the last save wins.
 - AI suggestions use each user's own Gemini quota; the "photos analyzed today" count is per device, while Google's limit is per key's project.
 - Google accounts only.
@@ -202,10 +209,11 @@ Paran reports to **Urimam**, the licensing server shared by Goligundu's apps (gi
 
 ```
 index.html              app shell
+privacy.html            privacy policy (GoliGundu LLC); linked from About and What Paran sends
 manifest.webmanifest    install metadata
 sw.js                   offline cache for the app files (never caches Google data calls)
 css/app.css             styles, light + dark
-js/config.js            ← your Client ID, API key, project number
+js/config.js            ← your Client ID, API key, project number; publisher, contact email, privacy policy URL
 js/google.js            sign-in, Drive, Sheets, Picker wrappers
 js/store.js             data layer: cache, offline outbox, Google + demo backends
 js/search.js            purpose-aware search
