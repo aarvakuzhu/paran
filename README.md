@@ -1,7 +1,7 @@
 # Paran – Inventory (PWA)
 
 Know what you have, where it is, and who has it, for your home and the groups you run.
-Made by **GoliGundu LLC** (`goligundu/paran`). Headed for Google Play as an Android app; this repo isn't deployed as a website. Privacy policy: [`privacy.html`](privacy.html). Contact: goligundu.llc@gmail.com.
+Made by **GoliGundu LLC** (`goligundu/paran`). Headed for Google Play as an Android app; this repo isn't deployed as a website. Privacy policy: <https://goligundu.com/privacy.html#paran> (repo `goligundu/goligundu.com`; keep its Paran section in step with what the app sends). Contact: hello@goligundu.com.
 
 **History:** Paran began as a web app at `aarvakuzhu.github.io/paran/` (`aarvakuzhu/paran`, kept as the backup), which continued the Stash pilot (`aarvakuzhu/stash`, frozen; backup branch `backup/stash-final-2026-10-16`). Inventories live in each user's Google Drive and are found by their Drive tag, so the same inventories open in every build that uses the same Google OAuth client. Keep `CLIENT_ID` unchanged: with the `drive.file` permission, a different Google Cloud project can't see inventories made with this one.
 
@@ -128,7 +128,7 @@ It has to be served over http(s), not opened as a file, because it uses ES modul
 1. Go to <https://console.cloud.google.com/>, create a project (e.g. `paran-inventory`).
 2. **APIs & Services → Library:** enable **Google Drive API**, **Google Sheets API**, and **Google Picker API**.
 3. **APIs & Services → OAuth consent screen** (Google Auth Platform → Branding / Audience / Data access):
-   - User type **External**, app name "Paran", support email goligundu.llc@gmail.com, privacy policy URL = where `privacy.html` is published.
+   - User type **External**, app name "Paran", support email hello@goligundu.com, privacy policy URL https://goligundu.com/privacy.html.
    - Data access → add scope `.../auth/drive.file` (plus `openid`, `email`, `profile`).
    - Audience → while in **Testing**, add each person's Gmail under **Test users** (up to 100). Users not on the list can't sign in until you publish the app.
 4. **Credentials → Create credentials → OAuth client ID** → type **Web application**.
@@ -143,9 +143,9 @@ The Client ID and API key are not secrets in a browser app; they are protected b
 ## Releasing
 
 Paran is going to Google Play as an Android app published by GoliGundu LLC, so this repo isn't hosted on GitHub Pages.
-The web build at `aarvakuzhu.github.io/paran/` (repo `aarvakuzhu/paran`) is the backup. The Play listing needs
-`privacy.html` at a public URL (also set `PRIVACY_URL` in `js/config.js` to that address if it moves) and
-goligundu.llc@gmail.com as the developer contact.
+The web build at `aarvakuzhu.github.io/paran/` (repo `aarvakuzhu/paran`) is the backup. The Play listing uses
+https://goligundu.com/privacy.html as the privacy policy (`PRIVACY_URL` in `js/config.js`) and hello@goligundu.com as
+the contact.
 
 After changing files, bump `VERSION` in `sw.js`. Paran opens from the copy on the phone (no network wait). A new version downloads in the background as one complete set (each file requested as `file?v=VERSION`, so GitHub's CDN can't hand back a stale copy mid-deploy) and is applied straight away if the app was just opened, or via the **Reload** prompt. If the app ever fails to start (e.g. a broken update), a startup check works out why within seconds (a new version still downloading, offline, a file that didn't load, an error, an older version on the phone than on the server, or just a slow connection) and says that, with versions shown, plus the matching button: **Get the latest version** re-downloads the app files and never touches the inventory.
 
@@ -209,7 +209,6 @@ Paran reports to **Urimam**, the licensing server shared by Goligundu's apps (gi
 
 ```
 index.html              app shell
-privacy.html            privacy policy (GoliGundu LLC); linked from About and What Paran sends
 manifest.webmanifest    install metadata
 sw.js                   offline cache for the app files (never caches Google data calls)
 css/app.css             styles, light + dark
